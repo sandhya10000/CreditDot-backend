@@ -201,6 +201,28 @@ const checkCreditScore = async (req, res) => {
       dob,
       gender,
     } = req.body;
+    // Check same mobile/pan credit report in last 15 days
+    const lastReport = await CreditReport.findOne({
+      mobile,
+      pan,
+      bureau,
+    }).sort({ createdAt: -1 });
+
+    if (lastReport) {
+      const lastDate = new Date(lastReport.createdAt);
+      const currentDate = new Date();
+
+      const diffTime = currentDate - lastDate;
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+      if (diffDays < 15) {
+        const remainingDays = Math.ceil(15 - diffDays);
+
+        return res.status(400).json({
+          message: `This report has already been downloaded. The next download will be available after ${remainingDays} days.`,
+        });
+      }
+    }
 
     // Get franchise details to check credits
     const franchise = await Franchise.findById(req.user.franchiseId);
