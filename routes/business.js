@@ -5,6 +5,7 @@ const {
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
+  closeBusinessCase,
 } = require("../controllers/businessController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -41,5 +42,10 @@ router.get(
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route PUT /api/admin/business/${id}/close
+//@desc put all business forms(admin only)
+//@access Private/Admin
+router.put("/admin/business/:id/close", auth, rbac("admin"), closeBusinessCase);
 
 module.exports = router;

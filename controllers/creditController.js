@@ -216,40 +216,75 @@ const checkCreditScore = async (req, res) => {
     }
 
     // Get Surepass API key
-    const apiKey = await getSurepassApiKeyValue();
+    // const apiKey = await getSurepassApiKeyValue();
+    // if (!apiKey) {
+    //       return res
+    //         .status(500)
+    //         .json({ message: "Surepass API key not configured" });
+    //     }
+
+    //Get Gridline API key
+    const apiKey = process.env.GRIDLINES_API_KEY;
+
     if (!apiKey) {
-      return res
-        .status(500)
-        .json({ message: "Surepass API key not configured" });
+      return res.status(500).json({
+        message: "Gridlines API key not configured",
+      });
     }
 
     // Get the appropriate endpoint and data formatter for the bureau
-    const bureauConfig = getBureauConfig(bureau);
+    // const bureauConfig = getBureauConfig(bureau);
 
-    // Prepare request data based on bureau requirements
-    const requestData = bureauConfig.formatData({
+    // // Prepare request data based on bureau requirements
+    // const requestData = bureauConfig.formatData({
+    //   name,
+    //   mobile,
+    //   personId,
+    //   pan,
+    //   aadhaar,
+    //   dob,
+    //   gender,
+    //   // Pass through Equifax-specific fields if provided
+    //   id_number: req.body.id_number || null,
+    //   id_type: req.body.id_type || null,
+    // });
+
+    // // Make request to Surepass API with rate limiting and retry logic
+    // let response;
+    // try {
+    //   response = await surepassClient.makeCreditCheckRequest(
+    //     apiKey,
+    //     bureauConfig.endpoint,
+    //     requestData,
+    //   );
+    // }
+
+    // Gridlines endpoint
+    const endpoint =
+      "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
+
+    // Request Body
+    const requestData = {
       name,
       mobile,
-      personId,
       pan,
-      aadhaar,
-      dob,
-      gender,
-      // Pass through Equifax-specific fields if provided
-      id_number: req.body.id_number || null,
-      id_type: req.body.id_type || null,
-    });
+      consent: "Y",
+    };
 
-    // Make request to Surepass API with rate limiting and retry logic
     let response;
+
     try {
-      response = await surepassClient.makeCreditCheckRequest(
-        apiKey,
-        bureauConfig.endpoint,
-        requestData,
-      );
+      response = await axios.post(endpoint, requestData, {
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey,
+          "X-Auth-Type": "API-Key",
+          "X-Reference-ID": `REF-${Date.now()}`,
+        },
+        timeout: 30000,
+      });
     } catch (apiError) {
-      console.error("Surepass API error:", apiError.message);
+      console.error("Gridline API error:", apiError.message);
 
       // Handle timeout specifically
       if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
@@ -298,23 +333,34 @@ const checkCreditScore = async (req, res) => {
     }
 
     // Extract score from response based on bureau
-    let score = null;
-    if (response.data.data && response.data.data.score) {
-      score = response.data.data.score;
-    } else if (response.data.data && response.data.data.credit_score) {
-      score = response.data.data.credit_score;
-    }
+    // let score = null;
+    // if (response.data.data && response.data.data.score) {
+    //   score = response.data.data.score;
+    // } else if (response.data.data && response.data.data.credit_score) {
+    //   score = response.data.data.credit_score;
+    // }
+    let score =
+      response?.data?.data?.report_data?.data?.cibil_data
+        ?.get_customer_assets_response?.get_customer_assets_success?.asset
+        ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+
+    console.log("Risk Score:", score);
 
     // Extract report URL from response
+    // let reportUrl = null;
+    // if (response.data.data) {
+    //   // Check for various possible report URL fields
+    //   reportUrl =
+    //     response.data.data.report_url ||
+    //     response.data.data.pdf_url ||
+    //     response.data.data.credit_report_link ||
+    //     response.data.data.report_link ||
+    //     null;
+    // }
     let reportUrl = null;
-    if (response.data.data) {
-      // Check for various possible report URL fields
-      reportUrl =
-        response.data.data.report_url ||
-        response.data.data.pdf_url ||
-        response.data.data.credit_report_link ||
-        response.data.data.report_link ||
-        null;
+
+    if (response.data?.data?.report_data?.data?.cibil_report_url) {
+      reportUrl = response.data.data.report_data.data.cibil_report_url;
     }
 
     // Save credit report
@@ -650,6 +696,7 @@ const checkCreditScorePublic = async (req, res) => {
     // If we have a report URL, download and save the PDF locally (for public reports too)
     if (reportUrl) {
       console.log("Downloading PDF report from URL:", reportUrl);
+
       try {
         // Create reports directory if it doesn't exist
         const reportsDir = path.join(__dirname, "../reports");

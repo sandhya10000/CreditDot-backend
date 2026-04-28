@@ -312,10 +312,40 @@ const getAllBusinessForms = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+//
+
+const closeBusinessCase = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { adminRemark } = req.body;
+
+    const updatedCase = await BusinessForm.findByIdAndUpdate(
+      id,
+      {
+        workStatus: "Closed",
+        closedAt: new Date(),
+        adminRemark: adminRemark || "Case completed",
+      },
+      { new: true },
+    );
+
+    if (!updatedCase) {
+      return res.status(404).json({ message: "Case not found" });
+    }
+
+    res.status(200).json({
+      message: "Case closed successfully",
+      data: updatedCase,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 module.exports = {
   submitBusinessForm,
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
+  closeBusinessCase,
 };

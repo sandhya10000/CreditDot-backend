@@ -12,6 +12,7 @@ const GoogleSheet = require("./models/GoogleSheet");
 
 const admindumyRoutes = require("./routes/adminDumy");
 const prefillRoutes = require("./routes/prefilledRoute");
+const businessRoutes = require("./routes/business");
 
 // Load environment variables
 dotenv.config();
@@ -228,6 +229,7 @@ console.log("Analytics route registered");
 app.use(require("./middleware/errorHandler"));
 //  MOUNT ROUTE
 app.use("/api", prefillRoutes);
+app.use("/api", businessRoutes);
 
 const PORT = process.env.PORT || 5000;
 

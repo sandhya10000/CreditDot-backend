@@ -88,6 +88,21 @@ const businessFormSchema = new mongoose.Schema(
       enum: ["pending", "paid", "failed"],
       default: "pending",
     },
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "paid", "failed"],
+      default: "pending",
+    },
+    //add new field to know  business status from admin
+    workStatus: {
+      type: String,
+      enum: ["Working", "Closed"],
+      default: "Working",
+    },
+
+    closedAt: Date,
+
+    adminRemark: String,
     razorpayOrderId: {
       type: String,
     },
