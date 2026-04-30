@@ -13,7 +13,7 @@ const GoogleSheet = require("./models/GoogleSheet");
 const admindumyRoutes = require("./routes/adminDumy");
 const prefillRoutes = require("./routes/prefilledRoute");
 const businessRoutes = require("./routes/business");
-
+const marketingRoutes = require("./routes/marketingRoutes");
 // Load environment variables
 dotenv.config();
 
@@ -132,7 +132,9 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Serve static files from the Backend uploads directory
 app.use("/backend-uploads", express.static(path.join(__dirname, "uploads")));
-
+//serve static files from the backend uploads directory
+// static folder expose
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
@@ -230,7 +232,11 @@ app.use(require("./middleware/errorHandler"));
 //  MOUNT ROUTE
 app.use("/api", prefillRoutes);
 app.use("/api", businessRoutes);
-
+//post upload api route
+app.use("/api/admin/marketing", marketingRoutes);
+//get api upload
+app.use("/api/marketing", marketingRoutes);
+// Routes
 const PORT = process.env.PORT || 5000;
 
 // Start automatic sync if enabled

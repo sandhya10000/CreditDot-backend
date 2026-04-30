@@ -342,7 +342,8 @@ const checkCreditScore = async (req, res) => {
       // Forward the error from Surepass API if available
       if (apiError.response) {
         return res.status(apiError.response.status).json({
-          message: "Credit check failed",
+          message:
+            "Credit check failed. Please try downloading the Experian report using the same mobile number",
           error: apiError.response.data || apiError.message,
         });
       }
