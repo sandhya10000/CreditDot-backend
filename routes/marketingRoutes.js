@@ -1,25 +1,18 @@
 const express = require("express");
-const multer = require("multer");
 const router = express.Router();
+
 const {
   uploadmarketingMaterial,
   getMarketingMaterials,
 } = require("../controllers/marketingController");
-const path = require("path");
 
-const MarketingMaterial = require("../models/MarketingMaterial");
+const createUploader = require("../middleware/upload");
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/marketing");
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  },
-});
-
-const upload = multer({ storage });
+// uploads/marketing folder me save hoga
+const upload = createUploader("marketing");
 
 router.post("/upload", upload.single("file"), uploadmarketingMaterial);
+
 router.get("/", getMarketingMaterials);
+
 module.exports = router;
