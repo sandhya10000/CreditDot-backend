@@ -14,7 +14,8 @@ const admindumyRoutes = require("./routes/adminDumy");
 const prefillRoutes = require("./routes/prefilledRoute");
 const businessRoutes = require("./routes/business");
 const marketingRoutes = require("./routes/marketingRoutes");
-const FranchiseCaseStudyRoute = require("./routes/franchiseCaseStudyRoutes");
+const caseStudyRoutes = require("./routes/CaseStudyRoutes");
+const RewardRoutes = require("./routes/AdminRewardRoutes");
 // Load environment variables
 dotenv.config();
 
@@ -134,17 +135,6 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Serve static files from the Backend uploads directory
 app.use("/backend-uploads", express.static(path.join(__dirname, "uploads")));
 //serve static files from the backend uploads directory case study
-app.use(
-  "/case-study",
-  express.static(path.join(__dirname, "uploads/case-study")),
-);
-
-//serve static files from the backend uploads directory marketing material
-
-app.use(
-  "/marketing-material",
-  express.static(path.join(__dirname, "uploads/marketing")),
-);
 
 // CORS configuration
 const corsOptions = {
@@ -245,9 +235,15 @@ app.use("/api", prefillRoutes);
 app.use("/api", businessRoutes);
 //post upload api route
 app.use("/api/admin/marketing", marketingRoutes);
-app.use("/api/franchise/case-studies", FranchiseCaseStudyRoute);
+app.use("/api/admin/case-studies", caseStudyRoutes);
+//get api for case study
 //get api upload
 app.use("/api/marketing", marketingRoutes);
+//post admin reward route url
+app.use("/api/admin/reward", RewardRoutes);
+//get api
+app.use("/api/franchise/reward", RewardRoutes);
+app.use("/api/franchise/case-studies", caseStudyRoutes);
 // Routes
 const PORT = process.env.PORT || 5000;
 

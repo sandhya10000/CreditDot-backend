@@ -23,13 +23,24 @@ const uploadmarketingMaterial = async (req, res) => {
 };
 
 //Get All Materials
-
 const getMarketingMaterials = async (req, res) => {
   try {
     const data = await MarketingMaterial.find().sort({
       createdAt: -1,
     });
-    res.status(200).json(data);
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
+    const updatedData = data.map((item) => ({
+      ...item._doc, // important for mongoose
+      file: item.file ? `${baseUrl}${item.file}` : null,
+      //  change "file" to your actual field name
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: updatedData,
+    });
   } catch (err) {
     res.status(500).json({
       message: "Failed to fetch data",
