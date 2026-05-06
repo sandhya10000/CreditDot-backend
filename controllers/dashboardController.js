@@ -47,6 +47,42 @@ const getFranchiseDashboard = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5);
 
+    //New requirement start
+    //Credits (used and available)
+    const totalCredits = franchise.totalCreditsPurchased || 0;
+    const availableCredits = franchise.credits || 0;
+    const usedCredits = totalCredits - availableCredits;
+
+    //2. AI (Used and Avaiable)
+    const aiTotal = franchise.aiTotal || 100; //default
+    const aiUsed = franchise.aiUsed || 0;
+
+    //Total Cases (using Leads as case)
+    const totalCases = totalLeads;
+
+    //4. Business (Manual + Dashboard)
+    const businessData = await Lead.aggregate([
+      {
+        $match: { franchiseId: franchise._id },
+      },
+      {
+        $group: {
+          _id: "$source", // manual /dashboard
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    let manualBusiness = 0;
+    let dashboardBusiness = 0;
+
+    businessData.forEach((b) => {
+      if (b._id === "manual") totalCredit = b.total;
+      if (b._id === "dashboard") dashboardBusiness = b.total;
+    });
+
+    const totalBusiness = manualBusiness + dashboardBusiness;
+
     res.json({
       franchise,
       stats: {
@@ -55,6 +91,22 @@ const getFranchiseDashboard = async (req, res) => {
         newLeads,
         totalCreditReports,
         totalReferrals,
+        //New structure
+        creditDetails: {
+          used: usedCredits,
+          available: availableCredits,
+        },
+        aiDetails: {
+          used: aiUsed,
+          available: aiTotal - aiUsed,
+        },
+
+        business: {
+          manual: manualBusiness,
+          dashboard: dashboardBusiness,
+          total: totalBusiness,
+        },
+        totalCases,
       },
       recentTransactions,
     });
