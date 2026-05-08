@@ -7,6 +7,11 @@ const businessFormSchema = new mongoose.Schema(
       ref: "Franchise",
       required: false, // Make optional for public submissions
     },
+    //Add customer Id
+    customerId: {
+      type: String,
+      unique: true,
+    },
     customerName: {
       type: String,
       required: true,

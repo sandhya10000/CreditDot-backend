@@ -202,25 +202,28 @@ const checkCreditScore = async (req, res) => {
       gender,
     } = req.body;
     // Check same mobile/pan credit report in last 15 days
-    const lastReport = await CreditReport.findOne({
-      mobile,
-      pan,
-      bureau,
-    }).sort({ createdAt: -1 });
+    // Apply 15 days restriction ONLY for CIBIL
+    if (bureau === "cibil") {
+      const lastReport = await CreditReport.findOne({
+        mobile,
+        pan,
+        bureau,
+      }).sort({ createdAt: -1 });
 
-    if (lastReport) {
-      const lastDate = new Date(lastReport.createdAt);
-      const currentDate = new Date();
+      if (lastReport) {
+        const lastDate = new Date(lastReport.createdAt);
+        const currentDate = new Date();
 
-      const diffTime = currentDate - lastDate;
-      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        const diffTime = currentDate - lastDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-      if (diffDays < 15) {
-        const remainingDays = Math.ceil(15 - diffDays);
+        if (diffDays < 15) {
+          const remainingDays = Math.ceil(15 - diffDays);
 
-        return res.status(400).json({
-          message: `This report has already been downloaded. The next download will be available after ${remainingDays} days.`,
-        });
+          return res.status(400).json({
+            message: `This CIBIL report has already been downloaded. Try again after ${remainingDays} days.`,
+          });
+        }
       }
     }
 
@@ -238,17 +241,17 @@ const checkCreditScore = async (req, res) => {
     }
 
     // Get Surepass API key
-    // const apiKey = await getSurepassApiKeyValue();
-    // if (!apiKey) {
-    //       return res
-    //         .status(500)
-    //         .json({ message: "Surepass API key not configured" });
-    //     }
+    const surepassApiKey = await getSurepassApiKeyValue();
+    if (!surepassApiKey) {
+      return res
+        .status(500)
+        .json({ message: "Surepass API key not configured" });
+    }
 
     //Get Gridline API key
-    const apiKey = process.env.GRIDLINES_API_KEY;
+    const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
 
-    if (!apiKey) {
+    if (!gridlinesApiKey) {
       return res.status(500).json({
         message: "Gridlines API key not configured",
       });
@@ -296,61 +299,60 @@ const checkCreditScore = async (req, res) => {
     let response;
 
     try {
-      response = await axios.post(endpoint, requestData, {
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey,
-          "X-Auth-Type": "API-Key",
-          "X-Reference-ID": `REF-${Date.now()}`,
-        },
-        timeout: 30000,
-      });
-    } catch (apiError) {
-      console.error("Gridline API error:", apiError.message);
+      // =========================
+      // CIBIL -> GRIDLINES
+      // =========================
+      if (bureau === "cibil") {
+        const endpoint =
+          "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
 
-      // Handle timeout specifically
-      if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
-        return res.status(504).json({
-          message:
-            "Request timeout when connecting to credit bureau. Please try again later.",
-          error: "TIMEOUT_ERROR",
+        const requestData = {
+          name,
+          mobile,
+          pan,
+          consent: "Y",
+        };
+
+        response = await axios.post(endpoint, requestData, {
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": gridlinesApiKey,
+            "X-Auth-Type": "API-Key",
+            "X-Reference-ID": `REF-${Date.now()}`,
+          },
+          timeout: 30000,
         });
       }
 
-      // Handle network errors
-      if (apiError.isAxiosError && !apiError.response) {
-        return res.status(502).json({
-          message:
-            "Network error when connecting to credit bureau. Please check your internet connection and try again.",
-          error: "NETWORK_ERROR",
-        });
-      }
+      // =========================
+      // EXPERIAN / EQUIFAX / CRIF -> SUREPASS
+      // =========================
+      else {
+        const bureauConfig = getBureauConfig(bureau);
 
-      // Handle rate limiting specifically (HTTP 429)
-      if (apiError.response?.status === 429) {
-        console.error(
-          "Surepass API rate limit exceeded:",
-          apiError.response.data,
+        const requestData = bureauConfig.formatData({
+          name,
+          mobile,
+          personId,
+          pan,
+          aadhaar,
+          dob,
+          gender,
+          id_number: req.body.id_number || null,
+          id_type: req.body.id_type || null,
+        });
+
+        response = await surepassClient.makeCreditCheckRequest(
+          surepassApiKey,
+          bureauConfig.endpoint,
+          requestData,
         );
-        return res.status(429).json({
-          message:
-            "Too many requests to credit bureau. Please try again later.",
-          error: "RATE_LIMIT_EXCEEDED",
-        });
       }
+    } catch (apiError) {
+      console.error("API ERROR:", apiError);
 
-      // Forward the error from Surepass API if available
-      if (apiError.response) {
-        return res.status(apiError.response.status).json({
-          message:
-            "Credit check failed. Please try downloading the Experian report using the same mobile number",
-          error: apiError.response.data || apiError.message,
-        });
-      }
-
-      // Generic error
       return res.status(500).json({
-        message: "An error occurred while checking credit score",
+        message: "Credit bureau API failed",
         error: apiError.message,
       });
     }
@@ -362,10 +364,19 @@ const checkCreditScore = async (req, res) => {
     // } else if (response.data.data && response.data.data.credit_score) {
     //   score = response.data.data.credit_score;
     // }
-    let score =
-      response?.data?.data?.report_data?.data?.cibil_data
-        ?.get_customer_assets_response?.get_customer_assets_success?.asset
-        ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+    let score = null;
+
+    if (bureau === "cibil") {
+      score =
+        response?.data?.data?.report_data?.data?.cibil_data
+          ?.get_customer_assets_response?.get_customer_assets_success?.asset
+          ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+    } else {
+      score =
+        response?.data?.data?.score ||
+        response?.data?.data?.credit_score ||
+        null;
+    }
 
     console.log("Risk Score:", score);
 
@@ -382,8 +393,15 @@ const checkCreditScore = async (req, res) => {
     // }
     let reportUrl = null;
 
-    if (response.data?.data?.report_data?.data?.cibil_report_url) {
-      reportUrl = response.data.data.report_data.data.cibil_report_url;
+    if (bureau === "cibil") {
+      reportUrl =
+        response?.data?.data?.report_data?.data?.cibil_report_url || null;
+    } else {
+      reportUrl =
+        response?.data?.data?.report_url ||
+        response?.data?.data?.pdf_url ||
+        response?.data?.data?.credit_report_link ||
+        null;
     }
 
     // Save credit report
@@ -548,7 +566,39 @@ const checkCreditScorePublic = async (req, res) => {
 
     // Get the appropriate endpoint and data formatter for the bureau
     console.log("Getting bureau config for:", bureau);
-    const bureauConfig = getBureauConfig(bureau);
+    const getBureauConfig = (bureau) => {
+      const configs = {
+        experian: {
+          endpoint: "/credit-report-experian",
+          formatData: (data) => ({
+            name: data.name,
+            mobile: data.mobile,
+            pan: data.pan,
+          }),
+        },
+
+        equifax: {
+          endpoint: "/credit-report-equifax",
+          formatData: (data) => ({
+            name: data.name,
+            mobile: data.mobile,
+            id_number: data.id_number,
+            id_type: data.id_type,
+          }),
+        },
+
+        crif: {
+          endpoint: "/credit-report-crif",
+          formatData: (data) => ({
+            name: data.name,
+            mobile: data.mobile,
+            pan: data.pan,
+          }),
+        },
+      };
+
+      return configs[bureau];
+    };
     console.log("Bureau config retrieved:", {
       endpoint: bureauConfig.endpoint,
     });

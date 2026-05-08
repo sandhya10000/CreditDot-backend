@@ -124,8 +124,24 @@ const submitBusinessForm = async (req, res) => {
         .json({ message: "Invalid or inactive package selected" });
     }
 
+    // Get last customer
+    const lastCustomer = await BusinessForm.findOne({
+      customerId: { $exists: true },
+    }).sort({ createdAt: -1 });
+
+    // Default first ID
+    let nextCustomerId = "CUST-0001";
+
+    if (lastCustomer && lastCustomer.customerId) {
+      const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
+
+      const nextNumber = lastNumber + 1;
+
+      nextCustomerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
+    }
     // Create business form entry
     const businessForm = new BusinessForm({
+      customerId: nextCustomerId,
       franchiseId: req.user.franchiseId,
       customerName,
       customerEmail: customerEmail.toLowerCase(),
