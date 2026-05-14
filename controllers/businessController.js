@@ -1,6 +1,7 @@
 const BusinessForm = require("../models/BusinessForm");
 const CustomerPackage = require("../models/CustomerPackage");
 const Franchise = require("../models/Franchise");
+const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
@@ -358,10 +359,40 @@ const closeBusinessCase = async (req, res) => {
   }
 };
 
+//Get or fetch businessform data on mini crm
+// Get single business form by customerId
+const getSingleBusinessForm = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    // Find customer by customerId
+    const businessForm = await BusinessForm.findOne({
+      customerId: customerId,
+    }).populate("selectedPackage");
+
+    if (!businessForm) {
+      return res.status(404).json({
+        message: "Customer not found",
+      });
+    }
+    const report = await CreditReport.find({ pan: businessForm.panNumber });
+
+    res.status(200).json({
+      success: true,
+      data: { customerData: businessForm, report: report },
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server Error",
+      error: error.message,
+    });
+  }
+};
 module.exports = {
   submitBusinessForm,
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
   closeBusinessCase,
+  getSingleBusinessForm,
 };
