@@ -366,20 +366,28 @@ const getSingleBusinessForm = async (req, res) => {
     const { customerId } = req.params;
 
     // Find customer by customerId
-    const businessForm = await BusinessForm.findOne({
+    const businessForms = await BusinessForm.findOne({
       customerId: customerId,
-    }).populate("selectedPackage");
+    })
+      .populate(
+        "selectedPackage",
+        "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+      )
+      .populate("franchiseId", "businessName")
+      .sort({ createdAt: -1 });
 
-    if (!businessForm) {
+    if (!businessForms) {
       return res.status(404).json({
         message: "Customer not found",
       });
     }
-    const report = await CreditReport.find({ pan: businessForm.panNumber });
+    const report = await CreditReport.find({
+      pan: businessForms.panNumber,
+    }).sort({ updatedAt: -1 });
 
     res.status(200).json({
       success: true,
-      data: { customerData: businessForm, report: report },
+      data: { customerData: businessForms, report: report },
     });
   } catch (error) {
     res.status(500).json({
