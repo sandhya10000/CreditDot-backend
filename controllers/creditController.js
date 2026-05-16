@@ -1278,11 +1278,15 @@ const checkCreditScoreV2 = async (req, res) => {
       });
     }
 
-    // API RESPONSE ERROR
     if (apiError?.response) {
       return res.status(apiError.response.status).json({
-        message: "Credit check failed",
-        error: apiError.response.data || apiError.message,
+        success: false,
+
+        message: apiError.response.data?.message || "Credit check failed",
+
+        error: apiError.response.data?.message_code || apiError.message,
+
+        data: apiError.response.data?.data || null,
       });
     }
 
