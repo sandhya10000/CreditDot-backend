@@ -8,6 +8,7 @@ const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
+const puppeteer = require("puppeteer");
 
 // Validation schema for credit check
 const creditCheckSchema = Joi.object({
@@ -304,6 +305,7 @@ const checkCreditScore = async (req, res) => {
     };
 
     let response;
+    console.log(response.data, "ongrid-----");
 
     try {
       // =========================
@@ -495,27 +497,45 @@ const checkCreditScore = async (req, res) => {
         const filename = `credit_report_${creditReport._id}_${timestamp}.pdf`;
         const localPath = path.join(reportsDir, filename);
 
-        // Download the PDF with timeout
-        const pdfResponse = await axios({
-          method: "GET",
-          url: reportUrl,
-          responseType: "stream",
-          timeout: 30000, // 30 second timeout
-        });
+        if (bureau === "cibil") {
+          const browser = await puppeteer.launch({
+            headless: true,
+          });
+          const page = await browser.newPage();
+          await page.goto(reportUrl, {
+            waitUntil: "networkidle2",
+            timeout: 60000,
+          });
 
-        // Save the PDF to local storage
-        const writer = fs.createWriteStream(localPath);
-        pdfResponse.data.pipe(writer);
+          await page.pdf({
+            path: localPath,
+            format: "A4",
+            printBackground: true,
+          });
+          await browser.close();
+        } else {
+          // Download the PDF with timeout
+          const pdfResponse = await axios({
+            method: "GET",
+            url: reportUrl,
+            responseType: "stream",
+            timeout: 30000, // 30 second timeout
+          });
 
-        // Wait for the download to complete
-        await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
-          writer.on("error", reject);
-        });
+          // Save the PDF to local storage
+          const writer = fs.createWriteStream(localPath);
+          pdfResponse.data.pipe(writer);
 
-        // Update the credit report with the local path
-        creditReport.localPath = `/reports/${filename}`;
-        await creditReport.save();
+          // Wait for the download to complete
+          await new Promise((resolve, reject) => {
+            writer.on("finish", resolve);
+            writer.on("error", reject);
+          });
+
+          // Update the credit report with the local path
+          creditReport.localPath = `/reports/${filename}`;
+          await creditReport.save();
+        }
       } catch (downloadError) {
         console.error("Error downloading PDF:", downloadError);
         // We don't fail the entire request if PDF download fails

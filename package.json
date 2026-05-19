@@ -45,6 +45,7 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.17.2",
+    "puppeteer": "^25.0.4",
     "razorpay": "^2.9.6",
     "react-router-dom": "^7.9.4",
     "winston": "^3.18.3"
