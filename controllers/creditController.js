@@ -246,12 +246,12 @@ const checkCreditScore = async (req, res) => {
         return res.status(404).json({ message: "Franchise not found" });
       }
 
-      // Check if franchise has enough credits
-      // if (franchise.credits < 1) {
-      //   return res.status(400).json({
-      //     message: "Insufficient credits to generate credit report",
-      //   });
-      // }
+      //Check if franchise has enough credits
+      if (franchise.credits < 1) {
+        return res.status(400).json({
+          message: "Insufficient credits to generate credit report",
+        });
+      }
     }
 
     // Get Surepass API key

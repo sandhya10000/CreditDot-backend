@@ -1,6 +1,6 @@
 const axios = require("axios");
-
-exports.prefillByMobile = async (req, res) => {
+const prefillFailedLog = require("../models/prefillFailedLog");
+const prefillByMobile = async (req, res) => {
   const { mobile } = req.body;
 
   // 🔹 Basic validation
@@ -36,3 +36,53 @@ exports.prefillByMobile = async (req, res) => {
     });
   }
 };
+const savePrefillFailure = async (req, res) => {
+  try {
+    const { message, mobile, statusCode } = req.body;
+    const log = new prefillFailedLog({
+      message,
+      mobile,
+      statusCode,
+
+      userId: req.user?.id || null,
+      franchiseId: req.user?.franchiseId || null,
+    });
+    await log.save();
+    return res.status(201).json({
+      success: true,
+      message: "Prefill failure saved successfully",
+      data: log,
+    });
+  } catch (error) {
+    console.error("Save Prefill Failure Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+const getPrefillFailedLog = async (req, res) => {
+  try {
+    const failedReports = await prefillFailedLog
+      .find()
+      .populate("franchiseId", "name")
+      .populate("userId", "name")
+      .sort({ createdAt: -1 });
+    console.log(failedReports);
+    res.status(200).json({
+      success: true,
+      data: failedReports,
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+module.exports = { getPrefillFailedLog, savePrefillFailure, prefillByMobile };
