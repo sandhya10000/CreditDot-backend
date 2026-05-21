@@ -269,18 +269,18 @@ const startAutoSync = async () => {
     console.log("Google Sheets settings for auto-sync:", settings);
     if (settings && settings.syncSettings && settings.syncSettings.autoSync) {
       const interval = settings.syncSettings.syncInterval || 300; // Default to 5 minutes
-      console.log(`Auto-sync enabled with ${interval} second interval`);
+      // console.log(`Auto-sync enabled with ${interval} second interval`);
 
       // Run sync immediately
-      console.log("Running initial Google Sheets sync");
+      // console.log("Running initial Google Sheets sync");
       const initialized = await googleSheetsService.initialize();
       if (initialized) {
         await googleSheetsService.syncAllData();
-        console.log("Initial Google Sheets sync completed");
+        // console.log("Initial Google Sheets sync completed");
       } else {
-        console.log(
-          "Failed to initialize Google Sheets service for initial sync",
-        );
+        // console.log(
+        //   "Failed to initialize Google Sheets service for initial sync",
+        // );
       }
 
       // Set up periodic sync
@@ -290,22 +290,22 @@ const startAutoSync = async () => {
           const initialized = await googleSheetsService.initialize();
           if (initialized) {
             await googleSheetsService.syncAllData();
-            console.log("Periodic Google Sheets sync completed");
+            // console.log("Periodic Google Sheets sync completed");
           } else {
-            console.log(
-              "Failed to initialize Google Sheets service for periodic sync",
-            );
+            // console.log(
+            //   "Failed to initialize Google Sheets service for periodic sync",
+            // );
           }
         } catch (error) {
-          console.error("Periodic Google Sheets sync failed:", error.message);
+          // console.error("Periodic Google Sheets sync failed:", error.message);
         }
       }, interval * 1000);
 
-      console.log(
-        `Google Sheets auto-sync enabled with ${interval} second interval`,
-      );
+      // console.log(
+      //   `Google Sheets auto-sync enabled with ${interval} second interval`,
+      // );
     } else {
-      console.log("Auto-sync not enabled or settings not found");
+      // console.log("Auto-sync not enabled or settings not found");
     }
   } catch (error) {
     console.error("Failed to start auto-sync:", error.message);

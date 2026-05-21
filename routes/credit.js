@@ -18,7 +18,7 @@ const router = express.Router();
 // @route   POST /api/credit/check
 // @desc    Check credit score
 // @access  Private/Franchise User
-router.post("/check", auth, rbac("franchise_user"), checkCreditScore);
+router.post("/check", auth, rbac("franchise_user", "admin"), checkCreditScore);
 
 // @route   POST /api/credit/check-public
 // @desc    Check credit score (public endpoint for Experian only)
@@ -28,7 +28,7 @@ router.post("/check-public", checkCreditScorePublic);
 // @route   GET /api/credit/reports
 // @desc    Get credit reports for franchise
 // @access  Private/Franchise User
-router.get("/reports", auth, rbac("franchise_user"), getCreditReports);
+router.get("/reports", auth, rbac("franchise_user", "admin"), getCreditReports);
 
 // @route   GET /api/credit/reports/all
 // @desc    Get all credit reports

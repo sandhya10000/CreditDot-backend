@@ -10,6 +10,28 @@ const { sendReferralEmail } = require("../utils/emailService");
 // Get franchise dashboard statistics
 const getFranchiseDashboard = async (req, res) => {
   try {
+    if (req.user.role === "admin") {
+      const totalLeads = await Lead.countDocuments();
+      const totalCreditReports = await CreditReport.countDocuments();
+      const totalReferrals = await Referral.countDocuments();
+
+      const recentTransactions = await Transaction.find({
+        status: "paid",
+      })
+        .populate("packageId", "name creditsIncluded price sortOrder")
+        .sort({ createdAt: -1 })
+        .limit(5);
+
+      return res.json({
+        role: "admin",
+        stats: {
+          totalLeads,
+          totalCreditReports,
+          totalReferrals,
+        },
+        recentTransactions,
+      });
+    }
     // Get franchise details with assigned packages
     const franchise = await Franchise.findOne({ userId: req.user.id })
       .populate("userId", "name email phone")
