@@ -22,10 +22,28 @@ const packageSchema = new mongoose.Schema(
       min: 0,
       max: 100,
     },
+    // creditsIncluded: {
+    //   type: Number,
+    //   required: true,
+    //   min: 0,
+    // },
     creditsIncluded: {
-      type: Number,
+      type: mongoose.Schema.Types.Mixed,
       required: true,
-      min: 0,
+      validate: {
+        validator: function (value) {
+          // Diamond package
+          if (this.name === "Diamond") {
+            return (
+              value === "Unlimited" || (typeof value === "number" && value >= 0)
+            );
+          }
+
+          // Other packages
+          return typeof value === "number" && value >= 0;
+        },
+        message: "Invalid creditsIncluded value",
+      },
     },
     features: [
       {

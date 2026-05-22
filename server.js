@@ -16,6 +16,8 @@ const businessRoutes = require("./routes/business");
 const marketingRoutes = require("./routes/marketingRoutes");
 const caseStudyRoutes = require("./routes/CaseStudyRoutes");
 const RewardRoutes = require("./routes/AdminRewardRoutes");
+const remarkRoutes = require("./routes/Remark");
+const CustomerBureauRoutes = require("./routes/CustomerBureau");
 // Load environment variables
 dotenv.config();
 
@@ -117,6 +119,14 @@ if (!fs.existsSync(reportsDir)) {
 }
 
 const app = express();
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 //dummy admin api route
 app.use("/api/admin", admindumyRoutes);
@@ -244,6 +254,8 @@ app.use("/api/admin/reward", RewardRoutes);
 //get api
 app.use("/api/franchise/reward", RewardRoutes);
 app.use("/api/franchise/case-studies", caseStudyRoutes);
+app.use("/api", remarkRoutes);
+app.use("/api", CustomerBureauRoutes);
 // Routes
 const PORT = process.env.PORT || 5000;
 
@@ -257,18 +269,18 @@ const startAutoSync = async () => {
     console.log("Google Sheets settings for auto-sync:", settings);
     if (settings && settings.syncSettings && settings.syncSettings.autoSync) {
       const interval = settings.syncSettings.syncInterval || 300; // Default to 5 minutes
-      console.log(`Auto-sync enabled with ${interval} second interval`);
+      // console.log(`Auto-sync enabled with ${interval} second interval`);
 
       // Run sync immediately
-      console.log("Running initial Google Sheets sync");
+      // console.log("Running initial Google Sheets sync");
       const initialized = await googleSheetsService.initialize();
       if (initialized) {
         await googleSheetsService.syncAllData();
-        console.log("Initial Google Sheets sync completed");
+        // console.log("Initial Google Sheets sync completed");
       } else {
-        console.log(
-          "Failed to initialize Google Sheets service for initial sync",
-        );
+        // console.log(
+        //   "Failed to initialize Google Sheets service for initial sync",
+        // );
       }
 
       // Set up periodic sync
@@ -278,22 +290,22 @@ const startAutoSync = async () => {
           const initialized = await googleSheetsService.initialize();
           if (initialized) {
             await googleSheetsService.syncAllData();
-            console.log("Periodic Google Sheets sync completed");
+            // console.log("Periodic Google Sheets sync completed");
           } else {
-            console.log(
-              "Failed to initialize Google Sheets service for periodic sync",
-            );
+            // console.log(
+            //   "Failed to initialize Google Sheets service for periodic sync",
+            // );
           }
         } catch (error) {
-          console.error("Periodic Google Sheets sync failed:", error.message);
+          // console.error("Periodic Google Sheets sync failed:", error.message);
         }
       }, interval * 1000);
 
-      console.log(
-        `Google Sheets auto-sync enabled with ${interval} second interval`,
-      );
+      // console.log(
+      //   `Google Sheets auto-sync enabled with ${interval} second interval`,
+      // );
     } else {
-      console.log("Auto-sync not enabled or settings not found");
+      // console.log("Auto-sync not enabled or settings not found");
     }
   } catch (error) {
     console.error("Failed to start auto-sync:", error.message);

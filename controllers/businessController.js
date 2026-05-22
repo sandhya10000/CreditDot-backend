@@ -1,6 +1,8 @@
+const axios = require("axios");
 const BusinessForm = require("../models/BusinessForm");
 const CustomerPackage = require("../models/CustomerPackage");
 const Franchise = require("../models/Franchise");
+const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
@@ -358,10 +360,114 @@ const closeBusinessCase = async (req, res) => {
   }
 };
 
+//Get or fetch businessform data on mini crm
+// Get single business form by customerId
+const getSingleBusinessForm = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    // Find customer by customerId
+    const businessForms = await BusinessForm.findOne({
+      customerId: customerId,
+    })
+      .populate(
+        "selectedPackage",
+        "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+      )
+      .populate("franchiseId", "businessName")
+      .sort({ createdAt: -1 });
+
+    if (!businessForms) {
+      return res.status(404).json({
+        message: "Customer not found",
+      });
+    }
+    const report = await CreditReport.find({
+      pan: businessForms.panNumber,
+    }).sort({ updatedAt: -1 });
+
+    let bankInfo = null;
+    if (businessForms?.bankAccountNumber && businessForms?.ifscCode) {
+      try {
+        const payload = {
+          id_number: businessForms.bankAccountNumber,
+          ifsc: businessForms.ifscCode,
+          ifsc_details: true,
+        };
+        const verifyResponse = await axios.post(
+          "https://kyc-api.surepass.io/api/v1/bank-verification",
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.SUREPASS_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          },
+        );
+
+        bankInfo = verifyResponse.data;
+      } catch (apiError) {
+        console.log(apiError?.response?.data);
+
+        bankInfo = {
+          success: false,
+          error: apiError?.response?.data || apiError.message,
+        };
+      }
+    }
+    res.status(200).json({
+      success: true,
+      data: {
+        customerData: businessForms,
+        report: report,
+        bankInfo,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server Error",
+      error: error.message,
+    });
+  }
+};
+const uploadDocBusiness = async (req, res) => {
+  try {
+    console.log(req.files);
+
+    const documents = {
+      panCard: req.files?.panCard?.[0]?.path || "",
+
+      aadharFront: req.files?.aadharFront?.[0]?.path || "",
+
+      aadharBack: req.files?.aadharBack?.[0]?.path || "",
+
+      cancelCheque: req.files?.cancelCheque?.[0]?.path || "",
+
+      bankProof: req.files?.bankProof?.[0]?.path || "",
+
+      extraBankDoc: req.files?.extraBankDoc?.[0]?.path || "",
+    };
+
+    res.status(200).json({
+      success: true,
+      message: "Documents uploaded successfully",
+      data: documents,
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Upload failed",
+    });
+  }
+};
 module.exports = {
   submitBusinessForm,
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
   closeBusinessCase,
+  getSingleBusinessForm,
+  uploadDocBusiness,
 };

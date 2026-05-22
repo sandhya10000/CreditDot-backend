@@ -1,11 +1,15 @@
 const express = require("express");
-const upload = require("../middleware/multer");
+const createUploader = require("../middleware/upload");
+const upload = createUploader("business-documents");
+
 const {
   submitBusinessForm,
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
   closeBusinessCase,
+  getSingleBusinessForm,
+  uploadDocBusiness,
 } = require("../controllers/businessController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -47,5 +51,37 @@ router.get("/all", auth, rbac("admin"), getAllBusinessForms);
 //@desc put all business forms(admin only)
 //@access Private/Admin
 router.put("/admin/business/:id/close", auth, rbac("admin"), closeBusinessCase);
+
+// @route GET /api/business/customer/${customerId}
+// @desc get all bissiness form adminonly
+// @access private/Admin
+router.get(
+  "/business/customer/:customerId",
+  auth,
+  rbac("admin"),
+  getSingleBusinessForm,
+);
+
+// @route POST /api/franchise/uploadDocBusiness
+//@desc post business document franchise
+//@access private/franchise user
+router.post(
+  "/franchise/uploadDocBusiness",
+
+  auth,
+
+  rbac("franchise_user"),
+
+  upload.fields([
+    { name: "panCard", maxCount: 1 },
+    { name: "aadharFront", maxCount: 1 },
+    { name: "aadharBack", maxCount: 1 },
+    { name: "cancelCheque", maxCount: 1 },
+    { name: "bankProof", maxCount: 1 },
+    { name: "extraBankDoc", maxCount: 1 },
+  ]),
+
+  uploadDocBusiness,
+);
 
 module.exports = router;

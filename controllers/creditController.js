@@ -8,6 +8,9 @@ const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
+const puppeteer = require("puppeteer");
+const PDFDocument = require("pdfkit");
+const sharp = require("sharp");
 
 // Validation schema for credit check
 const creditCheckSchema = Joi.object({
@@ -33,6 +36,13 @@ const creditCheckSchema = Joi.object({
     .messages({
       "any.only":
         "Please select a valid credit bureau (equifax, experian, cibil, crif)",
+    }),
+  cibilApiType: Joi.string()
+    .valid("ongrid", "surepass")
+    .optional()
+    .default("ongrid")
+    .messages({
+      "any.only": "cibilApiType must be either ongrid or surepass",
     }),
   // Fields for all bureaus
   pan: Joi.string().optional(),
@@ -179,6 +189,7 @@ const getBureauConfig = (bureau) => {
 // Check credit score for specific bureau
 const checkCreditScore = async (req, res) => {
   try {
+    let franchise = null;
     // Validate request body
     const { error } = creditCheckSchema.validate(req.body, {
       abortEarly: false,
@@ -201,43 +212,46 @@ const checkCreditScore = async (req, res) => {
       dob,
       gender,
     } = req.body;
-    // Check same mobile/pan credit report in last 15 days
-    // Apply 15 days restriction ONLY for CIBIL
-    if (bureau === "cibil") {
-      const lastReport = await CreditReport.findOne({
-        mobile,
-        pan,
-        bureau,
-      }).sort({ createdAt: -1 });
 
-      if (lastReport) {
-        const lastDate = new Date(lastReport.createdAt);
-        const currentDate = new Date();
+    if (req.user.role !== "admin") {
+      // Check same mobile/pan credit report in last 15 days
+      // Apply 15 days restriction ONLY for CIBIL
+      if (bureau === "cibil") {
+        const lastReport = await CreditReport.findOne({
+          mobile,
+          pan,
+          bureau,
+        }).sort({ createdAt: -1 });
 
-        const diffTime = currentDate - lastDate;
-        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        if (lastReport) {
+          const lastDate = new Date(lastReport.createdAt);
+          const currentDate = new Date();
 
-        if (diffDays < 15) {
-          const remainingDays = Math.ceil(15 - diffDays);
+          const diffTime = currentDate - lastDate;
+          const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-          return res.status(400).json({
-            message: `This CIBIL report has already been downloaded. Try again after ${remainingDays} days.`,
-          });
+          if (diffDays < 15) {
+            const remainingDays = Math.ceil(15 - diffDays);
+
+            return res.status(400).json({
+              message: `This CIBIL report has already been downloaded. Try again after ${remainingDays} days.`,
+            });
+          }
         }
       }
-    }
 
-    // Get franchise details to check credits
-    const franchise = await Franchise.findById(req.user.franchiseId);
-    if (!franchise) {
-      return res.status(404).json({ message: "Franchise not found" });
-    }
+      // Get franchise details to check credits
+      franchise = await Franchise.findById(req.user.franchiseId);
+      if (!franchise) {
+        return res.status(404).json({ message: "Franchise not found" });
+      }
 
-    // Check if franchise has enough credits
-    if (franchise.credits < 1) {
-      return res
-        .status(400)
-        .json({ message: "Insufficient credits to generate credit report" });
+      //Check if franchise has enough credits
+      if (franchise.credits < 1) {
+        return res.status(400).json({
+          message: "Insufficient credits to generate credit report",
+        });
+      }
     }
 
     // Get Surepass API key
@@ -350,6 +364,43 @@ const checkCreditScore = async (req, res) => {
       }
     } catch (apiError) {
       console.error("API ERROR:", apiError);
+      if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
+        return res.status(504).json({
+          message:
+            "Request timeout when connecting to credit bureau. Please try again later.",
+          error: "TIMEOUT_ERROR",
+        });
+      }
+
+      // Handle network errors
+      if (apiError.isAxiosError && !apiError.response) {
+        return res.status(502).json({
+          message:
+            "Network error when connecting to credit bureau. Please check your internet connection and try again.",
+          error: "NETWORK_ERROR",
+        });
+      }
+
+      // Handle rate limiting specifically (HTTP 429)
+      if (apiError.response?.status === 429) {
+        console.error(
+          "Surepass API rate limit exceeded:",
+          apiError.response.data,
+        );
+        return res.status(429).json({
+          message:
+            "Too many requests to credit bureau. Please try again later.",
+          error: "RATE_LIMIT_EXCEEDED",
+        });
+      }
+
+      // Forward the error from Surepass API if available
+      if (apiError.response) {
+        return res.status(apiError.response.status).json({
+          message: "Credit check failed",
+          error: apiError.response.data || apiError.message,
+        });
+      }
 
       return res.status(500).json({
         message: "Credit bureau API failed",
@@ -404,10 +455,11 @@ const checkCreditScore = async (req, res) => {
         null;
     }
 
-    // Save credit report
-    const creditReport = new CreditReport({
+    const reportTableData = {
       userId: req.user.id,
-      franchiseId: req.user.franchiseId,
+
+      franchiseId: req.user.role === "admin" ? null : req.user.franchiseId,
+
       name,
       mobile,
       pan,
@@ -417,8 +469,12 @@ const checkCreditScore = async (req, res) => {
       score,
       bureau,
       reportData: response.data,
-      reportUrl: reportUrl,
-    });
+      reportUrl,
+    };
+
+    // Save credit report
+
+    const creditReport = new CreditReport(reportTableData);
 
     await creditReport.save();
 
@@ -434,47 +490,257 @@ const checkCreditScore = async (req, res) => {
     }
 
     // Deduct credit from franchise
-    franchise.credits -= 1;
-    await franchise.save();
+    if (req.user.role !== "admin" && franchise) {
+      franchise.credits -= 1;
+      await franchise.save();
+    }
 
     // If we have a report URL, download and save the PDF locally
     if (reportUrl) {
       try {
         // Create reports directory if it doesn't exist
         const reportsDir = path.join(__dirname, "../reports");
+
         if (!fs.existsSync(reportsDir)) {
           fs.mkdirSync(reportsDir, { recursive: true });
         }
 
-        // Generate a unique filename
+        // Generate unique filename
         const timestamp = Date.now();
         const filename = `credit_report_${creditReport._id}_${timestamp}.pdf`;
         const localPath = path.join(reportsDir, filename);
 
-        // Download the PDF with timeout
-        const pdfResponse = await axios({
-          method: "GET",
-          url: reportUrl,
-          responseType: "stream",
-          timeout: 30000, // 30 second timeout
-        });
+        // =========================================
+        // CIBIL LOGIC
+        // =========================================
+        if (bureau === "cibil") {
+          let pdfSaved = false;
 
-        // Save the PDF to local storage
-        const writer = fs.createWriteStream(localPath);
-        pdfResponse.data.pipe(writer);
+          // =========================================
+          // STEP 1: Try direct PDF download first
+          // =========================================
+          try {
+            console.log("Trying direct PDF download...");
 
-        // Wait for the download to complete
-        await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
-          writer.on("error", reject);
-        });
+            const pdfResponse = await axios({
+              method: "GET",
+              url: reportUrl,
+              responseType: "arraybuffer",
+              timeout: 30000,
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+              },
+            });
 
-        // Update the credit report with the local path
-        creditReport.localPath = `/reports/${filename}`;
-        await creditReport.save();
+            const contentType = pdfResponse.headers["content-type"];
+
+            console.log("Direct URL Content-Type:AAAA", contentType);
+
+            // If actual PDF
+            if (contentType && contentType.includes("application/pdf")) {
+              fs.writeFileSync(localPath, pdfResponse.data);
+
+              creditReport.localPath = `/reports/${filename}`;
+              await creditReport.save();
+
+              pdfSaved = true;
+
+              console.log("PDF downloaded directly successfully AAAA");
+            } else {
+              console.log("Direct URL is not a PDF. Using Puppeteer flow...");
+            }
+          } catch (directDownloadError) {
+            console.error(
+              "Direct PDF download failed:",
+              directDownloadError.message,
+            );
+          }
+
+          // =========================================
+          // STEP 2: Proper Print Page PDF
+          // =========================================
+          if (!pdfSaved) {
+            console.log("Launching proper print page PDF flow...");
+
+            let browser;
+
+            try {
+              browser = await puppeteer.launch({
+                headless: true,
+                args: [
+                  "--no-sandbox",
+                  "--disable-setuid-sandbox",
+                  "--disable-dev-shm-usage",
+                ],
+                defaultViewport: {
+                  width: 1440,
+                  height: 2200,
+                  deviceScaleFactor: 2,
+                },
+              });
+
+              const page = await browser.newPage();
+
+              await page.setUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+              );
+
+              // Open report page
+              await page.goto(reportUrl, {
+                waitUntil: "networkidle2",
+                timeout: 120000,
+              });
+
+              // Wait properly
+              await new Promise((resolve) => setTimeout(resolve, 10000));
+
+              // Get print URL
+              const relativeHref = await page.$eval(
+                'a[href*="creditReportPrint.page"]',
+                (el) => el.getAttribute("href"),
+              );
+
+              if (!relativeHref) {
+                throw new Error("Print URL not found");
+              }
+
+              const printUrl = new URL(relativeHref, reportUrl).href;
+
+              console.log("Print URL:", printUrl);
+
+              // Open PRINT PAGE
+              const printPage = await browser.newPage();
+
+              await printPage.setUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+              );
+
+              // Copy cookies/session
+              const cookies = await page.cookies();
+
+              await printPage.setCookie(...cookies);
+
+              // Open actual print page
+              await printPage.goto(printUrl, {
+                waitUntil: "networkidle2",
+                timeout: 120000,
+              });
+
+              // Wait for fonts & rendering
+              await printPage.evaluateHandle("document.fonts.ready");
+
+              await new Promise((resolve) => setTimeout(resolve, 8000));
+
+              // REMOVE problematic overlays/backgrounds
+              await printPage.addStyleTag({
+                content: `
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+
+        html,
+        body {
+          background: white !important;
+          color: black !important;
+        }
+
+        .modal,
+        .popup,
+        .overlay,
+        .loader,
+        .ads,
+        iframe {
+          display: none !important;
+        }
+
+        * {
+          box-shadow: none !important;
+          filter: none !important;
+          text-shadow: none !important;
+        }
+      `,
+              });
+
+              // Scroll page fully to trigger lazy rendering
+              await printPage.evaluate(async () => {
+                await new Promise((resolve) => {
+                  let totalHeight = 0;
+                  const distance = 500;
+
+                  const timer = setInterval(() => {
+                    window.scrollBy(0, distance);
+
+                    totalHeight += distance;
+
+                    if (totalHeight >= document.body.scrollHeight) {
+                      clearInterval(timer);
+                      resolve();
+                    }
+                  }, 200);
+                });
+              });
+
+              // Back to top
+              await printPage.evaluate(() => window.scrollTo(0, 0));
+
+              // Generate FINAL PDF
+              await printPage.pdf({
+                path: localPath,
+                format: "A4",
+                printBackground: true,
+                preferCSSPageSize: true,
+                displayHeaderFooter: false,
+                margin: {
+                  top: "10mm",
+                  bottom: "10mm",
+                  left: "10mm",
+                  right: "10mm",
+                },
+              });
+
+              creditReport.localPath = `/reports/${filename}`;
+              await creditReport.save();
+
+              pdfSaved = true;
+
+              console.log("CIBIL print page PDF generated successfully");
+            } catch (err) {
+              console.error("Print page PDF generation failed:", err.message);
+            } finally {
+              if (browser) {
+                await browser.close();
+              }
+            }
+          }
+        }
+
+        // =========================================
+        // OTHER BUREAUS
+        // =========================================
+        else {
+          const pdfResponse = await axios({
+            method: "GET",
+            url: reportUrl,
+            responseType: "stream",
+            timeout: 30000,
+          });
+
+          const writer = fs.createWriteStream(localPath);
+
+          pdfResponse.data.pipe(writer);
+
+          await new Promise((resolve, reject) => {
+            writer.on("finish", resolve);
+            writer.on("error", reject);
+          });
+
+          creditReport.localPath = `/reports/${filename}`;
+          await creditReport.save();
+        }
       } catch (downloadError) {
-        console.error("Error downloading PDF:", downloadError);
-        // We don't fail the entire request if PDF download fails
+        console.error("Error downloading/saving PDF:", downloadError);
       }
     }
 
@@ -492,8 +758,10 @@ const checkCreditScore = async (req, res) => {
         localPath: creditReport.localPath,
         createdAt: creditReport.createdAt,
       },
-      remainingCredits: franchise.credits,
+      remainingCredits:
+        req.user.role !== "admin" && franchise ? franchise.credits : null,
     });
+    console.log(response.data, "ongrid-----");
   } catch (error) {
     console.error("Credit check error:", error);
     res.status(500).json({
@@ -869,10 +1137,23 @@ const checkCreditScorePublic = async (req, res) => {
 // Get credit reports for franchise
 const getCreditReports = async (req, res) => {
   try {
-    const reports = await CreditReport.find({
-      franchiseId: req.user.franchiseId,
-    }).sort({ createdAt: -1 });
+    // const reports = await CreditReport.find({
+    //   franchiseId: req.user.franchiseId,
+    // }).sort({ createdAt: -1 });
 
+    // res.json(reports);
+    let reports;
+    if (req.user.role === "admin") {
+      reports = await CreditReport.find()
+        .populate("franchiseId", "name")
+        .sort({ createdAt: -1 });
+    } else {
+      reports = await CreditReport.find({
+        franchiseId: req.user.franchiseId,
+      })
+        .populate("franchiseId", "name")
+        .sort({ createdAt: -1 });
+    }
     res.json(reports);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -946,6 +1227,314 @@ const updateSurepassApiKey = async (req, res) => {
   }
 };
 
+//Get report for a particular user with customer Id
+
+const getSingleCreditReports = async (req, res) => {
+  try {
+    const { pan } = req.params;
+
+    const report = await CreditReport.findOne({ pan })
+      .populate("userId", "name email")
+      .populate("franchiseId", "businessName");
+
+    // Not found
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: "Credit report not found",
+      });
+    }
+
+    // Custom response
+    const formattedReport = {
+      _id: report._id,
+
+      panCard: report.pan,
+
+      bureau: report.bureau,
+
+      creditScore: report.score,
+
+      date: report.createdAt,
+
+      reportUrl: report.reportUrl,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: formattedReport,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+//Post api logic for cibil or cibilType ongrid and surepass , or crif,experian, equifax
+const checkCreditScoreV2 = async (req, res) => {
+  try {
+    // VALIDATION
+    const { error } = creditCheckSchema.validate(req.body, {
+      abortEarly: false,
+    });
+
+    if (error) {
+      return res.status(400).json({
+        message: "Validation error",
+        details: error.details.map((d) => d.message),
+      });
+    }
+
+    // REQUEST BODY
+    const {
+      name,
+      mobile,
+      bureau = "cibil",
+      cibilApiType = "ongrid",
+      pan,
+    } = req.body;
+
+    let response;
+
+    // API KEYS
+    const surepassApiKey = await getSurepassApiKeyValue();
+
+    const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
+
+    // =========================
+    // CIBIL -> ONGRID
+    // =========================
+    if (bureau === "cibil" && cibilApiType === "ongrid") {
+      const endpoint =
+        "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
+
+      const requestData = {
+        name,
+        pan,
+        mobile,
+        consent: "Y",
+      };
+
+      response = await axios.post(endpoint, requestData, {
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": gridlinesApiKey,
+          "X-Auth-Type": "API-Key",
+          "X-Reference-ID": `REF-${Date.now()}`,
+        },
+      });
+    }
+
+    // =========================
+    // CIBIL -> SUREPASS
+    // =========================
+    else if (bureau === "cibil" && cibilApiType === "surepass") {
+      const bureauConfig = getBureauConfig("cibil");
+
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+    }
+
+    // =========================
+    // OTHER BUREAUS
+    // =========================
+    else {
+      const bureauConfig = getBureauConfig(bureau);
+
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+    }
+
+    // =========================
+    // SCORE
+    // =========================
+    let score = null;
+
+    if (bureau === "cibil" && cibilApiType === "ongrid") {
+      score =
+        response?.data?.data?.report_data?.data?.cibil_data
+          ?.get_customer_assets_response?.get_customer_assets_success?.asset
+          ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+    } else {
+      score =
+        response?.data?.data?.score ||
+        response?.data?.data?.credit_score ||
+        null;
+    }
+
+    // =========================
+    // REPORT URL
+    // =========================
+    let reportUrl = null;
+
+    if (bureau === "cibil" && cibilApiType === "ongrid") {
+      reportUrl =
+        response?.data?.data?.report_data?.data?.cibil_report_url || null;
+    } else {
+      reportUrl =
+        response?.data?.data?.report_url ||
+        response?.data?.data?.pdf_url ||
+        response?.data?.data?.credit_report_link ||
+        null;
+    }
+
+    // =========================
+    // SAVE IN DATABASE
+    // =========================
+    const creditReport = new CreditReport({
+      userId: req.user?.id,
+      franchiseId: req.user?.franchiseId,
+
+      name,
+      mobile,
+      pan,
+
+      score,
+      bureau,
+
+      reportData: response.data,
+      reportUrl,
+    });
+
+    await creditReport.save();
+
+    // =========================
+    // DOWNLOAD PDF LOCALLY
+    // =========================
+    if (reportUrl) {
+      try {
+        // CREATE REPORTS FOLDER
+        const reportsDir = path.join(__dirname, "../reports");
+
+        if (!fs.existsSync(reportsDir)) {
+          fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        // FILE NAME
+        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+
+        const localFilePath = path.join(reportsDir, filename);
+
+        // DOWNLOAD PDF
+        const pdfResponse = await axios({
+          method: "GET",
+          url: reportUrl,
+          responseType: "stream",
+          timeout: 30000,
+        });
+
+        // SAVE PDF
+        const writer = fs.createWriteStream(localFilePath);
+
+        pdfResponse.data.pipe(writer);
+
+        await new Promise((resolve, reject) => {
+          writer.on("finish", resolve);
+          writer.on("error", reject);
+        });
+
+        // SAVE LOCAL PATH
+        creditReport.localPath = `/reports/${filename}`;
+
+        await creditReport.save();
+      } catch (downloadError) {
+        console.log("PDF DOWNLOAD ERROR", downloadError.message);
+      }
+    }
+
+    // =========================
+    // FINAL RESPONSE
+    // =========================
+    return res.status(200).json({
+      message: `${bureau.toUpperCase()} report fetched successfully`,
+      apiType: cibilApiType,
+
+      creditReport: {
+        id: creditReport._id,
+        name: creditReport.name,
+        mobile: creditReport.mobile,
+        pan: creditReport.pan,
+
+        bureau: creditReport.bureau,
+        score: creditReport.score,
+
+        reportUrl: creditReport.reportUrl,
+        localPath: creditReport.localPath,
+
+        createdAt: creditReport.createdAt,
+      },
+
+      data: response.data,
+    });
+  } catch (apiError) {
+    console.log("FULL API ERROR");
+    console.log(apiError);
+
+    // TIMEOUT
+    if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
+      return res.status(504).json({
+        message: "Request timeout",
+        error: "TIMEOUT_ERROR",
+      });
+    }
+
+    // NETWORK ERROR
+    if (apiError.isAxiosError && !apiError.response) {
+      return res.status(502).json({
+        message: "Network error",
+        error: "NETWORK_ERROR",
+      });
+    }
+
+    // RATE LIMIT
+    if (apiError?.response?.status === 429) {
+      return res.status(429).json({
+        message: "Too many requests",
+        error: "RATE_LIMIT_EXCEEDED",
+      });
+    }
+
+    if (apiError?.response) {
+      return res.status(apiError.response.status).json({
+        success: false,
+
+        message: apiError.response.data?.message || "Credit check failed",
+
+        error: apiError.response.data?.message_code || apiError.message,
+
+        data: apiError.response.data?.data || null,
+      });
+    }
+
+    // DEFAULT ERROR
+    return res.status(500).json({
+      message: "Credit bureau API failed",
+      error: apiError.message,
+    });
+  }
+};
+
 module.exports = {
   checkCreditScore,
   checkCreditScorePublic, // Add the new public function
@@ -955,4 +1544,6 @@ module.exports = {
   getSurepassApiKey,
   updateSurepassApiKey,
   getSurepassApiKeyValue, // Export the helper function
+  getSingleCreditReports,
+  checkCreditScoreV2,
 };

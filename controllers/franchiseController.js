@@ -37,6 +37,17 @@ const franchiseProfileSchema = Joi.object({
     .valid("pending", "submitted", "approved", "rejected")
     .optional(),
   isActive: Joi.boolean().optional(),
+  assignedPackages: Joi.array().items(Joi.string().allow(null)).optional(),
+  allPackages: Joi.object({
+    assigned: Joi.array().items(
+      Joi.object({
+        _id: Joi.string(),
+        name: Joi.string(),
+        price: Joi.number(),
+        creditsIncluded: Joi.number(),
+      }),
+    ),
+  }),
 });
 
 // Validation schema for PAN details
@@ -61,7 +72,7 @@ const getFranchiseProfile = async (req, res) => {
   try {
     const franchise = await Franchise.findOne({ userId: req.user.id }).populate(
       "userId",
-      "name email phone"
+      "name email phone",
     );
 
     if (!franchise) {
@@ -138,7 +149,7 @@ const getAllFranchises = async (req, res) => {
           allPackages: allPackages,
           packageHistory: franchise.packageHistory || [],
         };
-      })
+      }),
     );
 
     res.json(enhancedFranchises);
@@ -228,6 +239,22 @@ const updateFranchise = async (req, res) => {
       }
     }
 
+    if (
+      req.body.allPackages &&
+      req.body.allPackages.assigned &&
+      Array.isArray(req.body.allPackages.assigned)
+    ) {
+      for (const pkg of req.body.allPackages.assigned) {
+        if (pkg._id) {
+          await Package.findByIdAndUpdate(pkg._id, {
+            name: pkg.name,
+            price: pkg.price,
+            creditsIncluded: pkg.creditsIncluded,
+          });
+        }
+      }
+    }
+
     // Update franchise with all fields including credits if applicable
     Object.assign(franchise, req.body);
     await franchise.save();
@@ -251,7 +278,7 @@ const deactivateFranchise = async (req, res) => {
     const franchise = await Franchise.findByIdAndUpdate(
       req.params.id,
       { isActive: false },
-      { new: true }
+      { new: true },
     ).populate("userId", "name email phone");
 
     if (!franchise) {
@@ -276,7 +303,7 @@ const activateFranchise = async (req, res) => {
     const franchise = await Franchise.findByIdAndUpdate(
       req.params.id,
       { isActive: true },
-      { new: true }
+      { new: true },
     ).populate("userId", "name email phone");
 
     if (!franchise) {
@@ -300,7 +327,7 @@ const generateCertificate = async (req, res) => {
   try {
     const franchise = await Franchise.findOne({ userId: req.user.id }).populate(
       "userId",
-      "name email phone"
+      "name email phone",
     );
 
     if (!franchise) {
@@ -417,12 +444,10 @@ const fetchPanComprehensive = async (req, res) => {
     // Validate PAN format
     const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
     if (!panNumber || !panRegex.test(panNumber)) {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Invalid PAN number format. Please enter a valid PAN number (e.g., ABCDE1234F)",
-        });
+      return res.status(400).json({
+        message:
+          "Invalid PAN number format. Please enter a valid PAN number (e.g., ABCDE1234F)",
+      });
     }
 
     const franchise = await Franchise.findOne({ userId: req.user.id });
@@ -448,7 +473,7 @@ const fetchPanComprehensive = async (req, res) => {
     const response = await surepassClient.makePanVerificationRequest(
       apiKey,
       "https://kyc-api.surepass.io/api/v1/pan/pan-comprehensive",
-      { id_number: panNumber.toUpperCase() }
+      { id_number: panNumber.toUpperCase() },
     );
 
     // Check if the API response indicates success
@@ -601,7 +626,7 @@ const fetchBankVerification = async (req, res) => {
         id_number: bankAccountNumber,
         ifsc: bankIfscCode.toUpperCase(),
         ifsc_details: true,
-      }
+      },
     );
 
     // Check if the API response indicates success
