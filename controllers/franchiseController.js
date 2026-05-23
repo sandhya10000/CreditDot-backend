@@ -232,26 +232,11 @@ const updateFranchise = async (req, res) => {
 
         // Update the credits in the request body
         req.body.credits = totalCredits;
+        req.body.totalCreditsPurchased = totalCredits;
         // Preserve totalCreditsPurchased - it should only increase when packages are purchased, not assigned
       } else {
         // If no packages assigned, set credits to 0
         req.body.credits = 0;
-      }
-    }
-
-    if (
-      req.body.allPackages &&
-      req.body.allPackages.assigned &&
-      Array.isArray(req.body.allPackages.assigned)
-    ) {
-      for (const pkg of req.body.allPackages.assigned) {
-        if (pkg._id) {
-          await Package.findByIdAndUpdate(pkg._id, {
-            name: pkg.name,
-            price: pkg.price,
-            creditsIncluded: pkg.creditsIncluded,
-          });
-        }
       }
     }
 
