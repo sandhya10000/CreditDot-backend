@@ -18,6 +18,7 @@ const caseStudyRoutes = require("./routes/CaseStudyRoutes");
 const RewardRoutes = require("./routes/AdminRewardRoutes");
 const remarkRoutes = require("./routes/Remark");
 const CustomerBureauRoutes = require("./routes/CustomerBureau");
+
 // Load environment variables
 dotenv.config();
 
@@ -256,6 +257,7 @@ app.use("/api/franchise/reward", RewardRoutes);
 app.use("/api/franchise/case-studies", caseStudyRoutes);
 app.use("/api", remarkRoutes);
 app.use("/api", CustomerBureauRoutes);
+
 // Routes
 const PORT = process.env.PORT || 5000;
 
