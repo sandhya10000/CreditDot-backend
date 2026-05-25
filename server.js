@@ -8,9 +8,7 @@ const path = require("path");
 const { initializeReferralSettings } = require("./utils/referralUtils");
 const googleSheetsService = require("./utils/googleSheetsService");
 const GoogleSheet = require("./models/GoogleSheet");
-// this route is for dummy admin route
 
-const admindumyRoutes = require("./routes/adminDumy");
 const prefillRoutes = require("./routes/prefilledRoute");
 const businessRoutes = require("./routes/business");
 const marketingRoutes = require("./routes/marketingRoutes");
@@ -127,9 +125,6 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-
-//dummy admin api route
-app.use("/api/admin", admindumyRoutes);
 
 // Middleware
 app.use(express.json({ limit: "10mb" }));
