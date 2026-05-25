@@ -22,7 +22,7 @@ const router = express.Router();
 router.post(
   "/submit",
   auth,
-  rbac("franchise_user"),
+  rbac("franchise_user", "admin"),
 
   submitBusinessForm,
 );
@@ -70,7 +70,7 @@ router.post(
 
   auth,
 
-  rbac("franchise_user"),
+  rbac("franchise_user", "admin"),
 
   upload.fields([
     { name: "panCard", maxCount: 1 },
