@@ -97,7 +97,14 @@ const getDashboardStats = async (req, res) => {
     // Calculate revenue from customer packages (business forms)
     // We need to get the revenue from paid business forms that are linked to existing franchises
     const paidBusinessForms = await BusinessForm.aggregate([
-      { $match: { paymentStatus: "paid" } },
+      {
+        $match: {
+          $or: [
+            { paymentStatus: "paid" },
+            { manualAmount: { $gt: 0 } }, //admin manual entries
+          ],
+        },
+      },
       {
         $lookup: {
           from: "customerpackages",
@@ -106,18 +113,39 @@ const getDashboardStats = async (req, res) => {
           as: "package",
         },
       },
-      { $unwind: "$package" },
+      // { $unwind: "$package" },
+      // {
+      //   $lookup: {
+      //     from: "franchises",
+      //     localField: "franchiseId",
+      //     foreignField: "_id",
+      //     as: "franchise",
+      //   },
+      // },
+      // { $unwind: "$franchise" },
+      // { $match: { "franchise._id": { $exists: true } } }, // Only count revenue from existing franchises
+
+      // { $group: { _id: null, total: { $sum: "$package.price" } } },
+
       {
-        $lookup: {
-          from: "franchises",
-          localField: "franchiseId",
-          foreignField: "_id",
-          as: "franchise",
+        $addFields: {
+          finalAmount: {
+            $cond: [
+              { $gt: ["manualAmount", 0] },
+              "$manualAmount",
+              {
+                $ifNull: [{ $arrayElemAt: ["$package.price", 0] }, 0],
+              },
+            ],
+          },
         },
       },
-      { $unwind: "$franchise" },
-      { $match: { "franchise._id": { $exists: true } } }, // Only count revenue from existing franchises
-      { $group: { _id: null, total: { $sum: "$package.price" } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$finalAmount" },
+        },
+      },
     ]);
 
     const customerPackageRevenue =
