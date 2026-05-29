@@ -7,6 +7,26 @@ const businessFormSchema = new mongoose.Schema(
       ref: "Franchise",
       required: false, // Make optional for public submissions
     },
+    //below 3 fields added for admin
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+
+    createdByRole: {
+      type: String,
+      enum: [
+        "admin",
+        "franchise_user",
+        "relationship_manager",
+        "credit_analyst",
+      ],
+    },
+    entrySource: {
+      type: String,
+      enum: ["Franchise", "Direct Login"],
+      default: "Direct Login",
+    },
     //Add customer Id
     customerId: {
       type: String,
@@ -60,6 +80,11 @@ const businessFormSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    manualAmount: {
+      type: Number,
+      default: 0,
+    },
+
     fullAddress: {
       type: String,
       required: true,
@@ -93,11 +118,7 @@ const businessFormSchema = new mongoose.Schema(
       enum: ["pending", "paid", "failed"],
       default: "pending",
     },
-    paymentStatus: {
-      type: String,
-      enum: ["pending", "paid", "failed"],
-      default: "pending",
-    },
+
     //add new field to know  business status from admin
     workStatus: {
       type: String,

@@ -665,7 +665,20 @@ const fetchBankVerification = async (req, res) => {
     });
   }
 };
-
+const getAllFranchisesList = async (req, res) => {
+  try {
+    const franchises = await Franchise.find({}, " _id businessName ownerName");
+    res.status(200).json({
+      success: true,
+      data: franchises,
+    });
+  } catch (error) {
+    res.status(200).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 module.exports = {
   getFranchiseProfile,
   updateFranchiseProfile,
@@ -683,4 +696,5 @@ module.exports = {
   getBankDetails,
   updateBankDetails,
   fetchBankVerification,
+  getAllFranchisesList,
 };

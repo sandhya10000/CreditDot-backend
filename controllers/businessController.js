@@ -6,8 +6,12 @@ const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
-const { sendBusinessFormSubmissionEmail } = require("../utils/emailService");
+const {
+  sendBusinessFormSubmissionEmail,
+  sendBusinessWelcomeEmail,
+} = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
+const Transaction = require("../models/Transaction");
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -92,6 +96,7 @@ const validateBusinessForm = (data) => {
 };
 
 // Submit business form and initiate payment
+//need to be check here after all points clear
 const submitBusinessForm = async (req, res) => {
   try {
     const {
@@ -116,14 +121,30 @@ const submitBusinessForm = async (req, res) => {
       gender,
       bankAccountNumber,
       ifscCode,
+
+      //Admin
+      manualAmount,
+      franchiseId,
     } = req.body;
 
     // Check if selected package exists and is active
-    const customerPackage = await CustomerPackage.findById(selectedPackage);
-    if (!customerPackage || !customerPackage.isActive) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or inactive package selected" });
+    // const customerPackage = await CustomerPackage.findById(selectedPackage);
+    // if (!customerPackage || !customerPackage.isActive) {
+    //   return res
+    //     .status(400)
+    //     .json({ message: "Invalid or inactive package selected" });
+    // }
+    let customerPackage = null;
+
+    // Only validate package for non-admin users
+    if (selectedPackage) {
+      customerPackage = await CustomerPackage.findById(selectedPackage);
+
+      if (!customerPackage || !customerPackage.isActive) {
+        return res.status(400).json({
+          message: "Invalid or inactive package selected",
+        });
+      }
     }
 
     // Get last customer
@@ -144,7 +165,15 @@ const submitBusinessForm = async (req, res) => {
     // Create business form entry
     const businessForm = new BusinessForm({
       customerId: nextCustomerId,
-      franchiseId: req.user.franchiseId,
+      //Admin case franchiseId from body
+      //Franchise login case req.user.franchiseId
+
+      franchiseId: franchiseId || req.user.franchiseId || null,
+      createdBy: req.user._id,
+
+      createdByRole: req.user.role,
+      entrySource: req.user.role === "franchise" ? "Franchise" : "Direct Login",
+      manualAmount: Number(manualAmount) || 0,
       customerName,
       customerEmail: customerEmail.toLowerCase(),
       customerPhone,
@@ -161,7 +190,7 @@ const submitBusinessForm = async (req, res) => {
       loanAmount,
       loanPurpose,
       message,
-      selectedPackage,
+      selectedPackage: selectedPackage || null,
       dob,
       gender,
       bankAccountNumber,
@@ -169,7 +198,13 @@ const submitBusinessForm = async (req, res) => {
     });
 
     await businessForm.save();
+    try {
+      await sendBusinessWelcomeEmail(businessForm);
 
+      console.log("Sending mail to:", businessForm.customerEmail);
+    } catch (emailError) {
+      console.error("Welcome email failed:", emailError);
+    }
     // Sync with Google Sheets (Business Login tab only - franchise dashboard entries)
     try {
       await googleSheetsService.initialize();
@@ -179,6 +214,28 @@ const submitBusinessForm = async (req, res) => {
         "Failed to sync business form data with Google Sheets:",
         syncError,
       );
+    }
+    // ADMIN CASE → DIRECT SUCCESS
+    // =========================
+    if (!selectedPackage) {
+      //create manual transaction
+      await Transaction.create({
+        userId: req.user._id,
+        franchiseId: franchiseId || req.user.franchiseId,
+        amount: Number(manualAmount || 0),
+        currency: "INR",
+        orderId: `ADMIN_${Date.now()}`,
+        status: "paid",
+        paymentMethod: "admin_recharge",
+        remarks: "Admin manually created business",
+        metadata: {
+          businessFormId: businessForm._id,
+        },
+      });
+      return res.json({
+        message: "Business form submitted successfully",
+        businessFormId: businessForm._id,
+      });
     }
 
     // Create Razorpay order
