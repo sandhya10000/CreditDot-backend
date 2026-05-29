@@ -14,6 +14,8 @@ const {
   sendAccountCredentialsEmail,
   sendAdminNotificationEmail,
   sendRegistrationApprovalEmail,
+  sendRelationshipManagerEmail,
+  sendCreditAnalystEmail,
   sendRegistrationRejectionEmail,
 } = require("../utils/emailService");
 const {
@@ -740,29 +742,30 @@ const getAllFranchisesWithCredits = async (req, res) => {
 };
 
 // Create franchise user by admin (admin only)
+// Create franchise user by admin (admin only)
 const createFranchiseUser = async (req, res) => {
   try {
-    // Extract only the fields we're now accepting
-    const { name, email, assignedPackages } = req.body;
+    const { name, email, assignedPackages, role, subRole } = req.body;
 
-    // Set default values for required fields that are no longer provided in the form
-    const phone = "0000000000"; // Placeholder phone number
-    const state = "Not Provided"; // Placeholder state
-    const pincode = "000000"; // Placeholder pincode
-    const language = "en"; // Default language
+    // Default values
+    const phone = "0000000000";
+    const state = "Not Provided";
+    const pincode = "000000";
+    const language = "en";
 
-    // Check if user already exists
+    // Check existing user
     const existingUser = await User.findOne({ email });
+
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ message: "User already exists with this email" });
+      return res.status(400).json({
+        message: "User already exists with this email",
+      });
     }
 
-    // Generate a random password
+    // Generate password
     const tempPassword = Math.random().toString(36).slice(-8);
 
-    // Create user with placeholder/default values for required fields
+    // Create user
     const user = new User({
       name,
       email,
@@ -771,140 +774,134 @@ const createFranchiseUser = async (req, res) => {
       pincode,
       language,
       password: tempPassword,
-      role: "franchise_user",
-      isActive: true, // Activate user immediately when created by admin
-      isVerified: true, // Mark as verified since admin created this user
+      role: role || "franchise_user",
+      subRole: subRole || "franchise",
+      isActive: true,
+      isVerified: true,
     });
 
+    // SAVE USER
     await user.save();
 
-    // Create franchise record
-    const franchiseData = {
-      userId: user._id,
-      businessName: name,
-      ownerName: name,
-      email,
-      phone,
-      // Keep KYC status as pending - only registration is approved, not KYC
-      kycStatus: "pending",
-      agreementSigned: true,
-      agreementSignedAt: new Date(),
-      isActive: true,
-    };
+    // Default franchise
+    let franchise = null;
 
-    // Add assigned packages and credits if provided
-    if (
-      assignedPackages &&
-      Array.isArray(assignedPackages) &&
-      assignedPackages.length > 0
-    ) {
-      franchiseData.assignedPackages = assignedPackages;
+    // ONLY for franchise user
+    if (user.role === "franchise_user") {
+      const franchiseData = {
+        userId: user._id,
+        businessName: name,
+        ownerName: name,
+        email,
+        phone,
+        kycStatus: "pending",
+        agreementSigned: true,
+        agreementSignedAt: new Date(),
+        isActive: true,
+      };
 
-      // Add credits from assigned packages
-      const packages = await Package.find({ _id: { $in: assignedPackages } });
-      let totalCredits = 0;
-      packages.forEach((pkg) => {
-        totalCredits += pkg.creditsIncluded || 0;
-      });
+      // Packages
+      if (
+        assignedPackages &&
+        Array.isArray(assignedPackages) &&
+        assignedPackages.length > 0
+      ) {
+        franchiseData.assignedPackages = assignedPackages;
 
-      // Calculate total price of packages
-      const totalPrice = packages.reduce(
-        (sum, pkg) => sum + (pkg.price || 0),
-        0,
-      );
-
-      // Set initial credits
-      franchiseData.credits = totalCredits;
-      franchiseData.totalCreditsPurchased = totalCredits;
-
-      // Update digital agreement with package details
-      try {
-        await updateAgreementPackageDetails(user._id, {
-          price: `Rs. ${totalPrice}`,
-          name: packages[0]?.name || "Package",
-          credits: totalCredits,
+        const packages = await Package.find({
+          _id: { $in: assignedPackages },
         });
-      } catch (agreementError) {
-        console.error(
-          "Failed to update digital agreement with package details for new franchise:",
-          agreementError,
+
+        let totalCredits = 0;
+
+        packages.forEach((pkg) => {
+          totalCredits += pkg.creditsIncluded || 0;
+        });
+
+        const totalPrice = packages.reduce(
+          (sum, pkg) => sum + (pkg.price || 0),
+          0,
         );
+
+        franchiseData.credits = totalCredits;
+        franchiseData.totalCreditsPurchased = totalCredits;
+
+        // Agreement update
+        try {
+          await updateAgreementPackageDetails(user._id, {
+            price: `Rs. ${totalPrice}`,
+            name: packages[0]?.name || "Package",
+            credits: totalCredits,
+          });
+        } catch (agreementError) {
+          console.error("Agreement update failed:", agreementError);
+        }
       }
+
+      franchise = new Franchise(franchiseData);
+
+      await franchise.save();
+
+      console.log("Franchise saved:", franchise);
     }
 
-    const franchise = new Franchise(franchiseData);
+    // =========================
+    // SEND EMAILS
+    // =========================
 
-    await franchise.save();
-
-    // Send account credentials email to user
     try {
-      // Log email configuration status for debugging
-      console.log(
-        "Attempting to send registration approval email to:",
-        user.email,
-      );
-      console.log("Temp password generated:", tempPassword ? "Yes" : "No");
-      console.log("Assigned packages:", franchise.assignedPackages);
+      if (user.subRole === "relationship_manager") {
+        await sendRelationshipManagerEmail(user, tempPassword);
 
-      await sendRegistrationApprovalEmail(user, franchise, tempPassword);
-      console.log(
-        "Successfully sent registration approval email to user:",
-        user.email,
-      );
+        console.log("RM mail sent");
+      } else if (user.subRole === "credit_analyst") {
+        await sendCreditAnalystEmail(user, tempPassword);
+
+        console.log("CA mail sent");
+      } else if (user.subRole === "franchise") {
+        await sendRegistrationApprovalEmail(user, franchise, tempPassword);
+
+        console.log("Franchise mail sent");
+      }
     } catch (emailError) {
-      console.error(
-        "Failed to send registration approval email to user:",
-        user.email,
-        emailError,
-      );
-      console.error("Email error details:", {
-        message: emailError.message,
-        code: emailError.code,
-        stack: emailError.stack,
-      });
-      // Don't fail the creation if email sending fails
+      console.error("Mail sending failed:", emailError);
     }
 
-    // Send notification email to admin
+    // Admin notification
     try {
       await sendAdminNotificationEmail(user);
     } catch (emailError) {
-      console.error("Failed to send admin notification email:", emailError);
-      // Don't fail the creation if email sending fails
+      console.error("Admin notification failed:", emailError);
     }
 
-    // Trigger sync to Google Sheets for new registration
+    // Google sheet sync
     try {
       const initialized = await googleSheetsService.initialize();
+
       if (initialized) {
-        // Sync registration data to Google Sheets
         await googleSheetsService.syncRegistrationData();
-        console.log("Successfully synced new franchise user to Google Sheets");
-      } else {
-        console.error("Failed to initialize Google Sheets service for sync");
+
+        console.log("Google sheet synced");
       }
     } catch (syncError) {
-      console.error(
-        "Failed to sync new franchise user to Google Sheets:",
-        syncError,
-      );
-      // Don't fail the creation if sync fails
+      console.error("Google sheet sync failed:", syncError);
     }
 
-    res.status(201).json({
-      message:
-        "Franchise user created successfully. Login credentials sent to user email.",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
+    // FINAL RESPONSE
+    return res.status(201).json({
+      success: true,
+      message: `${user.role} created successfully`,
+      user,
       franchise,
     });
   } catch (error) {
     console.error("Create franchise user error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 

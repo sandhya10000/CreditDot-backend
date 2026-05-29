@@ -58,7 +58,7 @@ const register = async (req, res) => {
       language,
       password,
       referralId,
-    } = req.body; 
+    } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -89,7 +89,7 @@ const register = async (req, res) => {
     } catch (syncError) {
       console.error(
         "Failed to sync registration data with Google Sheets:",
-        syncError
+        syncError,
       );
     }
 
@@ -149,7 +149,7 @@ const register = async (req, res) => {
     } catch (emailError) {
       console.error(
         "Failed to send registration notification to admin:",
-        emailError
+        emailError,
       );
       // Don't fail the registration if email sending fails
     }
@@ -159,12 +159,12 @@ const register = async (req, res) => {
       try {
         // We could implement this if needed, but for now we'll just log it
         console.log(
-          `User ${email} registered through referral ${referral._id}`
+          `User ${email} registered through referral ${referral._id}`,
         );
       } catch (emailError) {
         console.error(
           "Failed to send referral confirmation email:",
-          emailError
+          emailError,
         );
       }
     }
@@ -262,6 +262,7 @@ const login = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        subRole: user.subRole,
       },
     });
   } catch (error) {
@@ -341,8 +342,8 @@ const requestPasswordReset = async (req, res) => {
     }
 
     // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
     // Set token expiration (1 hour)
     const resetExpires = Date.now() + 3600000; // 1 hour
 
@@ -355,7 +356,8 @@ const requestPasswordReset = async (req, res) => {
     try {
       await sendPasswordResetEmail(user, resetToken);
       res.json({
-        message: "Password reset link sent to your email. Please check your inbox.",
+        message:
+          "Password reset link sent to your email. Please check your inbox.",
       });
     } catch (emailError) {
       console.error("Failed to send password reset email:", emailError);
@@ -375,11 +377,13 @@ const resetPassword = async (req, res) => {
     // Find user with this token and check if it's not expired
     const user = await User.findOne({
       resetPasswordToken: token,
-      resetPasswordExpires: { $gt: Date.now() }
+      resetPasswordExpires: { $gt: Date.now() },
     });
 
     if (!user) {
-      return res.status(400).json({ message: "Password reset token is invalid or has expired" });
+      return res
+        .status(400)
+        .json({ message: "Password reset token is invalid or has expired" });
     }
 
     // Set new password
