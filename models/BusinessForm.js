@@ -15,7 +15,12 @@ const businessFormSchema = new mongoose.Schema(
 
     createdByRole: {
       type: String,
-      enum: ["admin", "franchise", "relationship_manager", "credit_analyst"],
+      enum: [
+        "admin",
+        "franchise_user",
+        "relationship_manager",
+        "credit_analyst",
+      ],
     },
     entrySource: {
       type: String,

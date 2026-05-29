@@ -6,7 +6,10 @@ const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
-const { sendBusinessFormSubmissionEmail } = require("../utils/emailService");
+const {
+  sendBusinessFormSubmissionEmail,
+  sendBusinessWelcomeEmail,
+} = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const Transaction = require("../models/Transaction");
 
@@ -195,7 +198,13 @@ const submitBusinessForm = async (req, res) => {
     });
 
     await businessForm.save();
+    try {
+      await sendBusinessWelcomeEmail(businessForm);
 
+      console.log("Sending mail to:", businessForm.customerEmail);
+    } catch (emailError) {
+      console.error("Welcome email failed:", emailError);
+    }
     // Sync with Google Sheets (Business Login tab only - franchise dashboard entries)
     try {
       await googleSheetsService.initialize();

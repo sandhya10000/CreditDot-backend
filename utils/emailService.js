@@ -444,6 +444,42 @@ const sendBusinessFormSubmissionEmail = async (
 
   return transporter.sendMail(mailOptions);
 };
+const sendBusinessWelcomeEmail = async (businessForm) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in>',
+
+    to: businessForm.customerEmail,
+
+    subject: "Welcome to Credit Dost",
+
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <h2>Welcome to Credit Dost</h2>
+
+        <p>Hello ${businessForm.customerName},</p>
+
+        <p>
+          Thank you for submitting your application with 
+          <strong>Credit Dost</strong>.
+        </p>
+
+        <p>
+          We have successfully received your details.
+          Our team will contact you shortly.
+        </p>
+
+        <br/>
+
+        <p>
+          Best regards,<br/>
+          <strong>Credit Dost Team</strong>
+        </p>
+      </div>
+    `,
+  };
+
+  return transporter.sendMail(mailOptions);
+};
 
 // Send referral email to referred user
 const sendReferralEmail = async (referral, referrerFranchise) => {
@@ -860,6 +896,7 @@ module.exports = {
   sendLeadApprovalEmail,
   sendLeadRejectionEmail,
   sendBusinessFormSubmissionEmail,
+  sendBusinessWelcomeEmail,
   sendReferralEmail,
   sendCreditReportEmail, // Add the new email function
   sendContactFormEmail,
