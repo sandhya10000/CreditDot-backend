@@ -155,6 +155,22 @@ const sendCreditAnalystEmail = async (user, tempPassword) => {
         </p>
 
         <p>Please login and change your password.</p>
+         <p>
+          Visit our website:
+          <a href="https://creditdost.co.in/" target="_blank">
+            www.creditdost.co.in
+          </a>
+        </p>
+
+        <br/>
+
+        <p>
+          Best regards,<br/>
+          <strong>Credit Dost Team</strong><br/>
+          <a href="https://creditdost.co.in/" target="_blank">
+            https://creditdost.co.in/
+          </a>
+        </p>
       `,
     };
 
@@ -192,6 +208,22 @@ const sendRelationshipManagerEmail = async (user, tempPassword) => {
         </p>
 
         <p>Please login and change your password.</p>
+         <p>
+          Visit our website:
+          <a href="https://creditdost.co.in/" target="_blank">
+            www.creditdost.co.in
+          </a>
+        </p>
+
+        <br/>
+
+        <p>
+          Best regards,<br/>
+          <strong>Credit Dost Team</strong><br/>
+          <a href="https://creditdost.co.in/" target="_blank">
+            https://creditdost.co.in/
+          </a>
+        </p>
       `,
     };
 
@@ -471,8 +503,20 @@ const sendBusinessWelcomeEmail = async (businessForm) => {
         <br/>
 
         <p>
+          Visit our website:
+          <a href="https://creditdost.co.in/" target="_blank">
+            www.creditdost.co.in
+          </a>
+        </p>
+
+        <br/>
+
+        <p>
           Best regards,<br/>
-          <strong>Credit Dost Team</strong>
+          <strong>Credit Dost Team</strong><br/>
+          <a href="https://creditdost.co.in/" target="_blank">
+            https://creditdost.co.in/
+          </a>
         </p>
       </div>
     `,
