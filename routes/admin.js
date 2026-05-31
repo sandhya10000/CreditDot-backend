@@ -257,6 +257,6 @@ router.put(
 //@route GET /api/admin/download-status
 //@desc GET Franchise download report count in admin
 //@access  Private/Admin
-router.get("/admin/download-stats", auth, rbac("admin"), getDownloadStats);
+router.get("/download-stats", auth, rbac("admin"), getDownloadStats);
 
 module.exports = router;
