@@ -8,9 +8,6 @@ const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
-const puppeteer = require("puppeteer");
-const PDFDocument = require("pdfkit");
-const sharp = require("sharp");
 
 // Validation schema for credit check
 const creditCheckSchema = Joi.object({
@@ -263,106 +260,95 @@ const checkCreditScore = async (req, res) => {
     }
 
     //Get Gridline API key
-    const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
+    // const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
 
-    if (!gridlinesApiKey) {
-      return res.status(500).json({
-        message: "Gridlines API key not configured",
-      });
-    }
-
-    // Get the appropriate endpoint and data formatter for the bureau
-    // const bureauConfig = getBureauConfig(bureau);
-
-    // // Prepare request data based on bureau requirements
-    // const requestData = bureauConfig.formatData({
-    //   name,
-    //   mobile,
-    //   personId,
-    //   pan,
-    //   aadhaar,
-    //   dob,
-    //   gender,
-    //   // Pass through Equifax-specific fields if provided
-    //   id_number: req.body.id_number || null,
-    //   id_type: req.body.id_type || null,
-    // });
-
-    // // Make request to Surepass API with rate limiting and retry logic
-    // let response;
-    // try {
-    //   response = await surepassClient.makeCreditCheckRequest(
-    //     apiKey,
-    //     bureauConfig.endpoint,
-    //     requestData,
-    //   );
+    // if (!gridlinesApiKey) {
+    //   return res.status(500).json({
+    //     message: "Gridlines API key not configured",
+    //   });
     // }
 
-    // Gridlines endpoint
-    const endpoint =
-      "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
+    // Get the appropriate endpoint and data formatter for the bureau
+    const bureauConfig = getBureauConfig(bureau);
 
-    // Request Body
-    const requestData = {
+    // // Prepare request data based on bureau requirements
+    const requestData = bureauConfig.formatData({
       name,
       mobile,
+      personId,
       pan,
-      consent: "Y",
-    };
+      aadhaar,
+      dob,
+      gender,
+      // Pass through Equifax-specific fields if provided
+      id_number: req.body.id_number || null,
+      id_type: req.body.id_type || null,
+    });
 
+    // // Make request to Surepass API with rate limiting and retry logic
     let response;
-
     try {
-      // =========================
-      // CIBIL -> GRIDLINES
-      // =========================
-      if (bureau === "cibil") {
-        const endpoint =
-          "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
-
-        const requestData = {
-          name,
-          mobile,
-          pan,
-          consent: "Y",
-        };
-
-        response = await axios.post(endpoint, requestData, {
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": gridlinesApiKey,
-            "X-Auth-Type": "API-Key",
-            "X-Reference-ID": `REF-${Date.now()}`,
-          },
-          timeout: 30000,
-        });
-      }
-
-      // =========================
-      // EXPERIAN / EQUIFAX / CRIF -> SUREPASS
-      // =========================
-      else {
-        const bureauConfig = getBureauConfig(bureau);
-
-        const requestData = bureauConfig.formatData({
-          name,
-          mobile,
-          personId,
-          pan,
-          aadhaar,
-          dob,
-          gender,
-          id_number: req.body.id_number || null,
-          id_type: req.body.id_type || null,
-        });
-
-        response = await surepassClient.makeCreditCheckRequest(
-          surepassApiKey,
-          bureauConfig.endpoint,
-          requestData,
-        );
-      }
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
     } catch (apiError) {
+      //let response;
+
+      // try {
+      //   // =========================
+      //   // CIBIL -> GRIDLINES
+      //   // =========================
+      //   if (bureau === "cibil") {
+      //     const endpoint =
+      //       "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
+
+      //     const requestData = {
+      //       name,
+      //       mobile,
+      //       pan,
+      //       require_pdf: "true",
+      //       consent: "Y",
+      //     };
+
+      //     response = await axios.post(endpoint, requestData, {
+      //       headers: {
+      //         "Content-Type": "application/json",
+      //         "X-API-Key": gridlinesApiKey,
+      //         "X-Auth-Type": "API-Key",
+      //         "X-Reference-ID": `REF-${Date.now()}`,
+      //       },
+      //       timeout: 30000,
+      //     });
+      //   }
+
+      //   // =========================
+      //   // EXPERIAN / EQUIFAX / CRIF -> SUREPASS
+      //   // =========================
+      //   else {
+      //     const bureauConfig = getBureauConfig(bureau);
+
+      //     const requestData = bureauConfig.formatData({
+      //       name,
+      //       mobile,
+      //       personId,
+      //       pan,
+      //       aadhaar,
+      //       dob,
+      //       gender,
+      //       id_number: req.body.id_number || null,
+      //       id_type: req.body.id_type || null,
+      //     });
+
+      //     response = await surepassClient.makeCreditCheckRequest(
+      //       surepassApiKey,
+      //       bureauConfig.endpoint,
+      //       requestData,
+      //     );
+      //   }
+      // }
+
       console.error("API ERROR:", apiError);
       if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
         return res.status(504).json({
@@ -395,12 +381,13 @@ const checkCreditScore = async (req, res) => {
       }
 
       // Forward the error from Surepass API if available
-      if (apiError.response) {
-        return res.status(apiError.response.status).json({
-          message: "Credit check failed",
-          error: apiError.response.data || apiError.message,
-        });
-      }
+      console.log("STATUS:", apiError.response.status);
+      console.log("RESPONSE:", JSON.stringify(apiError.response.data, null, 2));
+
+      return res.status(apiError.response.status).json({
+        message: "Credit check failed",
+        error: apiError.response.data,
+      });
 
       return res.status(500).json({
         message: "Credit bureau API failed",
@@ -409,51 +396,51 @@ const checkCreditScore = async (req, res) => {
     }
 
     // Extract score from response based on bureau
-    // let score = null;
-    // if (response.data.data && response.data.data.score) {
-    //   score = response.data.data.score;
-    // } else if (response.data.data && response.data.data.credit_score) {
-    //   score = response.data.data.credit_score;
-    // }
     let score = null;
-
-    if (bureau === "cibil") {
-      score =
-        response?.data?.data?.report_data?.data?.cibil_data
-          ?.get_customer_assets_response?.get_customer_assets_success?.asset
-          ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
-    } else {
-      score =
-        response?.data?.data?.score ||
-        response?.data?.data?.credit_score ||
-        null;
+    if (response.data.data && response.data.data.score) {
+      score = response.data.data.score;
+    } else if (response.data.data && response.data.data.credit_score) {
+      score = response.data.data.credit_score;
     }
+    // let score = null;
 
-    console.log("Risk Score:", score);
-
-    // Extract report URL from response
-    // let reportUrl = null;
-    // if (response.data.data) {
-    //   // Check for various possible report URL fields
-    //   reportUrl =
-    //     response.data.data.report_url ||
-    //     response.data.data.pdf_url ||
-    //     response.data.data.credit_report_link ||
-    //     response.data.data.report_link ||
+    // if (bureau === "cibil") {
+    //   score =
+    //     response?.data?.data?.report_data?.data?.cibil_data
+    //       ?.get_customer_assets_response?.get_customer_assets_success?.asset
+    //       ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+    // } else {
+    //   score =
+    //     response?.data?.data?.score ||
+    //     response?.data?.data?.credit_score ||
     //     null;
     // }
-    let reportUrl = null;
 
-    if (bureau === "cibil") {
+    // console.log("Risk Score:", score);
+
+    // Extract report URL from response
+    let reportUrl = null;
+    if (response.data.data) {
+      // Check for various possible report URL fields
       reportUrl =
-        response?.data?.data?.report_data?.data?.cibil_report_url || null;
-    } else {
-      reportUrl =
-        response?.data?.data?.report_url ||
-        response?.data?.data?.pdf_url ||
-        response?.data?.data?.credit_report_link ||
+        response.data.data.report_url ||
+        response.data.data.pdf_url ||
+        response.data.data.credit_report_link ||
+        response.data.data.report_link ||
         null;
     }
+    // let reportUrl = null;
+
+    // if (bureau === "cibil") {
+    //   reportUrl =
+    //     response?.data?.data?.report_data?.data?.cibil_report_url || null;
+    // } else {
+    //   reportUrl =
+    //     response?.data?.data?.report_url ||
+    //     response?.data?.data?.pdf_url ||
+    //     response?.data?.data?.credit_report_link ||
+    //     null;
+    // }
 
     const reportTableData = {
       userId: req.user.id,
@@ -513,232 +500,29 @@ const checkCreditScore = async (req, res) => {
         // =========================================
         // CIBIL LOGIC
         // =========================================
-        if (bureau === "cibil") {
-          let pdfSaved = false;
+        const pdfResponse = await axios({
+          method: "GET",
+          url: reportUrl,
+          responseType: "stream",
+          timeout: 30000,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        });
+        const writer = fs.createWriteStream(localPath);
 
-          // =========================================
-          // STEP 1: Try direct PDF download first
-          // =========================================
-          try {
-            console.log("Trying direct PDF download...");
+        pdfResponse.data.pipe(writer);
 
-            const pdfResponse = await axios({
-              method: "GET",
-              url: reportUrl,
-              responseType: "arraybuffer",
-              timeout: 30000,
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-              },
-            });
+        await new Promise((resolve, reject) => {
+          writer.on("finish", resolve);
+          writer.on("error", reject);
+        });
 
-            const contentType = pdfResponse.headers["content-type"];
+        creditReport.localPath = `/reports/${filename}`;
+        await creditReport.save();
 
-            console.log("Direct URL Content-Type:AAAA", contentType);
-
-            // If actual PDF
-            if (contentType && contentType.includes("application/pdf")) {
-              fs.writeFileSync(localPath, pdfResponse.data);
-
-              creditReport.localPath = `/reports/${filename}`;
-              await creditReport.save();
-
-              pdfSaved = true;
-
-              console.log("PDF downloaded directly successfully AAAA");
-            } else {
-              console.log("Direct URL is not a PDF. Using Puppeteer flow...");
-            }
-          } catch (directDownloadError) {
-            console.error(
-              "Direct PDF download failed:",
-              directDownloadError.message,
-            );
-          }
-
-          // =========================================
-          // STEP 2: Proper Print Page PDF
-          // =========================================
-          if (!pdfSaved) {
-            console.log("Launching proper print page PDF flow...");
-
-            let browser;
-
-            try {
-              browser = await puppeteer.launch({
-                headless: true,
-                args: [
-                  "--no-sandbox",
-                  "--disable-setuid-sandbox",
-                  "--disable-dev-shm-usage",
-                ],
-                defaultViewport: {
-                  width: 1440,
-                  height: 2200,
-                  deviceScaleFactor: 2,
-                },
-              });
-
-              const page = await browser.newPage();
-
-              await page.setUserAgent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-              );
-
-              // Open report page
-              await page.goto(reportUrl, {
-                waitUntil: "networkidle2",
-                timeout: 120000,
-              });
-
-              // Wait properly
-              await new Promise((resolve) => setTimeout(resolve, 10000));
-
-              // Get print URL
-              const relativeHref = await page.$eval(
-                'a[href*="creditReportPrint.page"]',
-                (el) => el.getAttribute("href"),
-              );
-
-              if (!relativeHref) {
-                throw new Error("Print URL not found");
-              }
-
-              const printUrl = new URL(relativeHref, reportUrl).href;
-
-              console.log("Print URL:", printUrl);
-
-              // Open PRINT PAGE
-              const printPage = await browser.newPage();
-
-              await printPage.setUserAgent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-              );
-
-              // Copy cookies/session
-              const cookies = await page.cookies();
-
-              await printPage.setCookie(...cookies);
-
-              // Open actual print page
-              await printPage.goto(printUrl, {
-                waitUntil: "networkidle2",
-                timeout: 120000,
-              });
-
-              // Wait for fonts & rendering
-              await printPage.evaluateHandle("document.fonts.ready");
-
-              await new Promise((resolve) => setTimeout(resolve, 8000));
-
-              // REMOVE problematic overlays/backgrounds
-              await printPage.addStyleTag({
-                content: `
-        * {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-        }
-
-        html,
-        body {
-          background: white !important;
-          color: black !important;
-        }
-
-        .modal,
-        .popup,
-        .overlay,
-        .loader,
-        .ads,
-        iframe {
-          display: none !important;
-        }
-
-        * {
-          box-shadow: none !important;
-          filter: none !important;
-          text-shadow: none !important;
-        }
-      `,
-              });
-
-              // Scroll page fully to trigger lazy rendering
-              await printPage.evaluate(async () => {
-                await new Promise((resolve) => {
-                  let totalHeight = 0;
-                  const distance = 500;
-
-                  const timer = setInterval(() => {
-                    window.scrollBy(0, distance);
-
-                    totalHeight += distance;
-
-                    if (totalHeight >= document.body.scrollHeight) {
-                      clearInterval(timer);
-                      resolve();
-                    }
-                  }, 200);
-                });
-              });
-
-              // Back to top
-              await printPage.evaluate(() => window.scrollTo(0, 0));
-
-              // Generate FINAL PDF
-              await printPage.pdf({
-                path: localPath,
-                format: "A4",
-                printBackground: true,
-                preferCSSPageSize: true,
-                displayHeaderFooter: false,
-                margin: {
-                  top: "10mm",
-                  bottom: "10mm",
-                  left: "10mm",
-                  right: "10mm",
-                },
-              });
-
-              creditReport.localPath = `/reports/${filename}`;
-              await creditReport.save();
-
-              pdfSaved = true;
-
-              console.log("CIBIL print page PDF generated successfully");
-            } catch (err) {
-              console.error("Print page PDF generation failed:", err.message);
-            } finally {
-              if (browser) {
-                await browser.close();
-              }
-            }
-          }
-        }
-
-        // =========================================
-        // OTHER BUREAUS
-        // =========================================
-        else {
-          const pdfResponse = await axios({
-            method: "GET",
-            url: reportUrl,
-            responseType: "stream",
-            timeout: 30000,
-          });
-
-          const writer = fs.createWriteStream(localPath);
-
-          pdfResponse.data.pipe(writer);
-
-          await new Promise((resolve, reject) => {
-            writer.on("finish", resolve);
-            writer.on("error", reject);
-          });
-
-          creditReport.localPath = `/reports/${filename}`;
-          await creditReport.save();
-        }
+        console.log("PDF downloaded successfully");
       } catch (downloadError) {
         console.error("Error downloading/saving PDF:", downloadError);
       }

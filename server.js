@@ -9,14 +9,6 @@ const { initializeReferralSettings } = require("./utils/referralUtils");
 const googleSheetsService = require("./utils/googleSheetsService");
 const GoogleSheet = require("./models/GoogleSheet");
 
-const prefillRoutes = require("./routes/prefilledRoute");
-const businessRoutes = require("./routes/business");
-const marketingRoutes = require("./routes/marketingRoutes");
-const caseStudyRoutes = require("./routes/CaseStudyRoutes");
-const RewardRoutes = require("./routes/AdminRewardRoutes");
-const remarkRoutes = require("./routes/Remark");
-const CustomerBureauRoutes = require("./routes/CustomerBureau");
-
 // Load environment variables
 dotenv.config();
 
@@ -149,21 +141,20 @@ const corsOptions = {
     if (!origin) return callback(null, true);
 
     // List of allowed origins - easily expandable for additional origins
-    // const allowedOrigins = [
-    //   process.env.FRONTEND_URL || "http://localhost:5173",
-    //   "https://reactbackend.creditdost.co.in",
-    //   "https://creditdost.co.in",
-    //   "https://www.creditdost.co.in",
-    //   "https://www.reactbackend.creditdost.co.in",
-
-    // ];
-    //for local testing url change
     const allowedOrigins = [
       process.env.FRONTEND_URL || "http://localhost:5173",
-
-      // "https://creditdost.co.in",
-      // "https://www.creditdost.co.in",
+      "https://reactbackend.creditdost.co.in",
+      "https://creditdost.co.in",
+      "https://www.creditdost.co.in",
+      "https://www.reactbackend.creditdost.co.in",
     ];
+    // //for local testing url change
+    // const allowedOrigins = [
+    //   process.env.FRONTEND_URL || "http://localhost:5173",
+
+    //   // "https://creditdost.co.in",
+    //   // "https://www.creditdost.co.in",
+    // ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
@@ -237,21 +228,21 @@ console.log("Analytics route registered");
 // Error handling middleware
 app.use(require("./middleware/errorHandler"));
 //  MOUNT ROUTE
-app.use("/api", prefillRoutes);
-app.use("/api", businessRoutes);
+app.use("/api", require("./routes/prefilledRoute"));
+app.use("/api", require("./routes/business"));
 //post upload api route
-app.use("/api/admin/marketing", marketingRoutes);
-app.use("/api/admin/case-studies", caseStudyRoutes);
+app.use("/api/admin/marketing", require("./routes/marketingRoutes"));
+app.use("/api/admin/case-studies", require("./routes/CaseStudyRoutes"));
 //get api for case study
 //get api upload
-app.use("/api/marketing", marketingRoutes);
+app.use("/api/marketing", require("./routes/marketingRoutes"));
 //post admin reward route url
-app.use("/api/admin/reward", RewardRoutes);
+app.use("/api/admin/reward", require("./routes/AdminRewardRoutes"));
 //get api
-app.use("/api/franchise/reward", RewardRoutes);
-app.use("/api/franchise/case-studies", caseStudyRoutes);
-app.use("/api", remarkRoutes);
-app.use("/api", CustomerBureauRoutes);
+app.use("/api/franchise/reward", require("./routes/AdminRewardRoutes"));
+app.use("/api/franchise/case-studies", require("./routes/CaseStudyRoutes"));
+app.use("/api", require("./routes/Remark"));
+app.use("/api", require("./routes/CustomerBureau"));
 
 // Routes
 const PORT = process.env.PORT || 5000;
