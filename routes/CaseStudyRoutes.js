@@ -4,6 +4,8 @@ const router = express.Router();
 const {
   createCaseStudy,
   getCaseStudies,
+  updateCaseStudy,
+  deleteCaseStudy,
 } = require("../controllers/CaseStudyController");
 
 const createUploader = require("../middleware/upload");
@@ -20,5 +22,14 @@ router.post(
   createCaseStudy,
 );
 router.get("/", getCaseStudies);
+router.put(
+  "/:id",
+  upload.fields([
+    { name: "beforeWorking", maxCount: 1 },
+    { name: "afterWorking", maxCount: 1 },
+  ]),
+  updateCaseStudy,
+);
+router.delete("/:id", deleteCaseStudy);
 
 module.exports = router;

@@ -31,6 +31,7 @@ const businessFormSchema = new mongoose.Schema(
     customerId: {
       type: String,
       unique: true,
+      sparse: true,
     },
     customerName: {
       type: String,
@@ -88,6 +89,33 @@ const businessFormSchema = new mongoose.Schema(
     fullAddress: {
       type: String,
       required: true,
+    },
+    //upload document
+    documents: {
+      panCard: {
+        type: String,
+        default: "",
+      },
+      aadharFront: {
+        type: String,
+        default: "",
+      },
+      aadharBack: {
+        type: String,
+        default: "",
+      },
+      cancelCheque: {
+        type: String,
+        default: "",
+      },
+      bankProof: {
+        type: String,
+        default: "",
+      },
+      extraBankDoc: {
+        type: String,
+        default: "",
+      },
     },
     whatsappNumber: {
       type: String,

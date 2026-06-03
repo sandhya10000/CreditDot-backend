@@ -121,6 +121,7 @@ const submitBusinessForm = async (req, res) => {
       gender,
       bankAccountNumber,
       ifscCode,
+      documents,
 
       //Admin
       manualAmount,
@@ -148,23 +149,23 @@ const submitBusinessForm = async (req, res) => {
     }
 
     // Get last customer
-    const lastCustomer = await BusinessForm.findOne({
-      customerId: { $exists: true },
-    }).sort({ createdAt: -1 });
+    // const lastCustomer = await BusinessForm.findOne({
+    //   customerId: { $exists: true },
+    // }).sort({ createdAt: -1 });
 
-    // Default first ID
-    let nextCustomerId = "CUST-0001";
+    // // Default first ID
+    // let nextCustomerId = "CUST-0001";
 
-    if (lastCustomer && lastCustomer.customerId) {
-      const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
+    // if (lastCustomer && lastCustomer.customerId) {
+    //   const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
 
-      const nextNumber = lastNumber + 1;
+    //   const nextNumber = lastNumber + 1;
 
-      nextCustomerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
-    }
+    //   nextCustomerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
+    // }
     // Create business form entry
     const businessForm = new BusinessForm({
-      customerId: nextCustomerId,
+      // customerId: null,
       //Admin case franchiseId from body
       //Franchise login case req.user.franchiseId
 
@@ -195,6 +196,7 @@ const submitBusinessForm = async (req, res) => {
       gender,
       bankAccountNumber,
       ifscCode,
+      documents,
     });
 
     await businessForm.save();
@@ -303,6 +305,18 @@ const verifyPayment = async (req, res) => {
     businessForm.paymentStatus = "paid";
     businessForm.razorpayPaymentId = razorpay_payment_id;
     businessForm.razorpaySignature = razorpay_signature;
+    //Generare Customer ID only after successfuul payment
+    if (!businessForm.customerId) {
+      const lastCustomer = await BusinessForm.findOne({
+        customerId: { $ne: null },
+      }).sort({ createdAt: -1 });
+      let nextCustomerId = "CUST-001";
+      if (lastCustomer?.customerId) {
+        const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
+        nextCustomerId = `CUST-${String(lastNumber + 1).padStart(4, "0")}`;
+      }
+      businessForm.customerId = nextCustomerId;
+    }
     await businessForm.save();
 
     // Sync with Google Sheets to update payment status (Business Login tab only)

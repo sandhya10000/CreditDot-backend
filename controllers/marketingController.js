@@ -47,5 +47,23 @@ const getMarketingMaterials = async (req, res) => {
     });
   }
 };
+const deleteMarketingMaterial = async (req, res) => {
+  try {
+    await MarketingMaterial.findByIdAndDelete(req.params.id);
 
-module.exports = { uploadmarketingMaterial, getMarketingMaterials };
+    res.status(200).json({
+      success: true,
+      message: "Material deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Delete failed",
+    });
+  }
+};
+
+module.exports = {
+  uploadmarketingMaterial,
+  getMarketingMaterials,
+  deleteMarketingMaterial,
+};

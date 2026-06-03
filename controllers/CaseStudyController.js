@@ -58,5 +58,73 @@ const getCaseStudies = async (req, res) => {
     });
   }
 };
+const updateCaseStudy = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description } = req.body;
 
-module.exports = { createCaseStudy, getCaseStudies };
+    const updateData = {
+      title,
+      description,
+    };
+
+    // if new beforeWorking file uploaded
+    if (req.files?.beforeWorking?.[0]) {
+      updateData.beforeWorking =
+        "/uploads/case-study/" + req.files.beforeWorking[0].filename;
+    }
+
+    // if new afterWorking file uploaded
+    if (req.files?.afterWorking?.[0]) {
+      updateData.afterWorking =
+        "/uploads/case-study/" + req.files.afterWorking[0].filename;
+    }
+
+    const updatedCaseStudy = await caseStudy.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
+
+    if (!updatedCaseStudy) {
+      return res.status(404).json({ message: "Case Study not found" });
+    }
+
+    return res.status(200).json({
+      message: "Case Study updated successfully",
+      data: updatedCaseStudy,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to update case study",
+      error: error.message,
+    });
+  }
+};
+const deleteCaseStudy = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await caseStudy.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({
+        message: "Case Study not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Case Study deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to delete case study",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = {
+  createCaseStudy,
+  getCaseStudies,
+  deleteCaseStudy,
+  updateCaseStudy,
+};
