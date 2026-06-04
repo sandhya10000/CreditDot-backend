@@ -148,13 +148,6 @@ const corsOptions = {
       "https://www.creditdost.co.in",
       "https://www.reactbackend.creditdost.co.in",
     ];
-    // //for local testing url change
-    // const allowedOrigins = [
-    //   process.env.FRONTEND_URL || "http://localhost:5173",
-
-    //   // "https://creditdost.co.in",
-    //   // "https://www.creditdost.co.in",
-    // ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
