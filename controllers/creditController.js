@@ -1115,7 +1115,7 @@ const checkCreditScoreV2 = async (req, res) => {
 
     if (bureau === "cibil" && cibilApiType === "ongrid") {
       reportUrl =
-        response?.data?.data?.report_data?.data?.cibil_report_url || null;
+        response?.data?.data?.report_data?.data.cibil_report_pdf || null;
     } else {
       reportUrl =
         response?.data?.data?.report_url ||
