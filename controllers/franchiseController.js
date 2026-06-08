@@ -115,13 +115,74 @@ const updateFranchiseProfile = async (req, res) => {
   }
 };
 
-// Get all franchises (admin only)
-const getAllFranchises = async (req, res) => {
+const getFranchiseList = async (req, res) => {
   try {
     const franchises = await Franchise.find()
       .populate("userId", "name email phone")
       .populate("assignedPackages", "name price creditsIncluded")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const Transaction = require("../models/Transaction");
+    const enhancedFranchises = await Promise.all(
+      franchises.map(async (franchise) => {
+        const transactions = await Transaction.find({
+          franchiseId: franchise._id,
+          status: "paid",
+        })
+          .populate("packageId")
+          .lean();
+
+        const purchasedPackages = transactions
+          .filter((transaction) => transaction.packageId)
+          .map((transaction) => transaction.packageId);
+
+        const allPackages = {
+          assigned: franchise.assignedPackages || [],
+          purchased: purchasedPackages,
+          all: [...(franchise.assignedPackages || []), ...purchasedPackages],
+        };
+
+        return {
+          ...franchise,
+          allPackages: allPackages,
+          packageHistory: franchise.packageHistory || [],
+        };
+      }),
+    );
+
+    res.json(enhancedFranchises);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Get all franchises (admin only)
+const getAllFranchises = async (req, res) => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+    const search = req.query.search?.trim() || "";
+    const skip = (page - 1) * limit;
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: "i" } },
+        { ownerName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const franchises = await Franchise.find(filter)
+      .populate("userId", "name email phone")
+      .populate("assignedPackages", "name price creditsIncluded")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Franchise.countDocuments(filter);
 
     // Enhance each franchise with purchased packages information
     const Transaction = require("../models/Transaction");
@@ -145,14 +206,20 @@ const getAllFranchises = async (req, res) => {
 
         // Return franchise data with both assigned and purchased packages
         return {
-          ...franchise.toObject(),
+          ...franchise,
           allPackages: allPackages,
           packageHistory: franchise.packageHistory || [],
         };
       }),
     );
-
-    res.json(enhancedFranchises);
+    return res.status(200).json({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      franchises: enhancedFranchises,
+    });
+    // res.json(enhancedFranchises);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -683,6 +750,7 @@ module.exports = {
   getFranchiseProfile,
   updateFranchiseProfile,
   getAllFranchises,
+  getFranchiseList,
   getFranchiseById,
   updateFranchise,
   deactivateFranchise,

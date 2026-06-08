@@ -862,24 +862,43 @@ const checkCreditScorePublic = async (req, res) => {
 // Get credit reports for franchise
 const getCreditReports = async (req, res) => {
   try {
-    // const reports = await CreditReport.find({
-    //   franchiseId: req.user.franchiseId,
-    // }).sort({ createdAt: -1 });
-
-    // res.json(reports);
     let reports;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
     if (req.user.role === "admin") {
       reports = await CreditReport.find()
         .populate("franchiseId", "name")
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const total = await CreditReport.countDocuments();
+      res.status(200).json({
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        reports,
+      });
     } else {
-      reports = await CreditReport.find({
+      const filter = {
         franchiseId: req.user.franchiseId,
-      })
+      };
+      reports = await CreditReport.find(filter)
         .populate("franchiseId", "name")
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+      const total = await CreditReport.countDocuments(filter);
+      res.status(200).json({
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        reports,
+      });
     }
-    res.json(reports);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -890,9 +909,22 @@ const getAllCreditReports = async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
+    const search = req.query.search?.trim() || "";
+    const bureau = req.query.bureau?.trim() || "";
     const skip = (page - 1) * limit;
-
-    const reports = await CreditReport.find()
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { mobile: { $regex: search, $options: "i" } },
+        { franchiseName: { $regex: search, $options: "i" } },
+        { pan: { $regex: search, $options: "i" } },
+      ];
+    }
+    if (bureau) {
+      filter.bureau = bureau;
+    }
+    const reports = await CreditReport.find(filter)
       .select(
         "name mobile score bureau reportUrl franchiseName city state createdAt userId franchiseId pan",
       )
@@ -909,17 +941,17 @@ const getAllCreditReports = async (req, res) => {
       .limit(limit)
       .lean();
 
-    const total = await CreditReport.countDocuments();
+    const total = await CreditReport.countDocuments(filter);
 
-    res.status(200).json({
+    return res.status(200).json({
       total,
       page,
+      limit,
       totalPages: Math.ceil(total / limit),
       reports,
     });
-    res.json(reports);
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error",
       error: error.message,
     });
