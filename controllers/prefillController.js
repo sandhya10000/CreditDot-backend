@@ -65,15 +65,24 @@ const savePrefillFailure = async (req, res) => {
 };
 const getPrefillFailedLog = async (req, res) => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
     const failedReports = await prefillFailedLog
       .find()
       .populate("franchiseId", "name")
       .populate("userId", "name")
-      .sort({ createdAt: -1 });
-    console.log(failedReports);
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await prefillFailedLog.countDocuments();
     res.status(200).json({
-      success: true,
-      data: failedReports,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      reports: failedReports,
     });
   } catch (error) {
     console.log(error);
@@ -81,6 +90,7 @@ const getPrefillFailedLog = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server Error",
+      error: error,
     });
   }
 };

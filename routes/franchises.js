@@ -3,6 +3,7 @@ const {
   getFranchiseProfile,
   updateFranchiseProfile,
   getAllFranchises,
+  getFranchiseList,
   getFranchiseById,
   updateFranchise,
   deactivateFranchise,
@@ -85,6 +86,7 @@ router.post(
 // @route   GET /api/franchises
 // @desc    Get all franchises
 // @access  Private/Admin
+router.get("/list", auth, rbac("admin"), getFranchiseList);
 router.get("/", auth, rbac("admin"), getAllFranchises);
 
 // @route   GET /api/franchises/:id

@@ -179,11 +179,25 @@ const uploadDocument = async (req, res) => {
 // Get all documents for admin
 const getAllDocuments = async (req, res) => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
     const documents = await AIAnalysis.find()
       .populate("franchise", "businessName email")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
-    res.json(documents);
+    const total = await AIAnalysis.countDocuments();
+
+    res.status(200).json({
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      documents,
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
