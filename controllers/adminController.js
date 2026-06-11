@@ -811,7 +811,7 @@ const createFranchiseUser = async (req, res) => {
     const user = new User({
       name,
       email,
-      phone,
+      //phone,
       state,
       pincode,
       language,
@@ -835,7 +835,7 @@ const createFranchiseUser = async (req, res) => {
         businessName: name,
         ownerName: name,
         email,
-        phone,
+        // phone,
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
