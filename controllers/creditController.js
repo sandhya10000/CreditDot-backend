@@ -290,7 +290,7 @@ const checkCreditScore = async (req, res) => {
             "X-Auth-Type": "API-Key",
             "X-Reference-ID": `REF-${Date.now()}`,
           },
-          // timeout: 30000,
+          timeout: 180000,
         });
       } else {
         const surepassApiKey = await getSurepassApiKeyValue();
@@ -312,15 +312,18 @@ const checkCreditScore = async (req, res) => {
           aadhaar,
           dob,
           gender,
+          // Pass through Equifax-specific fields if provided
           id_number: req.body.id_number || null,
           id_type: req.body.id_type || null,
         });
 
+        const start = Date.now();
         response = await surepassClient.makeCreditCheckRequest(
           surepassApiKey,
           bureauConfig.endpoint,
           requestData,
         );
+        console.log(`Credit bureau response took ${Date.now() - start} ms`);
       }
     } catch (apiError) {
       console.error("API ERROR:", apiError);
@@ -357,7 +360,7 @@ const checkCreditScore = async (req, res) => {
       // Forward the error from Surepass API if available
       if (apiError.response) {
         return res.status(apiError.response.status).json({
-          message: "Credit check failed",
+          message: apiError.response.data.message || "Credit check failed",
           error: apiError.response.data || apiError.message,
         });
       }
@@ -388,6 +391,7 @@ const checkCreditScore = async (req, res) => {
         response?.data?.data?.report_url ||
         response?.data?.data?.pdf_url ||
         response?.data?.data?.credit_report_link ||
+        response.data.data.report_link ||
         null;
     }
 
@@ -414,15 +418,15 @@ const checkCreditScore = async (req, res) => {
     await creditReport.save();
 
     // Sync with Google Sheets
-    try {
-      await googleSheetsService.initialize();
-      await googleSheetsService.syncCreditScoreData();
-    } catch (syncError) {
-      console.error(
-        "Failed to sync credit score data with Google Sheets:",
-        syncError,
-      );
-    }
+    googleSheetsService
+      .initialize()
+      .then(() => googleSheetsService.syncCreditScoreData())
+      .catch((syncError) => {
+        console.error(
+          "Failed to sync credit score data with Google Sheets:",
+          syncError,
+        );
+      });
 
     // Deduct credit from franchise
     if (req.user.role !== "admin" && franchise) {
@@ -446,7 +450,7 @@ const checkCreditScore = async (req, res) => {
           method: "GET",
           url: reportUrl,
           responseType: "stream",
-          timeout: 30000,
+          timeout: 180000,
           headers: {
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -891,6 +895,7 @@ const getCreditReports = async (req, res) => {
         .skip(skip)
         .limit(limit)
         .lean();
+
       const total = await CreditReport.countDocuments(filter);
       res.status(200).json({
         total,
@@ -926,7 +931,7 @@ const getAllCreditReports = async (req, res) => {
     }
     const reports = await CreditReport.find(filter)
       .select(
-        "name mobile score bureau reportUrl franchiseName city state createdAt userId franchiseId pan",
+        "name mobile score bureau reportUrl localPath franchiseName city state createdAt userId franchiseId pan",
       )
       .populate({
         path: "userId",
