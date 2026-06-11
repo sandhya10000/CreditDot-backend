@@ -163,6 +163,7 @@ const getAllFranchises = async (req, res) => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
     const search = req.query.search?.trim() || "";
+    const kycStatus = req.query.kycStatus?.trim() || "";
     const skip = (page - 1) * limit;
     const filter = {};
     if (search) {
@@ -172,6 +173,9 @@ const getAllFranchises = async (req, res) => {
         { email: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
       ];
+    }
+    if (kycStatus) {
+      filter.kycStatus = kycStatus;
     }
 
     const franchises = await Franchise.find(filter)

@@ -77,7 +77,19 @@ const getDashboardStats = async (req, res) => {
     // Calculate revenue from franchise packages (regular packages)
     // Need to ensure these transactions are linked to active franchises/users
     const franchisePackageRevenueResult = await Transaction.aggregate([
-      { $match: { status: "paid", packageId: { $exists: true } } },
+      {
+        $match: {
+          $or: [
+            {
+              status: "paid",
+            },
+            {
+              status: "created",
+              packageId: { $exists: true, $ne: null },
+            },
+          ],
+        },
+      },
       {
         $lookup: {
           from: "users",
@@ -131,21 +143,27 @@ const getDashboardStats = async (req, res) => {
 
       {
         $addFields: {
+          packagePrice: {
+            $ifNull: [{ $arrayElemAt: ["$package.price", 0] }, 0],
+          },
+          manualAmountValue: {
+            $ifNull: ["$manualAmount", 0],
+          },
+        },
+      },
+      {
+        $addFields: {
           finalAmount: {
-            $cond: [
-              { $gt: ["manualAmount", 0] },
-              "$manualAmount",
-              {
-                $ifNull: [{ $arrayElemAt: ["$package.price", 0] }, 0],
-              },
-            ],
+            $add: ["$manualAmountValue", "$packagePrice"],
           },
         },
       },
       {
         $group: {
           _id: null,
-          total: { $sum: "$finalAmount" },
+          total: {
+            $sum: "$finalAmount",
+          },
         },
       },
     ]);

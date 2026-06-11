@@ -26,13 +26,38 @@ const prefillByMobile = async (req, res) => {
     );
 
     return res.status(200).json(response.data);
-  } catch (error) {
-    console.error("Surepass API Error:", error?.response?.data);
+  } catch (apiError) {
+    const status = apiError?.response?.status;
+
+    if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
+      return res.status(422).json({
+        message: "Request timeout",
+        error: "TIMEOUT",
+      });
+    }
+
+    if (status === 404) {
+      return res.status(404).json({
+        message: "No PAN record found",
+      });
+    }
+
+    if (status === 429) {
+      return res.status(429).json({
+        message: "Too many requests",
+      });
+    }
+
+    if (status === 401) {
+      return res.status(401).json({
+        message: "Invalid Surepass credentials",
+      });
+    }
 
     return res.status(500).json({
       success: false,
       message: "Prefill API failed",
-      error: error?.response?.data || error.message,
+      error: apiError?.response?.data || apiError.message,
     });
   }
 };
