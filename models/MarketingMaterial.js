@@ -6,7 +6,23 @@ const marketingSchema = new mongoose.Schema(
     description: String,
     fileUrl: String,
     fileType: String,
+    language: {
+      type: String,
+      enum: [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu",
+        "Bengali",
+        "Malayalam",
+        "Marathi",
+        "Gujarati",
+        "Kannada",
+      ],
+      required: true,
+    },
   },
+
   { timestamps: true },
 );
 

@@ -6,6 +6,7 @@ const uploadmarketingMaterial = async (req, res) => {
     const material = await MarketingMaterial.create({
       title: req.body.title,
       description: req.body.description,
+      language: req.body.language,
       fileUrl: "/uploads/marketing/" + req.file.filename,
       fileType: req.file.mimetype,
     });
@@ -25,7 +26,13 @@ const uploadmarketingMaterial = async (req, res) => {
 //Get All Materials
 const getMarketingMaterials = async (req, res) => {
   try {
-    const data = await MarketingMaterial.find().sort({
+    const language = req.body;
+    const filter = {};
+
+    if (language) {
+      filter.language = language;
+    }
+    const data = await MarketingMaterial.find(filter).sort({
       createdAt: -1,
     });
 

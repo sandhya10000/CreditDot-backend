@@ -9,6 +9,7 @@ const {
   updateSurepassApiKey,
   getSingleCreditReports,
   checkCreditScoreV2,
+  getFranchiseReports,
 } = require("../controllers/creditController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -34,6 +35,10 @@ router.get("/reports", auth, rbac("franchise_user", "admin"), getCreditReports);
 // @desc    Get all credit reports
 // @access  Private/Admin
 router.get("/reports/all", auth, rbac("admin"), getAllCreditReports);
+// @route   GET /api/credit/reports/:fanchiseId
+// @desc    Get particular credit reports
+// @access  Private/Admin
+router.get("/reports/:franchiseId", auth, rbac("admin"), getFranchiseReports);
 
 // @route   GET /api/credit/reports/:id
 // @desc    Get credit report by ID

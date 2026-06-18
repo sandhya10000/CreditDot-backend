@@ -13,6 +13,13 @@ const franchiseSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    //franchise code/id
+    franchiseCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     ownerName: {
       type: String,
       required: true,

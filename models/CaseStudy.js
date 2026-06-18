@@ -11,6 +11,20 @@ const caseStudySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    category: {
+      type: String,
+      enum: [
+        "dpd",
+        "inquiries",
+        "score_increase",
+        "settlement",
+        "write_off",
+        "suit_filed",
+        "post_write_off_closed",
+        "fake_loans",
+        "sma_removed",
+      ],
+    },
 
     beforeWorking: {
       type: String,
