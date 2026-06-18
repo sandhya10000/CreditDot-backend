@@ -6,16 +6,34 @@ const createCaseStudy = async (req, res) => {
     console.log(req.body);
     console.log(req.files);
 
-    const { title, description } = req.body;
+    const { title, description, category } = req.body;
 
     if (!req.files?.beforeWorking || !req.files?.afterWorking) {
       return res.status(400).json({
         message: "Both PDF files are required",
       });
     }
+    const allowedCategories = [
+      "dpd",
+      "inquiries",
+      "score_increase",
+      "settlement",
+      "write_off",
+      "suit_filed",
+      "post_write_off_closed",
+      "fake_loans",
+      "sma_removed",
+    ];
+
+    if (!allowedCategories.includes(category)) {
+      return res.status(400).json({
+        message: "Invalid category",
+      });
+    }
 
     const newCaseStudy = await caseStudy.create({
       title,
+      category,
       description,
       beforeWorking:
         "/uploads/case-study/" + req.files.beforeWorking[0].filename,
@@ -41,8 +59,11 @@ const createCaseStudy = async (req, res) => {
 const getCaseStudies = async (req, res) => {
   try {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-
+    const { category } = req.query;
     const caseStudies = await caseStudy.find().sort({ createdAt: -1 });
+    if (category) {
+      filter.category = category;
+    }
     const updatedData = caseStudies.map((item) => ({
       ...item._doc,
       beforeWorking: `${baseUrl}${item.beforeWorking}`,
@@ -61,11 +82,12 @@ const getCaseStudies = async (req, res) => {
 const updateCaseStudy = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description } = req.body;
+    const { title, description, category } = req.body;
 
     const updateData = {
       title,
       description,
+      category,
     };
 
     // if new beforeWorking file uploaded

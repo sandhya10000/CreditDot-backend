@@ -384,6 +384,25 @@ const getFranchiseBusinessForms = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+// //get franchise business done details
+const getBusinessFormsByFranchise = async (req, res) => {
+  try {
+    const { _id } = req.params;
+    const businessForms = await BusinessForm.find({
+      franchiseId: _id,
+    })
+      .populate(
+        "selectedPackage",
+        "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+      )
+      .populate("franchiseId", "businessName")
+      .sort({ createdAt: -1 });
+
+    res.json(businessForms);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
 
 // Get all business forms (admin only)
 const getAllBusinessForms = async (req, res) => {
@@ -445,7 +464,7 @@ const getSingleBusinessForm = async (req, res) => {
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
-      .populate("franchiseId", "businessName")
+      .populate("franchiseId", "businessName phone")
       .sort({ createdAt: -1 });
 
     if (!businessForms) {
@@ -541,4 +560,5 @@ module.exports = {
   closeBusinessCase,
   getSingleBusinessForm,
   uploadDocBusiness,
+  getBusinessFormsByFranchise,
 };

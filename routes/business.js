@@ -10,6 +10,7 @@ const {
   closeBusinessCase,
   getSingleBusinessForm,
   uploadDocBusiness,
+  getBusinessFormsByFranchise,
 } = require("../controllers/businessController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -35,12 +36,17 @@ router.post("/verify-payment", auth, rbac("franchise_user"), verifyPayment);
 // @route   GET /api/business/franchise
 // @desc    Get business forms for franchise user
 // @access  Private/Franchise User
+
 router.get(
   "/franchise",
   auth,
-  rbac("franchise_user"),
+  rbac("franchise_user", "admin"),
   getFranchiseBusinessForms,
 );
+// @route   GET /api/business/franchise/:franchiseId
+// @desc    Get business forms for franchise user
+// @access  Private/Admin User
+router.get("/franchise/:_id", auth, rbac("admin"), getBusinessFormsByFranchise);
 
 // @route   GET /api/business/all
 // @desc    Get all business forms (admin only)

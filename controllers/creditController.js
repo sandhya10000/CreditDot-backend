@@ -221,27 +221,26 @@ const checkCreditScore = async (req, res) => {
     if (req.user.role !== "admin") {
       // Check same mobile/pan credit report in last 15 days
       // Apply 15 days restriction ONLY for CIBIL
-      if (bureau === "cibil") {
-        const lastReport = await CreditReport.findOne({
-          mobile,
-          pan,
-          bureau,
-        }).sort({ createdAt: -1 });
 
-        if (lastReport) {
-          const lastDate = new Date(lastReport.createdAt);
-          const currentDate = new Date();
+      const lastReport = await CreditReport.findOne({
+        mobile,
+        pan,
+        bureau,
+      }).sort({ createdAt: -1 });
 
-          const diffTime = currentDate - lastDate;
-          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+      if (lastReport) {
+        const lastDate = new Date(lastReport.createdAt);
+        const currentDate = new Date();
 
-          if (diffDays < 15) {
-            const remainingDays = Math.ceil(15 - diffDays);
+        const diffTime = currentDate - lastDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-            return res.status(400).json({
-              message: `This CIBIL report has already been downloaded. Try again after ${remainingDays} days.`,
-            });
-          }
+        if (diffDays < 15) {
+          const remainingDays = Math.ceil(15 - diffDays);
+
+          return res.status(400).json({
+            message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+          });
         }
       }
 
@@ -264,7 +263,7 @@ const checkCreditScore = async (req, res) => {
     let response;
 
     try {
-      if (bureau === "cibil-ongrid" || bureau === "cibil") {
+      if (bureau === "cibil-ongrid") {
         const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
 
         if (!gridlinesApiKey) {
@@ -374,7 +373,7 @@ const checkCreditScore = async (req, res) => {
     let score = null;
     let reportUrl = null;
 
-    if (bureau === "cibil-ongrid" || bureau === "cibil") {
+    if (bureau === "cibil-ongrid") {
       score =
         response?.data?.data?.report_data?.data?.cibil_data
           ?.get_customer_assets_response?.get_customer_assets_success?.asset
@@ -962,6 +961,34 @@ const getAllCreditReports = async (req, res) => {
     });
   }
 };
+//get particular franchise record
+// Get all reports of a particular franchise
+const getFranchiseReports = async (req, res) => {
+  try {
+    const { franchiseId } = req.params;
+
+    const reports = await CreditReport.find({
+      franchiseId,
+    })
+      .select(
+        "name mobile score bureau reportUrl localPath city state pan createdAt",
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      franchiseId,
+      totalReports: reports.length,
+      reports,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
 
 // Get credit report by ID
 const getCreditReportById = async (req, res) => {
@@ -1335,4 +1362,5 @@ module.exports = {
   getSurepassApiKeyValue, // Export the helper function
   getSingleCreditReports,
   checkCreditScoreV2,
+  getFranchiseReports,
 };

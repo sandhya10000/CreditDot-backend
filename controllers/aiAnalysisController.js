@@ -439,41 +439,82 @@ const analyzeWithClaude = async (req, res) => {
 // Download Claude analysis HTML file
 const downloadClaudeAnalysis = async (req, res) => {
   try {
-    //I have changed here for ai analysis unlimited download limit
-    const franchise = await Franchise.findOne({ userId: req.user.id });
-    if (franchise) {
-      return res.status(404).json({ message: "Franchise not found" });
-    }
     const document = await AIAnalysis.findById(req.params.id);
 
     if (!document || !document.claudeAnalysisHtml) {
-      return res.status(404).json({ message: "Analysis not found" });
-    }
-
-    if (document.franchise.toString() !== franchise._id.toString()) {
-      return res.status(403).json({ message: "Unauthorized access" });
-    }
-
-    if (franchise.credits <= 0) {
-      return res.status(400).json({
-        message: "Credit limit exhausted. Please contact admin.",
+      return res.status(404).json({
+        message: "Analysis report not found",
       });
     }
-    if (!fs.existsSync(document.claudeAnalysisHtml)) {
-      return res.status(404).json({ message: "Analysis file not found" });
+
+    // Franchise user ke liye credit check
+    if (req.user.role === "franchise_user") {
+      const franchise = await Franchise.findOne({
+        userId: req.user._id,
+      });
+
+      if (!franchise) {
+        return res.status(404).json({
+          message: "Franchise not found",
+        });
+      }
+
+      if (document.franchise.toString() !== franchise._id.toString()) {
+        return res.status(403).json({
+          message: "Unauthorized access",
+        });
+      }
+
+      if (franchise.credits <= 0) {
+        return res.status(400).json({
+          message: "Credit limit exhausted. Please contact admin.",
+        });
+      }
+
+      franchise.credits -= 1;
+      await franchise.save();
     }
-    //Credit minus
-    franchise.credits -= 1;
-    await franchise.save();
+
+    if (!fs.existsSync(document.claudeAnalysisHtml)) {
+      return res.status(404).json({
+        message: "Analysis file not found",
+      });
+    }
+
     document.downloadCount = (document.downloadCount || 0) + 1;
+
     await document.save();
-    //Send File
-    res.sendFile(path.resolve(document.claudeAnalysisHtml));
+
+    return res.sendFile(path.resolve(document.claudeAnalysisHtml));
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error(error);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
+// Get AI Reports by Franchise
+const getFranchiseAIDocuments = async (req, res) => {
+  try {
+    const { franchiseId } = req.params;
 
+    const reports = await AIAnalysis.find({
+      franchise: franchiseId,
+    }).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: reports,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 module.exports = {
   uploadDocument,
   getAllDocuments,
@@ -482,4 +523,5 @@ module.exports = {
   getFranchiseDocuments,
   analyzeWithClaude,
   downloadClaudeAnalysis,
+  getFranchiseAIDocuments,
 };

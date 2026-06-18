@@ -1,5 +1,6 @@
 const Franchise = require("../models/Franchise");
 const User = require("../models/User");
+const BusinessForm = require("../models/BusinessForm");
 const Package = require("../models/Package");
 const Joi = require("joi");
 
@@ -85,6 +86,48 @@ const getFranchiseProfile = async (req, res) => {
   }
 };
 
+//get single franchise profile
+
+const getSingleFranchise = async (req, res) => {
+  try {
+    const { franchiseCode } = req.params;
+
+    const franchise = await Franchise.findOne({ franchiseCode: franchiseCode })
+      .populate("userId", "name email phone")
+      .populate("assignedPackages", "name price creditsIncluded");
+
+    if (!franchise) {
+      return res.status(404).json({
+        success: false,
+        message: "Franchise not found",
+      });
+    }
+
+    // const businesses = await BusinessForm.find({
+    //   franchiseId: franchise._id,
+    // });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...franchise.toObject(),
+        // businessHistory: businesses,
+      },
+    });
+  } catch (error) {
+    console.error("Get franchise error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = {
+  getSingleFranchise,
+};
 // Update franchise profile
 const updateFranchiseProfile = async (req, res) => {
   try {
@@ -769,4 +812,5 @@ module.exports = {
   updateBankDetails,
   fetchBankVerification,
   getAllFranchisesList,
+  getSingleFranchise,
 };

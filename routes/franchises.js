@@ -16,6 +16,7 @@ const {
   getBankDetails,
   updateBankDetails,
   fetchBankVerification,
+  getSingleFranchise,
   getAllFranchisesList,
 } = require("../controllers/franchiseController");
 const auth = require("../middleware/auth");
@@ -27,6 +28,11 @@ const router = express.Router();
 // @desc    Get franchise profile
 // @access  Private/Franchise User
 router.get("/profile", auth, rbac("franchise_user"), getFranchiseProfile);
+
+// @route GET api/franchise/franchiseCode
+// @desc    Get franchise profile
+// @access  Private/Franchise User
+router.get("/:franchiseCode", auth, rbac("admin"), getSingleFranchise);
 
 // @route   PUT /api/franchises/profile
 // @desc    Update franchise profile
