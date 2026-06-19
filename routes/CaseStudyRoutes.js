@@ -1,6 +1,8 @@
+console.log("***** CASE STUDY ROUTE LOADED *****");
 const express = require("express");
 const router = express.Router();
-
+const auth = require("../middleware/auth");
+const rbac = require("../middleware/rbac");
 const {
   createCaseStudy,
   getCaseStudies,
@@ -22,6 +24,7 @@ router.post(
   createCaseStudy,
 );
 router.get("/", getCaseStudies);
+
 router.put(
   "/:id",
   upload.fields([

@@ -12,6 +12,8 @@ const GoogleSheet = require("./models/GoogleSheet");
 // Load environment variables
 dotenv.config();
 
+console.log("***** MY SERVER FILE LOADED *****");
+
 // Migration function to ensure all required tabs are present in Google Sheets settings
 const runGoogleSheetsMigration = async () => {
   try {
@@ -233,7 +235,7 @@ app.use("/api/marketing", require("./routes/marketingRoutes"));
 app.use("/api/admin/reward", require("./routes/AdminRewardRoutes"));
 //get api
 app.use("/api/franchise/reward", require("./routes/AdminRewardRoutes"));
-app.use("/api/franchise/case-studies", require("./routes/CaseStudyRoutes"));
+app.use("/api/franchise-case-studie", require("./routes/CaseStudyRoutes"));
 app.use("/api", require("./routes/Remark"));
 app.use("/api", require("./routes/CustomerBureau"));
 
