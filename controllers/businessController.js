@@ -462,11 +462,12 @@ const getSingleBusinessForm = async (req, res) => {
     })
       .populate(
         "selectedPackage",
-        "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+        "name price gstPercentage businessPayoutPercentage businessPayoutType businessPayoutFixedAmount totalPrice",
       )
       .populate("franchiseId", "businessName phone")
       .sort({ createdAt: -1 });
 
+    console.log(businessForms, "businessForms---------");
     if (!businessForms) {
       return res.status(404).json({
         message: "Customer not found",
@@ -520,6 +521,56 @@ const getSingleBusinessForm = async (req, res) => {
     });
   }
 };
+//Update api for customer
+const updateBusinessForm = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    const {
+      customerEmail,
+      customerPhone,
+      panNumber,
+      aadharNumber,
+      dob,
+      gender,
+    } = req.body;
+
+    const updatedCustomer = await BusinessForm.findOneAndUpdate(
+      { customerId },
+      {
+        $set: {
+          customerEmail,
+          customerPhone,
+          panNumber,
+          aadharNumber,
+          dob,
+          gender,
+        },
+      },
+      {
+        new: true,
+      },
+    );
+
+    if (!updatedCustomer) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer updated successfully",
+      data: updatedCustomer,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 const uploadDocBusiness = async (req, res) => {
   try {
     console.log(req.files);
@@ -553,6 +604,7 @@ const uploadDocBusiness = async (req, res) => {
   }
 };
 module.exports = {
+  updateBusinessForm,
   submitBusinessForm,
   verifyPayment,
   getFranchiseBusinessForms,
