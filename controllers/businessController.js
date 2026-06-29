@@ -369,17 +369,46 @@ const verifyPayment = async (req, res) => {
 // Get business forms for franchise user
 const getFranchiseBusinessForms = async (req, res) => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+    const search = req.query.search?.trim() || "";
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { ownerName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ];
+    }
+
     const businessForms = await BusinessForm.find({
       franchiseId: req.user.franchiseId,
+      ...filter,
     })
       .populate(
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
       .populate("franchiseId", "businessName")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-    res.json(businessForms);
+    const total = await BusinessForm.countDocuments({
+      franchiseId: req.user.franchiseId,
+      ...filter,
+    });
+
+    return res.status(200).json({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      businessData: businessForms,
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -404,20 +433,48 @@ const getBusinessFormsByFranchise = async (req, res) => {
   }
 };
 
-// Get all business forms (admin only)
 const getAllBusinessForms = async (req, res) => {
   try {
-    const businessForms = await BusinessForm.find()
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+    const search = req.query.search?.trim() || "";
+
+    // Filter
+    const filter = {};
+
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: "i" } },
+        { ownerName: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const total = await BusinessForm.countDocuments(filter);
+
+    const skip = (page - 1) * limit;
+
+    const businessForms = await BusinessForm.find(filter)
       .populate(
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
       .populate("franchiseId", "businessName")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-    res.json(businessForms);
+    res.json({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      businessData: businessForms,
+    });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 //
