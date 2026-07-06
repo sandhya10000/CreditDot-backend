@@ -12,8 +12,6 @@ const GoogleSheet = require("./models/GoogleSheet");
 // Load environment variables
 dotenv.config();
 
-console.log("***** MY SERVER FILE LOADED *****");
-
 // Migration function to ensure all required tabs are present in Google Sheets settings
 const runGoogleSheetsMigration = async () => {
   try {
@@ -62,10 +60,6 @@ const runGoogleSheetsMigration = async () => {
 mongoose
   .connect(
     process.env.MONGODB_URI || "mongodb://localhost:27017/franchise_management",
-    {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    },
   )
   .then(async () => {
     console.log("MongoDB connected");

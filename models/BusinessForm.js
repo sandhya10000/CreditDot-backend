@@ -183,12 +183,11 @@ const businessFormSchema = new mongoose.Schema(
 
     bankAccountNumber: {
       type: String,
-      required: true,
     },
 
     ifscCode: {
       type: String,
-      required: true,
+
       uppercase: true,
       trim: true,
     },
