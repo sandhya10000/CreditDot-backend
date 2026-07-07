@@ -11,6 +11,7 @@ const {
   getSingleBusinessForm,
   uploadDocBusiness,
   getBusinessFormsByFranchise,
+  updateBusinessForm,
 } = require("../controllers/businessController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -67,6 +68,9 @@ router.get(
   rbac("admin"),
   getSingleBusinessForm,
 );
+
+//@route UPDATE /api/admin/business/update-form/:customerId
+router.put("/admin/business/update-form/:customerId", updateBusinessForm);
 
 // @route POST /api/franchise/uploadDocBusiness
 //@desc post business document franchise

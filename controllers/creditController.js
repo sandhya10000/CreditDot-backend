@@ -562,39 +562,7 @@ const checkCreditScorePublic = async (req, res) => {
 
     // Get the appropriate endpoint and data formatter for the bureau
     console.log("Getting bureau config for:", bureau);
-    const getBureauConfig = (bureau) => {
-      const configs = {
-        experian: {
-          endpoint: "/credit-report-experian",
-          formatData: (data) => ({
-            name: data.name,
-            mobile: data.mobile,
-            pan: data.pan,
-          }),
-        },
-
-        equifax: {
-          endpoint: "/credit-report-equifax",
-          formatData: (data) => ({
-            name: data.name,
-            mobile: data.mobile,
-            id_number: data.id_number,
-            id_type: data.id_type,
-          }),
-        },
-
-        crif: {
-          endpoint: "/credit-report-crif",
-          formatData: (data) => ({
-            name: data.name,
-            mobile: data.mobile,
-            pan: data.pan,
-          }),
-        },
-      };
-
-      return configs[bureau];
-    };
+    const bureauConfig = getBureauConfig(bureau);
     console.log("Bureau config retrieved:", {
       endpoint: bureauConfig.endpoint,
     });
@@ -765,7 +733,6 @@ const checkCreditScorePublic = async (req, res) => {
     // If we have a report URL, download and save the PDF locally (for public reports too)
     if (reportUrl) {
       console.log("Downloading PDF report from URL:", reportUrl);
-
       try {
         // Create reports directory if it doesn't exist
         const reportsDir = path.join(__dirname, "../reports");
