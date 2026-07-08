@@ -232,6 +232,7 @@ app.use("/api/franchise/reward", require("./routes/AdminRewardRoutes"));
 app.use("/api/franchise-case-studie", require("./routes/CaseStudyRoutes"));
 app.use("/api", require("./routes/Remark"));
 app.use("/api", require("./routes/CustomerBureau"));
+app.use("/api", require("./routes/supporticket"));
 
 // Routes
 const PORT = process.env.PORT || 5000;
