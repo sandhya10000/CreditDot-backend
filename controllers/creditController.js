@@ -8,7 +8,7 @@ const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
-const puppeteer = require("puppeteer");
+// const puppeteer = require("puppeteer");
 
 // Validation schema for credit check
 const creditCheckSchema = Joi.object({

@@ -8,5 +8,7 @@ reports/
 
 uploads/
 
+backup/
+
 # AI Analysis Prompt (optional - can override default)
 config/ai-analysis-prompt.txt
