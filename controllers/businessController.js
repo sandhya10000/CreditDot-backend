@@ -628,6 +628,23 @@ const updateBusinessForm = async (req, res) => {
     });
   }
 };
+// controller
+const deleteBusinessForm = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await BusinessForm.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Business form not found" });
+    }
+
+    res.json({ message: "Business form deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 const uploadDocBusiness = async (req, res) => {
   try {
     console.log(req.files);
@@ -670,4 +687,5 @@ module.exports = {
   getSingleBusinessForm,
   uploadDocBusiness,
   getBusinessFormsByFranchise,
+  deleteBusinessForm,
 };

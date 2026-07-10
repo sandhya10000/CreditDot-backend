@@ -12,6 +12,7 @@ const {
   uploadDocBusiness,
   getBusinessFormsByFranchise,
   updateBusinessForm,
+  deleteBusinessForm,
 } = require("../controllers/businessController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -63,6 +64,15 @@ router.put(
   auth,
   rbac("admin"),
   updateBusinessWorkStatus,
+);
+
+//@route DELETE api/admin/business-forms/:id"
+// route
+router.delete(
+  "/admin/business-forms/:id",
+  auth,
+  rbac("admin"),
+  deleteBusinessForm,
 );
 // @route GET /api/business/customer/${customerId}
 // @desc get all bissiness form adminonly
