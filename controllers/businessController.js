@@ -479,31 +479,31 @@ const getAllBusinessForms = async (req, res) => {
 };
 //
 
-const closeBusinessCase = async (req, res) => {
+//close , hold, In progress
+const updateBusinessWorkStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { adminRemark } = req.body;
+    const { workStatus } = req.body;
 
-    const updatedCase = await BusinessForm.findByIdAndUpdate(
+    const form = await BusinessForm.findByIdAndUpdate(
       id,
-      {
-        workStatus: "Closed",
-        closedAt: new Date(),
-        adminRemark: adminRemark || "Case completed",
-      },
-      { new: true },
+      { workStatus },
+      { new: true, runValidators: true },
     );
 
-    if (!updatedCase) {
-      return res.status(404).json({ message: "Case not found" });
+    if (!form) {
+      return res.status(404).json({ message: "Business form not found" });
     }
 
-    res.status(200).json({
-      message: "Case closed successfully",
-      data: updatedCase,
+    res.json({
+      message: "Work status updated successfully",
+      data: form,
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({
+      message: "Failed to update work status",
+      error: err.message,
+    });
   }
 };
 
@@ -666,7 +666,7 @@ module.exports = {
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
-  closeBusinessCase,
+  updateBusinessWorkStatus,
   getSingleBusinessForm,
   uploadDocBusiness,
   getBusinessFormsByFranchise,

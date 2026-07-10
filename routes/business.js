@@ -7,7 +7,7 @@ const {
   verifyPayment,
   getFranchiseBusinessForms,
   getAllBusinessForms,
-  closeBusinessCase,
+  updateBusinessWorkStatus,
   getSingleBusinessForm,
   uploadDocBusiness,
   getBusinessFormsByFranchise,
@@ -57,8 +57,13 @@ router.get("/all", auth, rbac("admin"), getAllBusinessForms);
 // @route PUT /api/admin/business/${id}/close
 //@desc put all business forms(admin only)
 //@access Private/Admin
-router.put("/admin/business/:id/close", auth, rbac("admin"), closeBusinessCase);
-
+// router.put("/admin/business/:id/close", auth, rbac("admin"), closeBusinessCase);
+router.put(
+  "/admin/business-forms/:id/work-status",
+  auth,
+  rbac("admin"),
+  updateBusinessWorkStatus,
+);
 // @route GET /api/business/customer/${customerId}
 // @desc get all bissiness form adminonly
 // @access private/Admin
