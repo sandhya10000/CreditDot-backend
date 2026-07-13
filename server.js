@@ -123,8 +123,24 @@ app.use(cookieParser());
 // Serve static files from the reports directory
 app.use("/reports", express.static(path.join(__dirname, "reports")));
 
-// Serve static files from the root uploads directory
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// Serve static files from the root uploads directory with CORS headers
+app.use(
+  "/uploads",
+  (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Origin, X-Requested-With, Content-Type, Accept"
+    );
+    // Handle preflight requests for static files
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  },
+  express.static(path.join(__dirname, "uploads"))
+);
 
 // Serve static files from the Backend uploads directory
 app.use("/backend-uploads", express.static(path.join(__dirname, "uploads")));
