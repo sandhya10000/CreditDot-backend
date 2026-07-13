@@ -29,11 +29,6 @@ const router = express.Router();
 // @access  Private/Franchise User
 router.get("/profile", auth, rbac("franchise_user"), getFranchiseProfile);
 
-// @route GET api/franchise/franchiseCode
-// @desc    Get franchise profile
-// @access  Private/Franchise User
-router.get("/:franchiseCode", auth, rbac("admin"), getSingleFranchise);
-
 // @route   PUT /api/franchises/profile
 // @desc    Update franchise profile
 // @access  Private/Franchise User
@@ -52,6 +47,15 @@ router.put(
   auth,
   rbac("franchise_user"),
   requestCertificateNameUpdate,
+);
+// @route GET api/franchise/single-data/franchiseCode
+// @desc    Get franchise profile
+// @access  Private/Franchise User
+router.get(
+  "/single-data/:franchiseCode",
+  auth,
+  rbac("admin"),
+  getSingleFranchise,
 );
 
 // @route   GET /api/franchises/pan
