@@ -793,6 +793,143 @@ const getAllFranchisesList = async (req, res) => {
     });
   }
 };
+
+/**
+ * Export all matching franchises as a streamed CSV file.
+ * Respects the same `search` and `kycStatus` query params as the paginated list,
+ * but skips pagination so ALL matching records are exported.
+ * Uses a Mongoose cursor + chunked writes to avoid loading everything into memory.
+ */
+const exportFranchisesCSV = async (req, res) => {
+  try {
+    const search = req.query.search?.trim() || "";
+    const kycStatus = req.query.kycStatus?.trim() || "";
+
+    // Build the same filter used by getAllFranchises
+    const filter = {};
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: "i" } },
+        { ownerName:    { $regex: search, $options: "i" } },
+        { email:        { $regex: search, $options: "i" } },
+        { phone:        { $regex: search, $options: "i" } },
+      ];
+    }
+    if (kycStatus) {
+      filter.kycStatus = kycStatus;
+    }
+
+    // Set streaming CSV response headers
+    const timestamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="franchise_export_${timestamp}.csv"`
+    );
+    // Flush headers immediately so the browser starts the download
+    res.flushHeaders?.();
+
+    // CSV header row
+    const csvHeaders = [
+      "Franchise ID",
+      "Business Name",
+      "Owner Name",
+      "Email",
+      "Phone",
+      "KYC Status",
+      "Status",
+      "Credits",
+      "Total Credits Purchased",
+      "PAN Number",
+      "Bank Account Number",
+      "IFSC Code",
+      "Certificate Name",
+      "Street",
+      "City",
+      "State",
+      "Pincode",
+      "Country",
+      "Created Date",
+    ];
+
+    const escapeField = (value) => {
+      const str = String(value ?? "");
+      // Wrap in quotes, doubling any internal quotes
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const formatDate = (date) => {
+      if (!date) return "";
+      return new Date(date).toLocaleDateString("en-IN");
+    };
+
+    // Write the header row
+    res.write(csvHeaders.map(escapeField).join(",") + "\n");
+
+    // Stream records in batches of 100 to avoid memory spikes on large datasets
+    const BATCH_SIZE = 100;
+    let skip = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const batch = await Franchise.find(filter)
+        .populate("userId", "name email phone")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(BATCH_SIZE)
+        .lean();
+
+      if (batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (const f of batch) {
+        const row = [
+          f.franchiseCode || "",
+          f.businessName || "",
+          f.ownerName || "",
+          f.email || "",
+          f.phone || "",
+          f.kycStatus || "",
+          f.isActive ? "Active" : "Inactive",
+          f.credits ?? 0,
+          f.totalCreditsPurchased ?? 0,
+          f.panNumber || "",
+          f.bankAccountNumber || "",
+          f.bankIfscCode || "",
+          f.certificateName || "",
+          f.address?.street || "",
+          f.address?.city || "",
+          f.address?.state || "",
+          f.address?.pincode || "",
+          f.address?.country || "",
+          formatDate(f.createdAt),
+        ];
+        res.write(row.map(escapeField).join(",") + "\n");
+      }
+
+      skip += batch.length;
+      // If we got fewer than the batch size, we've reached the end
+      if (batch.length < BATCH_SIZE) {
+        hasMore = false;
+      }
+    }
+
+    res.end();
+  } catch (error) {
+    console.error("CSV export error:", error);
+    // If headers haven't been flushed yet, send a proper error response
+    if (!res.headersSent) {
+      return res.status(500).json({
+        message: "Failed to export CSV",
+        error: error.message,
+      });
+    }
+    // Otherwise just end the stream (partial CSV is better than a hanging connection)
+    res.end();
+  }
+};
 module.exports = {
   getFranchiseProfile,
   updateFranchiseProfile,
@@ -813,4 +950,5 @@ module.exports = {
   fetchBankVerification,
   getAllFranchisesList,
   getSingleFranchise,
+  exportFranchisesCSV,
 };
