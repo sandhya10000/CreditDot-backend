@@ -1,5 +1,8 @@
 const mongoose = require("mongoose");
 
+const CASE_STUDY_CATEGORIES = require("../config/caseStudyCategories");
+const allowedCategories = CASE_STUDY_CATEGORIES.map(c => c.value);
+
 const caseStudySchema = new mongoose.Schema(
   {
     title: {
@@ -13,17 +16,7 @@ const caseStudySchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: [
-        "dpd",
-        "inquiries",
-        "score_increase",
-        "settlement",
-        "write_off",
-        "suit_filed",
-        "post_write_off_closed",
-        "fake_loans",
-        "sma_removed",
-      ],
+      enum: allowedCategories,
     },
 
     beforeWorking: {
