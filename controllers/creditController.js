@@ -911,15 +911,24 @@ const getAllCreditReports = async (req, res) => {
     const skip = (page - 1) * limit;
     const filter = {};
     if (search) {
+      const matchingFranchises = await Franchise.find({
+        businessName: { $regex: search, $options: "i" },
+      }).select("_id");
+      const franchiseIds = matchingFranchises.map((f) => f._id);
+
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
         { mobile: { $regex: search, $options: "i" } },
         { franchiseName: { $regex: search, $options: "i" } },
         { pan: { $regex: search, $options: "i" } },
       ];
+
+      if (franchiseIds.length > 0) {
+        filter.$or.push({ franchiseId: { $in: franchiseIds } });
+      }
     }
     if (bureau) {
-      filter.bureau = bureau;
+      filter.bureau = { $regex: new RegExp(`^${bureau}$`, 'i') };
     }
     const reports = await CreditReport.find(filter)
       .select(

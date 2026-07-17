@@ -1,4 +1,5 @@
 const caseStudy = require("../models/CaseStudy");
+const CASE_STUDY_CATEGORIES = require("../config/caseStudyCategories");
 
 const createCaseStudy = async (req, res) => {
   try {
@@ -13,17 +14,7 @@ const createCaseStudy = async (req, res) => {
         message: "Both PDF files are required",
       });
     }
-    const allowedCategories = [
-      "dpd",
-      "inquiries",
-      "score_increase",
-      "settlement",
-      "write_off",
-      "suit_filed",
-      "post_write_off_closed",
-      "fake_loans",
-      "sma_removed",
-    ];
+    const allowedCategories = CASE_STUDY_CATEGORIES.map(c => c.value);
 
     if (!allowedCategories.includes(category)) {
       return res.status(400).json({
