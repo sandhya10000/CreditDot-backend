@@ -4,6 +4,7 @@ const marketingSchema = new mongoose.Schema(
   {
     title: String,
     description: String,
+    fileName: String,
     fileUrl: String,
     fileType: String,
     language: {
@@ -18,6 +19,7 @@ const marketingSchema = new mongoose.Schema(
         "Marathi",
         "Gujarati",
         "Kannada",
+        "Punjabi",
       ],
       required: true,
     },
