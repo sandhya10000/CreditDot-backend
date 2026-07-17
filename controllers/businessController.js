@@ -129,12 +129,7 @@ const submitBusinessForm = async (req, res) => {
     } = req.body;
 
     // Check if selected package exists and is active
-    // const customerPackage = await CustomerPackage.findById(selectedPackage);
-    // if (!customerPackage || !customerPackage.isActive) {
-    //   return res
-    //     .status(400)
-    //     .json({ message: "Invalid or inactive package selected" });
-    // }
+
     let customerPackage = null;
 
     // Only validate package for non-admin users
@@ -147,23 +142,6 @@ const submitBusinessForm = async (req, res) => {
         });
       }
     }
-
-    // Get last customer
-    // const lastCustomer = await BusinessForm.findOne({
-    //   customerId: { $exists: true },
-    // }).sort({ createdAt: -1 });
-
-    // // Default first ID
-    // let nextCustomerId = "CUST-0001";
-
-    // if (lastCustomer && lastCustomer.customerId) {
-    //   const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
-
-    //   const nextNumber = lastNumber + 1;
-
-    //   nextCustomerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
-
-    // }
 
     // Create business form entry
     const businessForm = new BusinessForm({
