@@ -7,6 +7,7 @@ const uploadmarketingMaterial = async (req, res) => {
       title: req.body.title,
       description: req.body.description,
       language: req.body.language,
+      fileName: req.file.originalname,
       fileUrl: "/uploads/marketing/" + req.file.filename,
       fileType: req.file.mimetype,
     });
@@ -26,7 +27,7 @@ const uploadmarketingMaterial = async (req, res) => {
 //Get All Materials
 const getMarketingMaterials = async (req, res) => {
   try {
-    const language = req.body;
+    const language = req.query.language;
     const filter = {};
 
     if (language) {
