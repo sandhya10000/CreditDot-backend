@@ -16,6 +16,7 @@ const prefillFailedLog = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Franchise",
     },
+
     statusCode: {
       type: Number,
     },

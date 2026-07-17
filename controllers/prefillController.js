@@ -1,5 +1,7 @@
 const axios = require("axios");
 const prefillFailedLog = require("../models/prefillFailedLog");
+const BusinessForm = require("../models/BusinessForm"); //
+
 const prefillByMobile = async (req, res) => {
   const { mobile } = req.body;
 
@@ -107,10 +109,18 @@ const getPrefillFailedLog = async (req, res) => {
       .find()
       .populate("franchiseId", "name")
       .populate("userId", "name")
+
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
+    for (const report of failedReports) {
+      const business = await BusinessForm.findOne({
+        customerPhone: report.mobile, // ya mobile field
+      }).select("customerName");
+
+      report.customerName = business?.customerName || "";
+    }
 
     const total = await prefillFailedLog.countDocuments();
     res.status(200).json({
