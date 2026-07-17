@@ -443,10 +443,21 @@ const getAllBusinessForms = async (req, res) => {
     const filter = {};
 
     if (search) {
+      const matchingFranchises = await Franchise.find({
+        businessName: { $regex: search, $options: "i" },
+      }).select("_id");
+      const franchiseIds = matchingFranchises.map((f) => f._id);
+
       filter.$or = [
-        { businessName: { $regex: search, $options: "i" } },
-        { ownerName: { $regex: search, $options: "i" } },
+        { customerName: { $regex: search, $options: "i" } },
+        { customerEmail: { $regex: search, $options: "i" } },
+        { customerPhone: { $regex: search, $options: "i" } },
+        { customerId: { $regex: search, $options: "i" } },
       ];
+
+      if (franchiseIds.length > 0) {
+        filter.$or.push({ franchiseId: { $in: franchiseIds } });
+      }
     }
 
     const total = await BusinessForm.countDocuments(filter);

@@ -10,5 +10,7 @@ uploads/
 
 backup/
 
+dump/
+
 # AI Analysis Prompt (optional - can override default)
 config/ai-analysis-prompt.txt
