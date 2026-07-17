@@ -162,7 +162,9 @@ const submitBusinessForm = async (req, res) => {
     //   const nextNumber = lastNumber + 1;
 
     //   nextCustomerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
+
     // }
+
     // Create business form entry
     const businessForm = new BusinessForm({
       // customerId: null,
@@ -234,6 +236,9 @@ const submitBusinessForm = async (req, res) => {
           businessFormId: businessForm._id,
         },
       });
+      businessForm.paymentStatus = "paid";
+      await assignCustomerId(businessForm); // assigns only; does not save
+      await businessForm.save();
       return res.json({
         message: "Business form submitted successfully",
         businessFormId: businessForm._id,
@@ -305,18 +310,9 @@ const verifyPayment = async (req, res) => {
     businessForm.paymentStatus = "paid";
     businessForm.razorpayPaymentId = razorpay_payment_id;
     businessForm.razorpaySignature = razorpay_signature;
+    await assignCustomerId(businessForm);
     //Generare Customer ID only after successfuul payment
-    if (!businessForm.customerId) {
-      const lastCustomer = await BusinessForm.findOne({
-        customerId: { $ne: null },
-      }).sort({ createdAt: -1 });
-      let nextCustomerId = "CUST-001";
-      if (lastCustomer?.customerId) {
-        const lastNumber = parseInt(lastCustomer.customerId.split("-")[1]);
-        nextCustomerId = `CUST-${String(lastNumber + 1).padStart(4, "0")}`;
-      }
-      businessForm.customerId = nextCustomerId;
-    }
+
     await businessForm.save();
 
     // Sync with Google Sheets to update payment status (Business Login tab only)
@@ -688,6 +684,24 @@ const uploadDocBusiness = async (req, res) => {
     });
   }
 };
+
+async function assignCustomerId(businessForm) {
+  if (businessForm.customerId) return;
+
+  const last = await BusinessForm.findOne({
+    customerId: { $ne: null },
+  }).sort({ createdAt: -1 });
+
+  let next = "CUST-0001";
+
+  if (last?.customerId) {
+    const n = parseInt(last.customerId.split("-")[1], 10) + 1;
+    next = `CUST-${String(n).padStart(4, "0")}`;
+  }
+
+  businessForm.customerId = next;
+  await businessForm.save();
+}
 module.exports = {
   updateBusinessForm,
   submitBusinessForm,

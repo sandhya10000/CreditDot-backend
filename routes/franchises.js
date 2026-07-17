@@ -92,6 +92,15 @@ router.put(
   rbac("franchise_user"),
   requestCertificateNameUpdate,
 );
+// @route GET api/franchise/single-data/franchiseCode
+// @desc    Get franchise profile
+// @access  Private/Franchise User
+router.get(
+  "/single-data/:franchiseCode",
+  auth,
+  rbac("admin"),
+  getSingleFranchise,
+);
 
 // @route   PUT /api/franchises/pan
 // @desc    Update PAN number

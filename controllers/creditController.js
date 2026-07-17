@@ -326,6 +326,19 @@ const checkCreditScore = async (req, res) => {
       }
     } catch (apiError) {
       console.error("API ERROR:", apiError);
+      const errorData = apiError?.response?.data;
+
+      // Hide Surepass Balance Exhausted message
+      if (
+        errorData?.message_code === "balance_exhausted" ||
+        errorData?.message === "API Balance Exhausted. Please recharge."
+      ) {
+        return res.status(503).json({
+          success: false,
+          message:
+            "Service is temporarily unavailable. Please try again later.",
+        });
+      }
       if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
         return res.status(504).json({
           message:
@@ -618,6 +631,19 @@ const checkCreditScorePublic = async (req, res) => {
         JSON.stringify(apiError.response?.data, null, 2),
       );
       console.error("- Request URL:", bureauConfig.endpoint);
+      const errorData = apiError?.response?.data;
+
+      // Hide Surepass Balance Exhausted message
+      if (
+        errorData?.message_code === "balance_exhausted" ||
+        errorData?.message === "API Balance Exhausted. Please recharge."
+      ) {
+        return res.status(503).json({
+          success: false,
+          message:
+            "Service is temporarily unavailable. Please try again later.",
+        });
+      }
 
       // Handle timeout specifically
       if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {

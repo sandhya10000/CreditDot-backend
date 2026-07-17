@@ -28,7 +28,17 @@ const prefillByMobile = async (req, res) => {
     return res.status(200).json(response.data);
   } catch (apiError) {
     const status = apiError?.response?.status;
-
+    const errorData = apiError?.response?.data;
+    // Hide Surepass balance exhausted message
+    if (
+      errorData?.message_code === "balance_exhausted" ||
+      errorData?.message === "API Balance Exhausted. Please recharge."
+    ) {
+      return res.status(503).json({
+        success: false,
+        message: "Service is temporarily unavailable. Please try again later.",
+      });
+    }
     if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
       return res.status(422).json({
         message: "Request timeout",
