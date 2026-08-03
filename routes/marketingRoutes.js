@@ -5,6 +5,7 @@ const {
   uploadmarketingMaterial,
   getMarketingMaterials,
   deleteMarketingMaterial,
+  getLanguages,
 } = require("../controllers/marketingController");
 
 const createUploader = require("../middleware/upload");
@@ -13,6 +14,9 @@ const createUploader = require("../middleware/upload");
 const upload = createUploader("marketing");
 
 router.post("/upload", upload.single("file"), uploadmarketingMaterial);
+
+// Returns the full language enum list so the frontend sidebar is dynamic
+router.get("/languages", getLanguages);
 
 router.get("/", getMarketingMaterials);
 router.delete("/:id", deleteMarketingMaterial);
