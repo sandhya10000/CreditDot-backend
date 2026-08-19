@@ -125,9 +125,6 @@ const getSingleFranchise = async (req, res) => {
   }
 };
 
-module.exports = {
-  getSingleFranchise,
-};
 // Update franchise profile
 const updateFranchiseProfile = async (req, res) => {
   try {
@@ -319,55 +316,142 @@ const getFranchiseById = async (req, res) => {
 // Update franchise (admin only)
 const updateFranchise = async (req, res) => {
   try {
-    // Validate request body
+    // ============================================
+    // VALIDATE REQUEST BODY
+    // ============================================
+
     const { error } = franchiseProfileSchema.validate(req.body);
+
     if (error) {
       return res.status(400).json({
+        success: false,
         message: "Validation error",
         details: error.details[0].message,
       });
     }
 
+    // ============================================
+    // FIND FRANCHISE
+    // ============================================
+
     const franchise = await Franchise.findById(req.params.id);
+
     if (!franchise) {
-      return res.status(404).json({ message: "Franchise not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Franchise not found",
+      });
     }
 
-    // Check if assignedPackages are being updated
+    // ============================================
+    // STORE OLD STATUS
+    // ============================================
+
+    const oldStatus = String(franchise.kycStatus || "").toLowerCase();
+    const newStatus = String(req.body.kycStatus || "").toLowerCase();
+
+    // ============================================
+    // GENERATE FRANCHISE ID ONLY WHEN APPROVED
+    // ============================================
+
+    if (newStatus === "approved" && !franchise.franchiseCode) {
+      // Find last franchise having franchiseCode
+      const lastFranchise = await Franchise.findOne({
+        franchiseCode: {
+          $exists: true,
+          $ne: null,
+        },
+      }).sort({
+        createdAt: -1,
+      });
+
+      let nextNumber = 1;
+
+      if (lastFranchise?.franchiseCode) {
+        const lastNumber = parseInt(
+          lastFranchise.franchiseCode.replace("FI-", ""),
+          10,
+        );
+
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1;
+        }
+      }
+
+      const franchiseCode = `FI-${String(nextNumber).padStart(3, "0")}`;
+
+      // Add generated franchise ID to request body
+      req.body.franchiseCode = franchiseCode;
+
+      console.log(
+        `Franchise approved. Generated Franchise ID: ${franchiseCode}`,
+      );
+    }
+
+    // ============================================
+    // ASSIGNED PACKAGES
+    // ============================================
+
     if (req.body.assignedPackages && Array.isArray(req.body.assignedPackages)) {
-      // Calculate credits from assigned packages
+      // Remove null values
       const packageIds = req.body.assignedPackages.filter((id) => id !== null);
+
       if (packageIds.length > 0) {
-        const packages = await Package.find({ _id: { $in: packageIds } });
+        const packages = await Package.find({
+          _id: {
+            $in: packageIds,
+          },
+        });
+
         let totalCredits = 0;
+
         packages.forEach((pkg) => {
           totalCredits += pkg.creditsIncluded || 0;
         });
 
-        // Update the credits in the request body
+        // Update credits
         req.body.credits = totalCredits;
+
         req.body.totalCreditsPurchased = totalCredits;
-        // Preserve totalCreditsPurchased - it should only increase when packages are purchased, not assigned
       } else {
-        // If no packages assigned, set credits to 0
+        // No packages assigned
         req.body.credits = 0;
       }
     }
 
-    // Update franchise with all fields including credits if applicable
+    // ============================================
+    // UPDATE FRANCHISE
+    // ============================================
+
     Object.assign(franchise, req.body);
+
     await franchise.save();
 
-    // Populate references for response
+    // ============================================
+    // POPULATE REFERENCES
+    // ============================================
+
     await franchise.populate("userId", "name email phone");
+
     await franchise.populate("assignedPackages", "name price creditsIncluded");
 
-    res.json({
+    // ============================================
+    // RESPONSE
+    // ============================================
+
+    return res.status(200).json({
+      success: true,
       message: "Franchise updated successfully",
       franchise,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Update franchise error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -810,9 +894,9 @@ const exportFranchisesCSV = async (req, res) => {
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },
-        { ownerName:    { $regex: search, $options: "i" } },
-        { email:        { $regex: search, $options: "i" } },
-        { phone:        { $regex: search, $options: "i" } },
+        { ownerName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
       ];
     }
     if (kycStatus) {
@@ -824,7 +908,7 @@ const exportFranchisesCSV = async (req, res) => {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="franchise_export_${timestamp}.csv"`
+      `attachment; filename="franchise_export_${timestamp}.csv"`,
     );
     // Flush headers immediately so the browser starts the download
     res.flushHeaders?.();

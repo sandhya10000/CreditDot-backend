@@ -3,7 +3,7 @@ const SupportTicket = require("../models/SupportTicket");
 const createTicket = async (req, res) => {
   try {
     const ticket = await SupportTicket.create({
-      userId: req.user._id,
+      user: req.user._id,
       subject: req.body.subject,
       category: req.body.category,
       message: req.body.message,

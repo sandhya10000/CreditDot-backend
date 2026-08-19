@@ -830,18 +830,18 @@ const createFranchiseUser = async (req, res) => {
 
     // ONLY for franchise user
     if (user.role === "franchise_user") {
-      const lastFranchise = await Franchise.findOne({
-        franchiseCode: { $exists: true },
-      }).sort({ createdAt: -1 });
+      //   const lastFranchise = await Franchise.findOne({
+      //     franchiseCode: { $exists: true },
+      //   }).sort({ createdAt: -1 });
 
-      let nextNumber = 1;
+      //   let nextNumber = 1;
 
-      if (lastFranchise?.franchiseCode) {
-        nextNumber =
-          parseInt(lastFranchise.franchiseCode.replace("FI-", "")) + 1;
-      }
+      //   if (lastFranchise?.franchiseCode) {
+      //     nextNumber =
+      //       parseInt(lastFranchise.franchiseCode.replace("FI-", "")) + 1;
+      //   }
 
-      const franchiseCode = `FI-${String(nextNumber).padStart(3, "0")}`;
+      //   const franchiseCode = `FI-${String(nextNumber).padStart(3, "0")}`;
       const franchiseData = {
         userId: user._id,
         businessName: name,
@@ -849,7 +849,7 @@ const createFranchiseUser = async (req, res) => {
         email,
 
         phone,
-        franchiseCode, // <-- add this
+        //  franchiseCode,  <-- add this
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),

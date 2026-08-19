@@ -57,6 +57,13 @@ const runGoogleSheetsMigration = async () => {
 };
 
 // Connect to database
+console.log("MONGODB_URI exists:", !!process.env.MONGODB_URI);
+console.log(
+  "MongoDB host:",
+  process.env.MONGODB_URI
+    ? process.env.MONGODB_URI.replace(/\/\/.*@/, "//***@")
+    : "NOT SET",
+);
 mongoose
   .connect(
     process.env.MONGODB_URI || "mongodb://localhost:27017/franchise_management",
@@ -131,7 +138,7 @@ app.use(
     res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.header(
       "Access-Control-Allow-Headers",
-      "Origin, X-Requested-With, Content-Type, Accept"
+      "Origin, X-Requested-With, Content-Type, Accept",
     );
     // Handle preflight requests for static files
     if (req.method === "OPTIONS") {
@@ -139,7 +146,7 @@ app.use(
     }
     next();
   },
-  express.static(path.join(__dirname, "uploads"))
+  express.static(path.join(__dirname, "uploads")),
 );
 
 // Serve static files from the Backend uploads directory
