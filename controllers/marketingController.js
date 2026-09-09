@@ -1,5 +1,19 @@
 const MarketingMaterial = require("../models/MarketingMaterial");
 
+// Get the full language list from the model enum
+const getLanguages = async (req, res) => {
+  try {
+    // Pull enum values directly from the Mongoose schema so adding a
+    // new value to the model automatically surfaces it in the sidebar.
+    const schemaPath = MarketingMaterial.schema.path("language");
+    const languages = schemaPath ? schemaPath.enumValues : [];
+    res.status(200).json({ success: true, languages });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch languages" });
+  }
+};
+
 //upload MarketinfMaterial
 const uploadmarketingMaterial = async (req, res) => {
   try {
@@ -74,4 +88,5 @@ module.exports = {
   uploadmarketingMaterial,
   getMarketingMaterials,
   deleteMarketingMaterial,
+  getLanguages,
 };
