@@ -497,10 +497,101 @@ const submitSuvidhaCentreApplicationForm = async (req, res) => {
   }
 };
 
+// Admin endpoints for credit repair forms
+const getAllCreditRepairEnquiries = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const query = {};
+
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, "i");
+      query.$or = [
+        { fullName: searchRegex },
+        { mobileNumber: searchRegex },
+        { email: searchRegex },
+      ];
+    }
+
+    if (req.query.problemType) {
+      query.problemType = req.query.problemType;
+    }
+
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+
+    if (req.query.state) {
+      query.state = req.query.state;
+    }
+
+    const enquiries = await CreditRepair.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await CreditRepair.countDocuments(query);
+
+    res.json({
+      enquiries,
+      total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+    });
+  } catch (error) {
+    console.error("Get credit repair enquiries error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const updateCreditRepairStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const enquiry = await CreditRepair.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
+
+    if (!enquiry) {
+      return res.status(404).json({ message: "Enquiry not found" });
+    }
+
+    res.json({ message: "Status updated successfully", enquiry });
+  } catch (error) {
+    console.error("Update credit repair status error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const deleteCreditRepairEnquiry = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const enquiry = await CreditRepair.findByIdAndDelete(id);
+
+    if (!enquiry) {
+      return res.status(404).json({ message: "Enquiry not found" });
+    }
+
+    res.json({ message: "Enquiry deleted successfully" });
+  } catch (error) {
+    console.error("Delete credit repair enquiry error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
   submitCreditRepairForm,
   submitContactForm,
   submitFranchiseOpportunityForm,
   submitBusinessForm,
   submitSuvidhaCentreApplicationForm,
+  getAllCreditRepairEnquiries,
+  updateCreditRepairStatus,
+  deleteCreditRepairEnquiry,
 };
