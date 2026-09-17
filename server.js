@@ -8,6 +8,7 @@ const path = require("path");
 const { initializeReferralSettings } = require("./utils/referralUtils");
 const googleSheetsService = require("./utils/googleSheetsService");
 const GoogleSheet = require("./models/GoogleSheet");
+const { startPaymentReconciliation } = require("./utils/reconcilePayments");
 
 // Load environment variables
 dotenv.config();
@@ -305,6 +306,9 @@ const startAutoSync = async () => {
     console.error("Failed to start auto-sync:", error.message);
   }
 };
+
+// Start the payment reconciliation job
+startPaymentReconciliation();
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

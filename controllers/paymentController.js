@@ -16,6 +16,9 @@ const {
   updateAgreementPackageDetails,
 } = require("./digitalAgreementController");
 
+const BusinessForm = require("../models/BusinessForm");
+const { assignCustomerId } = require("./businessController");
+
 // Initialize Razorpay instance
 console.log("Initializing Razorpay with key_id:", process.env.RAZORPAY_KEY_ID);
 const razorpay = new Razorpay({
@@ -310,6 +313,20 @@ const handleWebhook = async (req, res) => {
       case "payment.captured":
         // Handle successful payment
         console.log("Payment captured:", payload);
+        const paymentEntity = payload.payment?.entity;
+        const orderId = paymentEntity?.order_id;
+        
+        if (orderId) {
+          // Update BusinessForm if this order belongs to a business form
+          const businessForm = await BusinessForm.findOne({ razorpayOrderId: orderId });
+          if (businessForm && businessForm.paymentStatus !== "paid") {
+            businessForm.paymentStatus = "paid";
+            businessForm.razorpayPaymentId = paymentEntity.id;
+            await assignCustomerId(businessForm);
+            await businessForm.save();
+            console.log(`Webhook: BusinessForm ${businessForm._id} marked as paid`);
+          }
+        }
         break;
 
       case "payment.failed":
