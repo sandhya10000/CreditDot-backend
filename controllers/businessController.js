@@ -412,9 +412,14 @@ const getAllBusinessForms = async (req, res) => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
     const search = req.query.search?.trim() || "";
+    const paymentStatus = req.query.paymentStatus;
 
     // Filter
     const filter = {};
+
+    if (paymentStatus && ["pending", "paid", "failed"].includes(paymentStatus)) {
+      filter.paymentStatus = paymentStatus;
+    }
 
     if (search) {
       const matchingFranchises = await Franchise.find({
@@ -691,4 +696,5 @@ module.exports = {
   uploadDocBusiness,
   getBusinessFormsByFranchise,
   deleteBusinessForm,
+  assignCustomerId,
 };

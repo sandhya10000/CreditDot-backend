@@ -39,6 +39,11 @@ const creditRepairSchema = new mongoose.Schema({
   income: {
     type: String,
   },
+  status: {
+    type: String,
+    enum: ["New", "Contacted", "In Progress", "Resolved"],
+    default: "New",
+  },
 }, {
   timestamps: true
 });

@@ -44,6 +44,12 @@ const {
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
 
+const {
+  getAllCreditRepairEnquiries,
+  updateCreditRepairStatus,
+  deleteCreditRepairEnquiry,
+} = require("../controllers/formController");
+
 const router = express.Router();
 
 // @route   GET /api/admin/dashboard
@@ -258,5 +264,30 @@ router.put(
 //@desc GET Franchise download report count in admin
 //@access  Private/Admin
 router.get("/download-stats", auth, rbac("admin"), getDownloadStats);
+
+// @route   GET /api/admin/credit-repair
+// @desc    Get all credit repair enquiries
+// @access  Private/Admin
+router.get("/credit-repair", auth, rbac("admin"), getAllCreditRepairEnquiries);
+
+// @route   PUT /api/admin/credit-repair/:id/status
+// @desc    Update credit repair enquiry status
+// @access  Private/Admin
+router.put(
+  "/credit-repair/:id/status",
+  auth,
+  rbac("admin"),
+  updateCreditRepairStatus
+);
+
+// @route   DELETE /api/admin/credit-repair/:id
+// @desc    Delete credit repair enquiry
+// @access  Private/Admin
+router.delete(
+  "/credit-repair/:id",
+  auth,
+  rbac("admin"),
+  deleteCreditRepairEnquiry
+);
 
 module.exports = router;
