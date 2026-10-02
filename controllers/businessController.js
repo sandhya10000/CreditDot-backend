@@ -417,7 +417,10 @@ const getAllBusinessForms = async (req, res) => {
     // Filter
     const filter = {};
 
-    if (paymentStatus && ["pending", "paid", "failed"].includes(paymentStatus)) {
+    if (
+      paymentStatus &&
+      ["pending", "paid", "failed"].includes(paymentStatus)
+    ) {
       filter.paymentStatus = paymentStatus;
     }
 
@@ -669,21 +672,39 @@ const uploadDocBusiness = async (req, res) => {
 };
 
 async function assignCustomerId(businessForm) {
-  if (businessForm.customerId) return;
+  try {
+    // Already assigned
+    if (businessForm.customerId) {
+      return businessForm.customerId;
+    }
 
-  const last = await BusinessForm.findOne({
-    customerId: { $ne: null },
-  }).sort({ createdAt: -1 });
+    // Find latest customer ID
+    const lastCustomer = await BusinessForm.findOne({
+      customerId: { $exists: true, $ne: null, $ne: "" },
+    })
+      .sort({ customerId: -1 })
+      .select("customerId")
+      .lean();
 
-  let next = "CUST-0001";
+    let nextNumber = 1;
 
-  if (last?.customerId) {
-    const n = parseInt(last.customerId.split("-")[1], 10) + 1;
-    next = `CUST-${String(n).padStart(4, "0")}`;
+    if (lastCustomer?.customerId) {
+      const match = lastCustomer.customerId.match(/^CUST-(\d+)$/);
+
+      if (match) {
+        nextNumber = parseInt(match[1], 10) + 1;
+      }
+    }
+
+    const customerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
+
+    businessForm.customerId = customerId;
+
+    return customerId;
+  } catch (error) {
+    console.error("assignCustomerId error:", error);
+    throw error;
   }
-
-  businessForm.customerId = next;
-  await businessForm.save();
 }
 module.exports = {
   updateBusinessForm,
