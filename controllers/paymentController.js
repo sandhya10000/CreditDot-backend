@@ -104,6 +104,18 @@ const verifyPayment = async (req, res) => {
     hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
     const generated_signature = hmac.digest("hex");
 
+    // DEBUG LOGS - ADD HERE
+    console.log("===== RAZORPAY PAYMENT VERIFICATION =====");
+    console.log("Order ID:", razorpay_order_id);
+    console.log("Payment ID:", razorpay_payment_id);
+    console.log("Received Signature:", razorpay_signature);
+    console.log("Generated Signature:", generated_signature);
+    console.log("Signature Match:", generated_signature === razorpay_signature);
+    console.log(
+      "RAZORPAY_KEY_SECRET exists:",
+      !!process.env.RAZORPAY_KEY_SECRET,
+    );
+    console.log("==========================================");
     if (generated_signature !== razorpay_signature) {
       return res.status(400).json({ message: "Payment verification failed" });
     }
@@ -112,9 +124,20 @@ const verifyPayment = async (req, res) => {
     const transaction = await Transaction.findOne({
       orderId: razorpay_order_id,
     });
+    console.log("Transaction found:", !!transaction);
+
     if (!transaction) {
-      return res.status(404).json({ message: "Transaction not found" });
+      console.log("Transaction NOT FOUND for orderId:", razorpay_order_id);
+
+      return res.status(404).json({
+        message: "Transaction not found",
+      });
     }
+
+    console.log("Transaction ID:", transaction._id);
+    console.log("Transaction User ID:", transaction.userId);
+    console.log("Transaction Package ID:", transaction.packageId);
+    console.log("Transaction Status:", transaction.status);
 
     transaction.paymentId = razorpay_payment_id;
     transaction.status = "paid";
@@ -315,16 +338,20 @@ const handleWebhook = async (req, res) => {
         console.log("Payment captured:", payload);
         const paymentEntity = payload.payment?.entity;
         const orderId = paymentEntity?.order_id;
-        
+
         if (orderId) {
           // Update BusinessForm if this order belongs to a business form
-          const businessForm = await BusinessForm.findOne({ razorpayOrderId: orderId });
+          const businessForm = await BusinessForm.findOne({
+            razorpayOrderId: orderId,
+          });
           if (businessForm && businessForm.paymentStatus !== "paid") {
             businessForm.paymentStatus = "paid";
             businessForm.razorpayPaymentId = paymentEntity.id;
             await assignCustomerId(businessForm);
             await businessForm.save();
-            console.log(`Webhook: BusinessForm ${businessForm._id} marked as paid`);
+            console.log(
+              `Webhook: BusinessForm ${businessForm._id} marked as paid`,
+            );
           }
         }
         break;
