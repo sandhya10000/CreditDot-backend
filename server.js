@@ -160,6 +160,7 @@ const corsOptions = {
       "https://creditdost.co.in",
       "https://www.creditdost.co.in",
       "https://www.reactbackend.creditdost.co.in",
+      "https://staging.creditdost.co.in",
     ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
