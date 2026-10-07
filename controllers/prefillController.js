@@ -42,7 +42,9 @@ const prefillByMobile = async (req, res) => {
       });
     }
     if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
-      return res.status(422).json({
+      // NOTE: was 422 — that made the frontend treat timeouts as
+      // "No PAN record" and lock/hide. Timeouts are transient: 504, no lock.
+      return res.status(504).json({
         message: "Request timeout",
         error: "TIMEOUT",
       });

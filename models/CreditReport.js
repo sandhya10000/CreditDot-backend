@@ -60,6 +60,13 @@ const creditReportSchema = new mongoose.Schema(
     localPath: {
       type: String,
     },
+    pdfStatus: {
+      // Only used for IndiConnect CIBIL (htmlUrl rendered to PDF in background)
+      // undefined for all Surepass rows (back-compat)
+      type: String,
+      enum: ["pending", "ready", "failed"],
+      required: false,
+    },
     isPublic: {
       type: Boolean,
       default: false,
