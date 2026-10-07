@@ -12,6 +12,7 @@ const {
   getSingleCreditReports,
   checkCreditScoreV2,
   getFranchiseReports,
+  generateExperianReport,
 } = require("../controllers/creditController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -96,5 +97,15 @@ router.get(
 //@desc post and check credit report according cibil type
 //@access private/admin
 router.post("/credit-check-v2", auth, rbac("admin"), checkCreditScoreV2);
+
+// @route   POST /api/credit/generate-experian-report
+// @desc    Experian Soft-Pull credit report (styled PDF)
+// @access  Private/Franchise User
+router.post(
+  "/generate-experian-report",
+  auth,
+  rbac("franchise_user", "admin"),
+  generateExperianReport,
+);
 
 module.exports = router;
