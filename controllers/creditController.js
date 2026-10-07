@@ -8,6 +8,8 @@ const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
+const indiconnectClient = require("../utils/indiconnectApiClient");
+const cibilPdfService = require("../utils/cibilPdfService");
 // const puppeteer = require("puppeteer");
 
 // Validation schema for credit check
@@ -90,6 +92,58 @@ const getSurepassApiKeyValue = async () => {
     return null;
   }
 };
+
+// Helper: is this bureau routed to IndiConnect CIBIL? (franchise-first cutover)
+const isIndiconnectCibilBureau = (bureau) =>
+  ["cibil", "cibil-ongrid", "cibil-surepass"].includes(bureau);
+
+// IndiConnect credentials: DB Setting first, env fallback (same pattern as Surepass)
+const getIndiconnectValue = async (key, envKey) => {
+  try {
+    const setting = await Setting.findOne({ key });
+    if (setting && setting.value) return setting.value;
+  } catch (e) {
+    console.error(`Error fetching Setting ${key}:`, e.message);
+  }
+  return process.env[envKey] || null;
+};
+
+const getIndiconnectCibilConfig = async () => ({
+  baseUrl: (
+    (await getIndiconnectValue(
+      "indiconnect_base_url",
+      "INDICONNECT_BASE_URL"
+    )) || "https://api.ccs.indiconnect.in"
+  ).replace(/\/$/, ""),
+  serviceKey:
+    (await getIndiconnectValue(
+      "indiconnect_service_key",
+      "INDICONNECT_SERVICE_KEY"
+    )) || null,
+  auth:
+    (await getIndiconnectValue("indiconnect_auth", "INDICONNECT_AUTH")) ||
+    (() => {
+      const indc =
+        process.env.INDICONNECT_SECRET_KEY ||
+        process.env.INDICONNECT_INDC_KEY ||
+        "";
+      const ac = process.env.INDICONNECT_ACCESS_KEY || "";
+      return indc && ac ? `x-api-access ${indc}:${ac}` : null;
+    })(),
+  providerCode:
+    (await getIndiconnectValue(
+      "indiconnect_cibil_provider_code",
+      "INDICONNECT_CIBIL_PROVIDER_CODE"
+    )) ||
+    process.env.INDICONNECT_EXPERIAN_PROVIDER_CODE ||
+    process.env.INDICONNECT_CRIF_PROVIDER_CODE ||
+    process.env.INDICONNECT_PROVIDERCODE ||
+    null,
+  endpoint:
+    process.env.INDICONNECT_CIBIL_ENDPOINT ||
+    process.env.INDICONNECT_EXPERIAN_ENDPOINT ||
+    "/idverifygr/verification",
+});
 
 // Get Surepass API key (admin only)
 const getSurepassApiKey = async (req, res) => {
@@ -263,7 +317,47 @@ const checkCreditScore = async (req, res) => {
     let response;
 
     try {
-      if (bureau === "cibil-ongrid") {
+      if (isIndiconnectCibilBureau(bureau)) {
+        // ---- CIBIL via IndiConnect (franchise-first cutover, htmlUrl accepted) ----
+        const cfg = await getIndiconnectCibilConfig();
+        if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+          return res.status(500).json({
+            message:
+              "IndiConnect CIBIL credentials not configured (service-key / auth / provider code)",
+          });
+        }
+        const ep = cfg.endpoint.startsWith("/")
+          ? cfg.endpoint
+          : `/${cfg.endpoint}`;
+        const url = `${cfg.baseUrl}${ep}`;
+        const payload = indiconnectClient.buildCibilPayload({
+          pan,
+          name,
+          mobile,
+        });
+        response = await axios.post(url, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            "service-key": cfg.serviceKey,
+            Authorization: cfg.auth,
+            providercode: cfg.providerCode,
+          },
+          timeout: 60000,
+        });
+        // stash parsed view for the extractor below without changing response shape
+        response.__indiconnect = indiconnectClient.parseCibilResponse(
+          response.data,
+        );
+        if (!response.__indiconnect.ok && response.__indiconnect.error) {
+          return res.status(502).json({
+            message:
+              response.__indiconnect.error.message ||
+              response.__indiconnect.message ||
+              "IndiConnect CIBIL check failed",
+            error: response.__indiconnect.error,
+          });
+        }
+      } else if (bureau === "cibil-ongrid") {
         const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
 
         if (!gridlinesApiKey) {
@@ -386,7 +480,18 @@ const checkCreditScore = async (req, res) => {
     let score = null;
     let reportUrl = null;
 
-    if (bureau === "cibil-ongrid") {
+    if (isIndiconnectCibilBureau(bureau)) {
+      const parsed =
+        response.__indiconnect ||
+        indiconnectClient.parseCibilResponse(response.data);
+      score = parsed.score;
+      // Prefer the direct S3 PDF link; fall back to the CIBIL web page link
+      reportUrl = parsed.pdfUrl || parsed.htmlUrl;
+      response.__indiconnect = parsed;
+      console.log(
+        `IndiConnect CIBIL: score=${score ?? "null"} pdf=${parsed.pdfUrl ? "yes" : "no"} html=${parsed.htmlUrl ? "yes" : "no"} bureau=${parsed.bureauStatus}/${parsed.bureauMessage} txn=${parsed.txn_id}`,
+      );
+    } else if (bureau === "cibil-ongrid") {
       score =
         response?.data?.data?.report_data?.data?.cibil_data
           ?.get_customer_assets_response?.get_customer_assets_success?.asset
@@ -407,6 +512,7 @@ const checkCreditScore = async (req, res) => {
         null;
     }
 
+    const isIndiconnectCibil = isIndiconnectCibilBureau(bureau);
     const reportTableData = {
       userId: req.user.id,
       franchiseId: req.user.role === "admin" ? null : req.user.franchiseId,
@@ -423,6 +529,11 @@ const checkCreditScore = async (req, res) => {
         : bureau,
       reportData: response.data,
       reportUrl,
+      // IndiConnect CIBIL: direct PDF links download inline; htmlUrl-only
+      // rows are rendered to PDF in background after responding
+      ...(isIndiconnectCibil && reportUrl
+        ? { pdfStatus: "pending" }
+        : {}),
     };
 
     const creditReport = new CreditReport(reportTableData);
@@ -446,8 +557,13 @@ const checkCreditScore = async (req, res) => {
       await franchise.save();
     }
 
-    // If we have a report URL, download and save the PDF locally
-    if (reportUrl) {
+    // If we have a report URL, download and save the PDF locally.
+    // Direct PDF links (Surepass + IndiConnect cibil_report_link) download
+    // inline; IndiConnect htmlUrl-only rows use the background renderer below.
+    if (
+      reportUrl &&
+      (!isIndiconnectCibil || !indiconnectClient.isHtmlReportUrl(reportUrl))
+    ) {
       try {
         const reportsDir = path.join(__dirname, "../reports");
 
@@ -478,14 +594,25 @@ const checkCreditScore = async (req, res) => {
         });
 
         creditReport.localPath = `/reports/${filename}`;
+        if (isIndiconnectCibil) creditReport.pdfStatus = "ready";
         await creditReport.save();
       } catch (downloadError) {
         console.error("PDF DOWNLOAD ERROR:", downloadError.message);
       }
     }
 
+    const noCibilRecord =
+      isIndiconnectCibil &&
+      (response.__indiconnect?.bureauStatus === 2 ||
+        /no\s*record\s*found/i.test(
+          response.__indiconnect?.bureauMessage || "",
+        ));
+
     res.status(200).json({
-      message: `Credit report retrieved successfully from ${bureau.toUpperCase()}`,
+      message: noCibilRecord
+        ? "No CIBIL record found for these details"
+        : `Credit report retrieved successfully from ${bureau.toUpperCase()}`,
+      provider: isIndiconnectCibil ? "indiconnect" : "surepass",
       creditReport: {
         id: creditReport._id,
         name: creditReport.name,
@@ -496,11 +623,28 @@ const checkCreditScore = async (req, res) => {
         bureau: creditReport.bureau,
         reportUrl: creditReport.reportUrl,
         localPath: creditReport.localPath,
+        pdfStatus: creditReport.pdfStatus || null,
+        txnId: response.__indiconnect?.txn_id || null,
         createdAt: creditReport.createdAt,
       },
       remainingCredits:
         req.user.role !== "admin" && franchise ? franchise.credits : null,
     });
+
+    // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
+    // (non-blocking, link-only fallback on failure). Runs after responding.
+    // Rows with a direct PDF link were already downloaded inline above.
+    if (
+      isIndiconnectCibil &&
+      reportUrl &&
+      indiconnectClient.isHtmlReportUrl(reportUrl)
+    ) {
+      cibilPdfService.renderCibilPdfInBackground(
+        CreditReport,
+        creditReport._id,
+        reportUrl,
+      );
+    }
 
     console.log(response.data, "ongrid-----");
   } catch (error) {
@@ -1045,6 +1189,66 @@ const updateSurepassApiKey = async (req, res) => {
   }
 };
 
+// Get IndiConnect keys (admin only, masked)
+const getIndiconnectKeys = async (req, res) => {
+  try {
+    const keys = [
+      "indiconnect_base_url",
+      "indiconnect_service_key",
+      "indiconnect_auth",
+      "indiconnect_cibil_provider_code",
+    ];
+    const out = {};
+    for (const k of keys) {
+      const s = await Setting.findOne({ key: k });
+      const v = s ? String(s.value) : process.env[k.toUpperCase()] || null;
+      out[k] = v
+        ? { hasValue: true, masked: `${v.slice(0, 4)}...${v.slice(-4)}` }
+        : { hasValue: false, masked: null };
+    }
+    // also report env-effective provider code fallback chain
+    out.effective_cibil_provider_code = await (async () =>
+      (await getIndiconnectCibilConfig()).providerCode)();
+    res.json({ message: "IndiConnect keys retrieved", keys: out });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Update IndiConnect keys (admin only)
+// body: { base_url?, service_key?, auth?, cibil_provider_code? }
+const updateIndiconnectKeys = async (req, res) => {
+  try {
+    const map = {
+      base_url: "indiconnect_base_url",
+      service_key: "indiconnect_service_key",
+      auth: "indiconnect_auth",
+      cibil_provider_code: "indiconnect_cibil_provider_code",
+    };
+    const updated = [];
+    for (const [bodyKey, settingKey] of Object.entries(map)) {
+      if (req.body[bodyKey] !== undefined && req.body[bodyKey] !== "") {
+        let s = await Setting.findOne({ key: settingKey });
+        if (s) {
+          s.value = req.body[bodyKey];
+          await s.save();
+        } else {
+          s = new Setting({
+            key: settingKey,
+            value: req.body[bodyKey],
+            description: `IndiConnect ${bodyKey}`,
+          });
+          await s.save();
+        }
+        updated.push(settingKey);
+      }
+    }
+    res.json({ message: "IndiConnect keys updated", updated });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 //Get report for a particular user with customer Id
 
 const getSingleCreditReports = async (req, res) => {
@@ -1362,6 +1566,10 @@ module.exports = {
   getSurepassApiKey,
   updateSurepassApiKey,
   getSurepassApiKeyValue, // Export the helper function
+  getIndiconnectKeys,
+  updateIndiconnectKeys,
+  getIndiconnectCibilConfig,
+  isIndiconnectCibilBureau,
   getSingleCreditReports,
   checkCreditScoreV2,
   getFranchiseReports,
