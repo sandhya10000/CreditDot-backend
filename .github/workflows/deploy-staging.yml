@@ -1,0 +1,39 @@
+name: Deploy Backend to Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to staging VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /var/www/creditdost-staging/CreditDot-backend
+
+            echo "Pulling latest staging code..."
+            git fetch origin
+            git checkout staging
+            git reset --hard origin/staging
+
+            echo "Installing dependencies..."
+            npm ci --omit=dev
+
+            echo "Restarting staging backend..."
+            pm2 restart creditdost-staging --update-env
+
+            echo "Checking PM2 status..."
+            pm2 status
+
+            echo "Testing staging backend..."
+            curl -f http://127.0.0.1:5002/
