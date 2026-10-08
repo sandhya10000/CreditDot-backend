@@ -41,7 +41,41 @@ jobs:
             echo "Restarting staging backend..."
             pm2 restart creditdost-staging --update-env
 
-            echo "Waiting for staging backend to start..."
+            echo "========================================"
+            echo "Waiting for PM2 process to stabilize"
+            echo "========================================"
+
+            for i in {1..15}; do
+              STATUS=$(pm2 jlist | node -e "
+                let data = '';
+                process.stdin.on('data', c => data += c);
+                process.stdin.on('end', () => {
+                  const apps = JSON.parse(data);
+                  const app = apps.find(a => a.name === 'creditdost-staging');
+                  console.log(app ? app.pm2_env.status : 'missing');
+                });
+              ")
+
+              echo "PM2 status: $STATUS"
+
+              if [ "$STATUS" = "online" ]; then
+                break
+              fi
+
+              if [ "$i" -eq 15 ]; then
+                echo "PM2 process failed to become online."
+                echo "Last 50 PM2 log lines:"
+                pm2 logs creditdost-staging --lines 50 --nostream
+                exit 1
+              fi
+
+              echo "Waiting for PM2... attempt $i/15"
+              sleep 2
+            done
+
+            echo "========================================"
+            echo "Waiting for port 5002"
+            echo "========================================"
 
             for i in {1..15}; do
               if curl -fsS http://127.0.0.1:5002/ > /dev/null; then
@@ -50,13 +84,13 @@ jobs:
               fi
 
               if [ "$i" -eq 15 ]; then
-                echo "Staging backend failed to become healthy."
+                echo "Staging backend did not respond on port 5002."
                 echo "Last 50 PM2 log lines:"
                 pm2 logs creditdost-staging --lines 50 --nostream
                 exit 1
               fi
 
-              echo "Waiting... attempt $i/15"
+              echo "Waiting for port 5002... attempt $i/15"
               sleep 2
             done
 
@@ -67,7 +101,7 @@ jobs:
             pm2 status
 
             echo "========================================"
-            echo "Testing staging backend"
+            echo "Final health check"
             echo "========================================"
 
             curl -fsS http://127.0.0.1:5002/
