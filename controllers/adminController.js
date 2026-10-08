@@ -838,10 +838,10 @@ const createFranchiseUser = async (req, res) => {
 
       if (lastFranchise?.franchiseCode) {
         nextNumber =
-          parseInt(lastFranchise.franchiseCode.replace("FI-", "")) + 1;
+          parseInt(lastFranchise.franchiseCode.replace("FP-", "")) + 1;
       }
 
-      const franchiseCode = `FI-${String(nextNumber).padStart(3, "0")}`;
+      const franchiseCode = `FP-${String(nextNumber).padStart(3, "0")}`;
       const franchiseData = {
         userId: user._id,
         businessName: name,
