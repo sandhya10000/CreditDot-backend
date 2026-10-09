@@ -54,6 +54,20 @@ const creditCheckSchema = Joi.object({
     .messages({
       "any.only": "cibilApiType must be indiconnect, digi or surepass",
     }),
+  crifApiType: Joi.string()
+    .valid("indiconnect", "surepass")
+    .optional()
+    .default("indiconnect")
+    .messages({
+      "any.only": "crifApiType must be indiconnect or surepass",
+    }),
+  experianApiType: Joi.string()
+    .valid("indiconnect", "surepass")
+    .optional()
+    .default("indiconnect")
+    .messages({
+      "any.only": "experianApiType must be indiconnect or surepass",
+    }),
   // Fields for all bureaus
   pan: Joi.string().optional(),
   aadhaar: Joi.string().optional(),
@@ -1619,6 +1633,8 @@ const checkCreditScoreV2 = async (req, res) => {
       mobile,
       bureau = "cibil",
       cibilApiType = "indiconnect",
+      crifApiType = "indiconnect",
+      experianApiType = "indiconnect",
       pan,
     } = req.body;
 
@@ -1823,8 +1839,27 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // =========================
-    // CRIF -> INDICONNECT (full replace of Surepass)
+    // CRIF -> INDICONNECT (default) or SUREPASS (picker)
     // =========================
+    else if (bureau === "crif" && crifApiType === "surepass") {
+      if (!surepassApiKey) {
+        return res.status(500).json({
+          message: "Surepass API key not configured",
+        });
+      }
+      const bureauConfig = getBureauConfig("crif");
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+      console.log("Surepass V2 CRIF response received");
+    }
     else if (bureau === "crif") {
       const cfg = await getIndiconnectConfig(bureau);
       if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
@@ -1870,8 +1905,29 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // =========================
-    // EXPERIAN -> SOFT-PULL (full replace of Surepass)
+    // EXPERIAN -> SOFT-PULL (default) or SUREPASS (picker)
     // =========================
+    else if (bureau === "experian" && experianApiType === "surepass") {
+      if (!surepassApiKey) {
+        return res.status(500).json({
+          message: "Surepass API key not configured",
+        });
+      }
+      // Surepass Experian needs only name/mobile/pan — no pincode/dob,
+      // no two-word-name rule (unlike the IndiConnect Soft-Pull path).
+      const bureauConfig = getBureauConfig("experian");
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+      console.log("Surepass V2 Experian response received");
+    }
     else if (bureau === "experian") {
       const { dob: v2dob, pincode: v2pincode } = req.body;
       const missing = [];
@@ -2146,7 +2202,12 @@ const checkCreditScoreV2 = async (req, res) => {
       message: v2NoCibilRecord
         ? "No CIBIL record found for these details"
         : `${bureau.toUpperCase()} report fetched successfully`,
-      apiType: cibilApiType,
+      apiType:
+        bureau === "crif"
+          ? crifApiType
+          : bureau === "experian"
+            ? experianApiType
+            : cibilApiType,
       provider: isV2DigiCibil
         ? "digi"
         : response.__indiconnectBureau
