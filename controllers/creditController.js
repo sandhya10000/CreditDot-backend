@@ -9,6 +9,8 @@ const { sendCreditReportEmail } = require("../utils/emailService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
 const indiconnectClient = require("../utils/indiconnectApiClient");
+const digiApiClient = require("../utils/digiApiClient");
+const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
 const experianCirPdf = require("../utils/experianCirPdf");
 // const puppeteer = require("puppeteer");
@@ -46,11 +48,11 @@ const creditCheckSchema = Joi.object({
         "Please select a valid credit bureau (equifax, experian, cibil, crif, )",
     }),
   cibilApiType: Joi.string()
-    .valid("ongrid", "surepass")
+    .valid("indiconnect", "digi", "surepass", "ongrid")
     .optional()
-    .default("ongrid")
+    .default("indiconnect")
     .messages({
-      "any.only": "cibilApiType must be either ongrid or surepass",
+      "any.only": "cibilApiType must be indiconnect, digi or surepass",
     }),
   // Fields for all bureaus
   pan: Joi.string().optional(),
@@ -190,6 +192,28 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
 };
 
 const getIndiconnectCibilConfig = async () => getIndiconnectConfig("cibil");
+
+// Digi CIBIL credentials: DB Setting first, env fallback (same pattern as IndiConnect)
+const getDigiValue = async (key, envKey) => {
+  try {
+    const setting = await Setting.findOne({ key });
+    if (setting && setting.value) return setting.value;
+  } catch (e) {
+    console.error(`Error fetching Setting ${key}:`, e.message);
+  }
+  return process.env[envKey] || null;
+};
+
+const getDigiConfig = async () => ({
+  baseUrl: (
+    (await getDigiValue("digi_base_url", "DIGI_BASE_URL")) || ""
+  ).replace(/\/$/, ""),
+  partnerId: await getDigiValue("digi_partner_id", "DIGI_PARTNER_ID"),
+  secretKey: await getDigiValue("digi_secret_key", "DIGI_SECRET_KEY"),
+  endpoint:
+    (await getDigiValue("digi_endpoint", "DIGI_ENDPOINT")) ||
+    digiApiClient.DIGI_DEFAULT_ENDPOINT,
+});
 
 // Shared Experian Soft-Pull runner (Credit Bureau_S).
 // Throws { statusCode, body } on credential/config/provider failures so
@@ -567,34 +591,6 @@ const checkCreditScore = async (req, res) => {
             .status(spErr.statusCode || 500)
             .json(spErr.body || { message: spErr.message });
         }
-      } else if (bureau === "cibil-ongrid") {
-        const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
-
-        if (!gridlinesApiKey) {
-          return res.status(500).json({
-            message: "Gridlines API key not configured",
-          });
-        }
-        const endpoint =
-          "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
-
-        const requestData = {
-          name,
-          mobile,
-          pan,
-          require_pdf: "true",
-          consent: "Y",
-        };
-
-        response = await axios.post(endpoint, requestData, {
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": gridlinesApiKey,
-            "X-Auth-Type": "API-Key",
-            "X-Reference-ID": `REF-${Date.now()}`,
-          },
-          timeout: 180000,
-        });
       } else {
         const surepassApiKey = await getSurepassApiKeyValue();
         if (!surepassApiKey) {
@@ -707,14 +703,6 @@ const checkCreditScore = async (req, res) => {
       const parsed = response.__indiconnect;
       score = parsed.score;
       reportUrl = parsed.reportUrl;
-    } else if (bureau === "cibil-ongrid") {
-      score =
-        response?.data?.data?.report_data?.data?.cibil_data
-          ?.get_customer_assets_response?.get_customer_assets_success?.asset
-          ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
-
-      reportUrl =
-        response?.data?.data?.report_data?.data.cibil_report_pdf || null;
     } else {
       score =
         response?.data?.data?.score ||
@@ -1507,6 +1495,63 @@ const updateIndiconnectKeys = async (req, res) => {
   }
 };
 
+// Get Digi CIBIL keys (admin only, masked)
+const getDigiKeys = async (req, res) => {
+  try {
+    const keys = [
+      "digi_base_url",
+      "digi_partner_id",
+      "digi_secret_key",
+      "digi_endpoint",
+    ];
+    const out = {};
+    for (const k of keys) {
+      const s = await Setting.findOne({ key: k });
+      const v = s ? String(s.value) : process.env[k.toUpperCase()] || null;
+      out[k] = v
+        ? { hasValue: true, masked: `${v.slice(0, 4)}...${v.slice(-4)}` }
+        : { hasValue: false, masked: null };
+    }
+    res.json({ message: "Digi keys retrieved", keys: out });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Update Digi CIBIL keys (admin only)
+// body: { base_url?, partner_id?, secret_key?, endpoint? }
+const updateDigiKeys = async (req, res) => {
+  try {
+    const map = {
+      base_url: "digi_base_url",
+      partner_id: "digi_partner_id",
+      secret_key: "digi_secret_key",
+      endpoint: "digi_endpoint",
+    };
+    const updated = [];
+    for (const [bodyKey, settingKey] of Object.entries(map)) {
+      if (req.body[bodyKey] !== undefined && req.body[bodyKey] !== "") {
+        let s = await Setting.findOne({ key: settingKey });
+        if (s) {
+          s.value = req.body[bodyKey];
+          await s.save();
+        } else {
+          s = new Setting({
+            key: settingKey,
+            value: req.body[bodyKey],
+            description: `Digi ${bodyKey}`,
+          });
+          await s.save();
+        }
+        updated.push(settingKey);
+      }
+    }
+    res.json({ message: "Digi keys updated", updated });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 //Get report for a particular user with customer Id
 
 const getSingleCreditReports = async (req, res) => {
@@ -1553,7 +1598,7 @@ const getSingleCreditReports = async (req, res) => {
   }
 };
 
-//Post api logic for cibil or cibilType ongrid and surepass , or crif,experian, equifax
+//Post api logic for cibil (indiconnect/digi/surepass), crif, experian, equifax
 const checkCreditScoreV2 = async (req, res) => {
   try {
     // VALIDATION
@@ -1569,43 +1614,193 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // REQUEST BODY
-    const {
+    let {
       name,
       mobile,
       bureau = "cibil",
-      cibilApiType = "ongrid",
+      cibilApiType = "indiconnect",
       pan,
     } = req.body;
+
+    // Legacy cached frontends may still send "ongrid" — route to IndiConnect
+    if (cibilApiType === "ongrid") cibilApiType = "indiconnect";
 
     let response;
 
     // API KEYS
     const surepassApiKey = await getSurepassApiKeyValue();
 
-    const gridlinesApiKey = process.env.GRIDLINES_API_KEY;
-
     // =========================
-    // CIBIL -> ONGRID
+    // CIBIL -> INDICONNECT (same cutover as franchise /credit/check)
     // =========================
-    if (bureau === "cibil" && cibilApiType === "ongrid") {
-      const endpoint =
-        "https://api.gridlines.io/profile-api/bureau/v1/fetch-profile";
-
-      const requestData = {
-        name,
+    if (bureau === "cibil" && cibilApiType === "indiconnect") {
+      const cfg = await getIndiconnectCibilConfig();
+      if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+        return res.status(500).json({
+          message:
+            "IndiConnect CIBIL credentials not configured (service-key / auth / provider code)",
+        });
+      }
+      const ep = cfg.endpoint.startsWith("/")
+        ? cfg.endpoint
+        : `/${cfg.endpoint}`;
+      const url = `${cfg.baseUrl}${ep}`;
+      const payload = indiconnectClient.buildCibilPayload({
         pan,
+        name,
         mobile,
-        consent: "Y",
-      };
-
-      response = await axios.post(endpoint, requestData, {
+      });
+      response = await axios.post(url, payload, {
         headers: {
           "Content-Type": "application/json",
-          "X-API-Key": gridlinesApiKey,
-          "X-Auth-Type": "API-Key",
-          "X-Reference-ID": `REF-${Date.now()}`,
+          "service-key": cfg.serviceKey,
+          Authorization: cfg.auth,
+          providercode: cfg.providerCode,
         },
+        timeout: 60000,
       });
+      response.__indiconnect = indiconnectClient.parseCibilResponse(
+        response.data,
+      );
+      response.__indiconnectBureau = "cibil";
+      {
+        const failReason =
+          indiconnectClient.indiconnectFailed(response.__indiconnect);
+        if (failReason) {
+          return res.status(502).json({
+            success: false,
+            message: failReason,
+            provider: "indiconnect",
+            apiType: "indiconnect",
+            error: response.__indiconnect.error || null,
+            txnId: response.__indiconnect.txn_id || null,
+          });
+        }
+      }
+      console.log(
+        `IndiConnect V2 CIBIL: score=${response.__indiconnect.score ?? "null"} pdf=${response.__indiconnect.pdfUrl ? "yes" : "no"} html=${response.__indiconnect.htmlUrl ? "yes" : "no"} bureau=${response.__indiconnect.bureauStatus}/${response.__indiconnect.bureauMessage} txn=${response.__indiconnect.txn_id}`,
+      );
+    }
+
+    // =========================
+    // CIBIL -> DIGI (VerifyHub-compatible v7 contract)
+    // =========================
+    else if (bureau === "cibil" && cibilApiType === "digi") {
+      const digiCfg = await getDigiConfig();
+      if (!digiCfg.baseUrl || !digiCfg.partnerId || !digiCfg.secretKey) {
+        return res.status(500).json({
+          message:
+            "Digi CIBIL credentials not configured (base url / partner id / secret key)",
+        });
+      }
+      const saveDigiFailedRow = async (reportData) => {
+        const failedReport = new CreditReport({
+          userId: req.user?.id,
+          franchiseId: req.user?.franchiseId,
+          name,
+          mobile,
+          pan,
+          score: null,
+          bureau: "cibil",
+          reportData,
+          reportUrl: null,
+          pdfStatus: "failed",
+        });
+        await failedReport.save();
+        return failedReport;
+      };
+      let digiRes;
+      try {
+        console.log(
+          `DIGI REQ url=${String(digiCfg.baseUrl).replace(/\/$/, "")}${digiCfg.endpoint.startsWith("/") ? digiCfg.endpoint : `/${digiCfg.endpoint}`} partnerId=${String(digiCfg.partnerId).trim()} pan=${String(pan || "").toUpperCase()}`,
+        );
+        digiRes = await digiApiClient.makeCibilRequest(
+          { pan, name, mobile },
+          digiCfg,
+        );
+      } catch (digiErr) {
+        const st = digiErr.response?.status;
+        // Raw provider error, server-side only (never forwarded to client).
+        // Critical for diagnosing auth failures (wrong host, IP block, bad
+        // partnerId, expired/skewed token, etc.).
+        console.error("DIGI ERROR status:", st ?? digiErr.code ?? "none");
+        try {
+          console.error(
+            "DIGI ERROR data:",
+            JSON.stringify(digiErr.response?.data ?? null).slice(0, 2000),
+          );
+        } catch (logErr) {
+          console.error("DIGI ERROR data: <unserializable>");
+        }
+        const dmsg =
+          digiErr.response?.data?.message || digiErr.message || "Digi check failed";
+        // Auth failures are free — no Failed row (VerifyHub parity)
+        if (digiApiClient.isDigiAuthFailure(st, dmsg)) {
+          return res.status(502).json({
+            success: false,
+            message: "Bureau authentication failed. Please try again later.",
+            provider: "digi",
+            apiType: "digi",
+          });
+        }
+        const failedReport = await saveDigiFailedRow(
+          digiErr.response?.data || { message: digiErr.message },
+        );
+        if (digiErr.code === "ETIMEDOUT" || digiErr.code === "ECONNABORTED") {
+          return res.status(504).json({
+            success: false,
+            message: "Request timeout when connecting to Digi CIBIL. Please try again later.",
+            provider: "digi",
+            apiType: "digi",
+            creditReportId: failedReport._id,
+          });
+        }
+        if (digiErr.isAxiosError && !digiErr.response) {
+          return res.status(502).json({
+            success: false,
+            message: "Network error when connecting to Digi CIBIL.",
+            provider: "digi",
+            apiType: "digi",
+            creditReportId: failedReport._id,
+          });
+        }
+        if (st === 429) {
+          return res.status(429).json({
+            success: false,
+            message: "Too many requests to Digi CIBIL. Please try again later.",
+            provider: "digi",
+            apiType: "digi",
+            creditReportId: failedReport._id,
+          });
+        }
+        return res.status(st || 500).json({
+          success: false,
+          message: dmsg,
+          provider: "digi",
+          apiType: "digi",
+          error: digiErr.response?.data || null,
+          creditReportId: failedReport._id,
+        });
+      }
+      const digiParsed = digiApiClient.parseDigiResponse(digiRes.data);
+      // Empty cibilData = no bureau record — Failed row + normalized message
+      // so the franchise/admin no-record handling keeps working unchanged.
+      if (!digiParsed.hasResult) {
+        const failedReport = await saveDigiFailedRow(digiRes.data);
+        return res.status(404).json({
+          success: false,
+          message: "No Bureau Record Found For The Provided Inputs.",
+          provider: "digi",
+          apiType: "digi",
+          creditReportId: failedReport._id,
+        });
+      }
+      response = digiRes;
+      response.__digi = digiParsed;
+      response.__digiBureau = "digi";
+      console.log(
+        `Digi V2 CIBIL: score=${digiParsed.score ?? "null"} bureauMessage=${digiParsed.bureauMessage ?? "-"}`,
+      );
     }
 
     // =========================
@@ -1748,11 +1943,10 @@ const checkCreditScoreV2 = async (req, res) => {
     // =========================
     let score = null;
 
-    if (bureau === "cibil" && cibilApiType === "ongrid") {
-      score =
-        response?.data?.data?.report_data?.data?.cibil_data
-          ?.get_customer_assets_response?.get_customer_assets_success?.asset
-          ?.true_link_credit_report?.borrower?.credit_score?.risk_score || null;
+    if (bureau === "cibil" && cibilApiType === "indiconnect") {
+      score = response.__indiconnect?.score ?? null;
+    } else if (bureau === "cibil" && cibilApiType === "digi") {
+      score = response.__digi?.score ?? null;
     } else if (
       response.__indiconnectBureau === "crif" ||
       response.__indiconnectBureau === "experian"
@@ -1770,9 +1964,13 @@ const checkCreditScoreV2 = async (req, res) => {
     // =========================
     let reportUrl = null;
 
-    if (bureau === "cibil" && cibilApiType === "ongrid") {
+    if (bureau === "cibil" && cibilApiType === "indiconnect") {
+      // Prefer the direct PDF link; fall back to the CIBIL web page link
       reportUrl =
-        response?.data?.data?.report_data?.data.cibil_report_pdf || null;
+        response.__indiconnect?.pdfUrl || response.__indiconnect?.htmlUrl || null;
+    } else if (bureau === "cibil" && cibilApiType === "digi") {
+      // Digi v7 returns bureau JSON only — our styled PDF is rendered locally below
+      reportUrl = null;
     } else if (
       response.__indiconnectBureau === "crif" ||
       response.__indiconnectBureau === "experian"
@@ -1789,6 +1987,9 @@ const checkCreditScoreV2 = async (req, res) => {
     // =========================
     // SAVE IN DATABASE
     // =========================
+    const isV2IndiconnectCibil =
+      bureau === "cibil" && cibilApiType === "indiconnect";
+    const isV2DigiCibil = bureau === "cibil" && cibilApiType === "digi";
     const creditReport = new CreditReport({
       userId: req.user?.id,
       franchiseId: req.user?.franchiseId,
@@ -1802,6 +2003,9 @@ const checkCreditScoreV2 = async (req, res) => {
 
       reportData: response.data,
       reportUrl,
+      // IndiConnect CIBIL with a report URL: direct PDF links download inline;
+      // htmlUrl-only rows are rendered to PDF in background after responding
+      ...(isV2IndiconnectCibil && reportUrl ? { pdfStatus: "pending" } : {}),
     });
 
     await creditReport.save();
@@ -1835,10 +2039,45 @@ const checkCreditScoreV2 = async (req, res) => {
       }
     }
 
+    // Digi CIBIL: render our styled PDF from the bureau JSON
+    // (Digi v7 returns cibilData, not a PDF link).
+    if (isV2DigiCibil && response.__digi && !creditReport.localPath) {
+      try {
+        const gen = await digiCibilPdf.generateDigiCibilPdf(response.__digi, {
+          name,
+          mobile,
+          pan,
+        });
+        if (gen) {
+          const reportsDir = path.join(__dirname, "../reports");
+          if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+          }
+          const filename = `cibil_digi_report_${creditReport._id}_${Date.now()}.pdf`;
+          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+          creditReport.localPath = `/reports/${filename}`;
+          creditReport.pdfStatus = "ready";
+          await creditReport.save();
+          console.log(
+            `Digi V2 styled PDF generated: ${filename} (score ${gen.model.score ?? "null"})`,
+          );
+        }
+      } catch (genErr) {
+        console.log("DIGI PDF GENERATE FAILED", genErr.message);
+      }
+    }
+
     // =========================
     // DOWNLOAD PDF LOCALLY
     // =========================
-    if (reportUrl && !creditReport.localPath) {
+    // Direct PDF links download inline; IndiConnect htmlUrl-only rows use the
+    // background renderer (never download an HTML page as .pdf).
+    if (
+      reportUrl &&
+      !creditReport.localPath &&
+      (!isV2IndiconnectCibil ||
+        !indiconnectClient.isHtmlReportUrl(reportUrl))
+    ) {
       try {
         // CREATE REPORTS FOLDER
         const reportsDir = path.join(__dirname, "../reports");
@@ -1882,10 +2121,37 @@ const checkCreditScoreV2 = async (req, res) => {
     // =========================
     // FINAL RESPONSE
     // =========================
+    // IndiConnect CIBIL htmlUrl-only rows render to local PDF in background
+    // (non-blocking, link fallback on failure).
+    if (
+      isV2IndiconnectCibil &&
+      reportUrl &&
+      indiconnectClient.isHtmlReportUrl(reportUrl)
+    ) {
+      cibilPdfService.renderCibilPdfInBackground(
+        CreditReport,
+        creditReport._id,
+        reportUrl,
+      );
+    }
+
+    const v2NoCibilRecord =
+      isV2IndiconnectCibil &&
+      (response.__indiconnect?.bureauStatus === 2 ||
+        /no\s*record\s*found/i.test(
+          response.__indiconnect?.bureauMessage || "",
+        ));
+
     return res.status(200).json({
-      message: `${bureau.toUpperCase()} report fetched successfully`,
+      message: v2NoCibilRecord
+        ? "No CIBIL record found for these details"
+        : `${bureau.toUpperCase()} report fetched successfully`,
       apiType: cibilApiType,
-      provider: response.__indiconnectBureau ? "indiconnect" : "surepass",
+      provider: isV2DigiCibil
+        ? "digi"
+        : response.__indiconnectBureau
+          ? "indiconnect"
+          : "surepass",
 
       creditReport: {
         id: creditReport._id,
@@ -1898,6 +2164,7 @@ const checkCreditScoreV2 = async (req, res) => {
 
         reportUrl: creditReport.reportUrl,
         localPath: creditReport.localPath,
+        pdfStatus: creditReport.pdfStatus || null,
         txnId: response.__indiconnect?.txn_id || null,
 
         createdAt: creditReport.createdAt,
@@ -2150,6 +2417,9 @@ module.exports = {
   getSurepassApiKeyValue, // Export the helper function
   getIndiconnectKeys,
   updateIndiconnectKeys,
+  getDigiKeys,
+  updateDigiKeys,
+  getDigiConfig,
   getIndiconnectCibilConfig,
   getIndiconnectConfig,
   isIndiconnectCibilBureau,
