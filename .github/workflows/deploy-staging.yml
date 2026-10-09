@@ -1,0 +1,112 @@
+name: Deploy Backend to Staging
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to staging VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+
+          script: |
+            set -e
+
+            echo "========================================"
+            echo "Starting staging backend deployment"
+            echo "========================================"
+
+            cd /var/www/creditdost-staging/CreditDot-backend
+
+            echo "Fetching latest code..."
+            git fetch origin
+
+            echo "Switching to staging branch..."
+            git checkout staging
+
+            echo "Resetting to origin/staging..."
+            git reset --hard origin/staging
+
+            echo "Installing production dependencies..."
+            npm ci --omit=dev
+
+            echo "Restarting staging backend..."
+            pm2 restart creditdost-staging --update-env
+
+            echo "========================================"
+            echo "Waiting for PM2 process to stabilize"
+            echo "========================================"
+
+            for i in {1..15}; do
+              STATUS=$(pm2 jlist | node -e "
+                let data = '';
+                process.stdin.on('data', c => data += c);
+                process.stdin.on('end', () => {
+                  const apps = JSON.parse(data);
+                  const app = apps.find(a => a.name === 'creditdost-staging');
+                  console.log(app ? app.pm2_env.status : 'missing');
+                });
+              ")
+
+              echo "PM2 status: $STATUS"
+
+              if [ "$STATUS" = "online" ]; then
+                break
+              fi
+
+              if [ "$i" -eq 15 ]; then
+                echo "PM2 process failed to become online."
+                echo "Last 50 PM2 log lines:"
+                pm2 logs creditdost-staging --lines 50 --nostream
+                exit 1
+              fi
+
+              echo "Waiting for PM2... attempt $i/15"
+              sleep 2
+            done
+
+            echo "========================================"
+            echo "Waiting for port 5002"
+            echo "========================================"
+
+            for i in {1..15}; do
+              if curl -fsS http://127.0.0.1:5002/ > /dev/null; then
+                echo "Staging backend is healthy."
+                break
+              fi
+
+              if [ "$i" -eq 15 ]; then
+                echo "Staging backend did not respond on port 5002."
+                echo "Last 50 PM2 log lines:"
+                pm2 logs creditdost-staging --lines 50 --nostream
+                exit 1
+              fi
+
+              echo "Waiting for port 5002... attempt $i/15"
+              sleep 2
+            done
+
+            echo "========================================"
+            echo "PM2 status"
+            echo "========================================"
+
+            pm2 status
+
+            echo "========================================"
+            echo "Final health check"
+            echo "========================================"
+
+            curl -fsS http://127.0.0.1:5002/
+
+            echo ""
+            echo "========================================"
+            echo "Staging backend deployment successful"
+            echo "========================================"

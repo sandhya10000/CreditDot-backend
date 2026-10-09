@@ -107,14 +107,14 @@ if (!fs.existsSync(reportsDir)) {
 }
 
 const app = express();
-// app.use(
-//   cors({
-//     origin: ["http://localhost:5173","https://www.creditdost.co.in"],
-//     credentials: true,
-//     methods: ["GET", "POST", "PUT", "DELETE"],
-//     allowedHeaders: ["Content-Type", "Authorization"],
-//   }),
-// );
+// // app.use(
+// //   cors({
+// //     origin: ["http://localhost:5173","https://www.creditdost.co.in","https://staging.creditdost.co.in"],
+// //     credentials: true,
+// //     methods: ["GET", "POST", "PUT", "DELETE"],
+// //     allowedHeaders: ["Content-Type", "Authorization"],
+// //   }),
+// // );
 
 // Middleware
 app.use(express.json({ limit: "10mb" }));
@@ -160,6 +160,7 @@ const corsOptions = {
       "https://creditdost.co.in",
       "https://www.creditdost.co.in",
       "https://www.reactbackend.creditdost.co.in",
+      "https://staging.creditdost.co.in",
     ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
