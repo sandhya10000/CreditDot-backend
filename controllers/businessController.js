@@ -621,16 +621,24 @@ const updateBusinessForm = async (req, res) => {
     });
   }
 };
-// controller
+// controller — admin can delete only pending (unpaid) business; paid records are protected
 const deleteBusinessForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const deleted = await BusinessForm.findByIdAndDelete(id);
+    const existing = await BusinessForm.findById(id);
 
-    if (!deleted) {
+    if (!existing) {
       return res.status(404).json({ message: "Business form not found" });
     }
+
+    if (existing.paymentStatus === "paid") {
+      return res
+        .status(400)
+        .json({ message: "Paid business cannot be deleted" });
+    }
+
+    await BusinessForm.findByIdAndDelete(id);
 
     res.json({ message: "Business form deleted successfully" });
   } catch (err) {

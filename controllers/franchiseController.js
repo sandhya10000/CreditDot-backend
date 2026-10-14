@@ -160,7 +160,11 @@ const updateFranchiseProfile = async (req, res) => {
 
 const getFranchiseList = async (req, res) => {
   try {
-    const franchises = await Franchise.find()
+    const showDeleted = req.query.showDeleted === "true";
+    const baseFilter = showDeleted
+      ? { isDeleted: true }
+      : { isDeleted: { $ne: true } };
+    const franchises = await Franchise.find(baseFilter)
       .populate("userId", "name email phone")
       .populate("assignedPackages", "name price creditsIncluded")
       .sort({ createdAt: -1 })
@@ -209,6 +213,12 @@ const getAllFranchises = async (req, res) => {
     const kycStatus = req.query.kycStatus?.trim() || "";
     const skip = (page - 1) * limit;
     const filter = {};
+    // Deleted handling: ?showDeleted=true → only deleted, ?includeDeleted=true → all, default → exclude deleted
+    if (req.query.showDeleted === "true") {
+      filter.isDeleted = true;
+    } else if (req.query.includeDeleted !== "true") {
+      filter.isDeleted = { $ne: true };
+    }
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },
@@ -374,6 +384,13 @@ const updateFranchise = async (req, res) => {
 // Deactivate franchise (admin only)
 const deactivateFranchise = async (req, res) => {
   try {
+    const existing = await Franchise.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+    if (existing.isDeleted) {
+      return res.status(400).json({ message: "Franchise is deleted" });
+    }
     const franchise = await Franchise.findByIdAndUpdate(
       req.params.id,
       { isActive: false },
@@ -399,6 +416,13 @@ const deactivateFranchise = async (req, res) => {
 // Activate franchise (admin only)
 const activateFranchise = async (req, res) => {
   try {
+    const existing = await Franchise.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+    if (existing.isDeleted) {
+      return res.status(400).json({ message: "Franchise is deleted. Restore it first." });
+    }
     const franchise = await Franchise.findByIdAndUpdate(
       req.params.id,
       { isActive: true },
@@ -807,6 +831,11 @@ const exportFranchisesCSV = async (req, res) => {
 
     // Build the same filter used by getAllFranchises
     const filter = {};
+    if (req.query.showDeleted === "true") {
+      filter.isDeleted = true;
+    } else if (req.query.includeDeleted !== "true") {
+      filter.isDeleted = { $ne: true };
+    }
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },

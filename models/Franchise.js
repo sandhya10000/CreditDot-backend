@@ -90,6 +90,14 @@ const franchiseSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
     // Field to track assigned packages
     assignedPackages: [
       {
