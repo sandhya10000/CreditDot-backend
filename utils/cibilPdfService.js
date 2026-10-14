@@ -79,11 +79,29 @@ const renderHtmlUrlToPdf = async (htmlUrl, outPath) => {
     }
     // Extra settle time for late JS rendering
     await new Promise((r) => setTimeout(r, 3000));
-    await page.pdf({
+        await page.pdf({
       path: outPath,
       format: "A4",
       printBackground: true,
     });
+
+    // Verify that Chromium actually produced a PDF.
+    const fd = fs.openSync(outPath, "r");
+    const header = Buffer.alloc(5);
+
+    try {
+      const bytesRead = fs.readSync(fd, header, 0, 5, 0);
+
+      if (
+        bytesRead !== 5 ||
+        header.toString("ascii") !== "%PDF-"
+      ) {
+        throw new Error("Generated report is not a valid PDF");
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+
     return outPath;
   } finally {
     if (page) {

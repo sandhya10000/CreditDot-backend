@@ -1,3 +1,4 @@
+const { isValidPdf } = require("../utils/pdfValidation");
 const axios = require("axios");
 const CreditReport = require("../models/CreditReport");
 const Setting = require("../models/Setting");
@@ -10,6 +11,7 @@ const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
 const indiconnectClient = require("../utils/indiconnectApiClient");
 const cibilPdfService = require("../utils/cibilPdfService");
+const cibilStyledPdf = require("../utils/cibilStyledPdf");
 const experianCirPdf = require("../utils/experianCirPdf");
 // const puppeteer = require("puppeteer");
 
@@ -125,25 +127,10 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
   };
   const providerKeys =
     bureau === "crif"
-      ? [
-          "INDICONNECT_CRIF_PROVIDER_CODE",
-          "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-          "INDICONNECT_CIBIL_PROVIDER_CODE",
-          "INDICONNECT_PROVIDERCODE",
-        ]
+      ? ["INDICONNECT_CRIF_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
       : bureau === "experian"
-        ? [
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ]
-        : [
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ];
+        ? ["INDICONNECT_EXPERIAN_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
+        : ["INDICONNECT_CIBIL_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"];
   const endpointKeys =
     bureau === "crif"
       ? ["INDICONNECT_CRIF_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"]
@@ -260,7 +247,7 @@ const runExperianSoftPull = async ({
     fail(500, apiError.message || "Experian check failed");
   }
   const parsed = indiconnectClient.parseExperianSpResponse(response.data);
-  const failReason = indiconnectClient.indiconnectFailed(parsed);
+  const failReason = indiconnectClient.indiconnectFailed(parsed, "experian");
   if (failReason) {
     fail(502, failReason, { error: parsed.error || null, txnId: parsed.txn_id || null });
   }
@@ -475,9 +462,32 @@ const checkCreditScore = async (req, res) => {
         );
         response.__indiconnectBureau = "cibil";
         {
-          const failReason =
-            indiconnectClient.indiconnectFailed(response.__indiconnect);
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+            "cibil",
+          );
           if (failReason) {
+            console.error(
+              "IndiConnect CIBIL rejected: documentType=" +
+                (response.config?.data
+                  ? (() => {
+                      try {
+                        return (
+                          JSON.parse(response.config.data)?.variables?.input
+                            ?.documentType || "unknown"
+                        );
+                      } catch {
+                        return "unknown";
+                      }
+                    })()
+                  : indiconnectClient.getDocumentTypeFor("cibil")) +
+                " providercode=" +
+                (cfg.providerCode
+                  ? `${String(cfg.providerCode).slice(0, 4)}...${String(cfg.providerCode).slice(-4)}`
+                  : "missing") +
+                " gateway=" +
+                JSON.stringify(response.__indiconnect.error || null).slice(0, 300),
+            );
             return res.status(502).json({
               message: failReason,
               error: response.__indiconnect.error || null,
@@ -515,8 +525,10 @@ const checkCreditScore = async (req, res) => {
         response.__indiconnect = parse(response.data);
         response.__indiconnectBureau = bureau;
         {
-          const failReason =
-            indiconnectClient.indiconnectFailed(response.__indiconnect);
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+            bureau,
+          );
           if (failReason) {
             return res.status(502).json({
               message: failReason,
@@ -775,6 +787,38 @@ const checkCreditScore = async (req, res) => {
       await franchise.save();
     }
 
+    // CIBIL: render styled PDF from bureau JSON (reference layout).
+    // Replaces the old htmlUrl screenshot — localPath is set inline so the
+    // PDF button serves /reports/*.pdf directly, never myscore.cibil.com.
+    if (
+      isIndiconnectCibil &&
+      response.__indiconnect?.cibilData &&
+      !creditReport.localPath
+    ) {
+      try {
+        const gen = await cibilStyledPdf.generateCibilPdf(
+          response.__indiconnect,
+          { name, mobile, pan, dob, txnId: response.__indiconnect?.txn_id },
+        );
+        if (gen) {
+          const reportsDir = path.join(__dirname, "../reports");
+          if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+          }
+          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+          creditReport.localPath = `/reports/${filename}`;
+          creditReport.pdfStatus = "ready";
+          await creditReport.save();
+          console.log(
+            `CIBIL styled PDF generated: ${filename} (score ${gen.model.score})`,
+          );
+        }
+      } catch (genErr) {
+        console.error("CIBIL STYLED PDF FAILED:", genErr.message);
+      }
+    }
+
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
     if (
@@ -809,47 +853,75 @@ const checkCreditScore = async (req, res) => {
     // If we have a report URL, download and save the PDF locally.
     // Direct PDF links (Surepass + IndiConnect) download inline;
     // IndiConnect htmlUrl-only rows use the background renderer below.
-    if (
-      reportUrl &&
-      !creditReport.localPath &&
-      (!isIndiconnectBureau || !indiconnectClient.isHtmlReportUrl(reportUrl))
-    ) {
+    // Download report only when a local copy does not already exist.
+// IndiConnect HTML reports are handled by the background PDF renderer.
+if (
+  reportUrl &&
+  !creditReport.localPath &&
+  (!isIndiconnectBureau || !indiconnectClient.isHtmlReportUrl(reportUrl))
+) {
+  let localFilePath;
+
+  try {
+    const reportsDir = path.join(__dirname, "../reports");
+
+    if (!fs.existsSync(reportsDir)) {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+    localFilePath = path.join(reportsDir, filename);
+
+    const pdfResponse = await axios({
+      method: "GET",
+      url: reportUrl,
+      responseType: "stream",
+      timeout: 180000,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+
+    const writer = fs.createWriteStream(localFilePath);
+
+    await new Promise((resolve, reject) => {
+      pdfResponse.data.on("error", reject);
+      writer.on("error", reject);
+      writer.on("finish", resolve);
+      pdfResponse.data.pipe(writer);
+    });
+
+    // Never treat HTML or another file type as a PDF.
+    if (!isValidPdf(localFilePath)) {
+      throw new Error(
+        "Downloaded report is not a valid PDF; expected %PDF- signature"
+      );
+    }
+
+    // Save the path only after validation succeeds.
+    creditReport.localPath = `/reports/${filename}`;
+
+    if (isIndiconnectBureau) {
+      creditReport.pdfStatus = "ready";
+    }
+
+    await creditReport.save();
+
+    console.log(`PDF downloaded and validated: ${filename}`);
+  } catch (downloadError) {
+    console.error("PDF DOWNLOAD ERROR:", downloadError.message);
+
+    // Remove an invalid or incomplete download.
+    if (localFilePath && fs.existsSync(localFilePath)) {
       try {
-        const reportsDir = path.join(__dirname, "../reports");
-
-        if (!fs.existsSync(reportsDir)) {
-          fs.mkdirSync(reportsDir, { recursive: true });
-        }
-
-        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-        const localFilePath = path.join(reportsDir, filename);
-
-        const pdfResponse = await axios({
-          method: "GET",
-          url: reportUrl,
-          responseType: "stream",
-          timeout: 180000,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          },
-        });
-        const writer = fs.createWriteStream(localFilePath);
-
-        pdfResponse.data.pipe(writer);
-
-        await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
-          writer.on("error", reject);
-        });
-
-        creditReport.localPath = `/reports/${filename}`;
-        if (isIndiconnectBureau) creditReport.pdfStatus = "ready";
-        await creditReport.save();
-      } catch (downloadError) {
-        console.error("PDF DOWNLOAD ERROR:", downloadError.message);
+        fs.unlinkSync(localFilePath);
+      } catch (cleanupError) {
+        console.error("PDF CLEANUP ERROR:", cleanupError.message);
       }
     }
+  }
+}
 
     const noCibilRecord =
       isIndiconnectCibil &&
@@ -881,12 +953,13 @@ const checkCreditScore = async (req, res) => {
         req.user.role !== "admin" && franchise ? franchise.credits : null,
     });
 
-    // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
-    // (non-blocking, link-only fallback on failure). Runs after responding.
-    // Rows with a direct PDF link were already downloaded inline above.
+    // Background fallback: only screenshot htmlUrl when the styled PDF
+    // could not be generated inline above (no localPath yet). Styled PDF
+    // is now the primary path, so this rarely runs.
     if (
       isIndiconnectCibil &&
       reportUrl &&
+      !creditReport.localPath &&
       indiconnectClient.isHtmlReportUrl(reportUrl)
     ) {
       cibilPdfService.renderCibilPdfInBackground(
@@ -1658,8 +1731,10 @@ const checkCreditScoreV2 = async (req, res) => {
         indiconnectClient.parseCrifResponse(response.data);
       response.__indiconnectBureau = bureau;
       {
-        const failReason =
-          indiconnectClient.indiconnectFailed(response.__indiconnect);
+        const failReason = indiconnectClient.indiconnectFailed(
+          response.__indiconnect,
+          bureau,
+        );
         if (failReason) {
           return res.status(502).json({
             success: false,
@@ -1839,45 +1914,60 @@ const checkCreditScoreV2 = async (req, res) => {
     // DOWNLOAD PDF LOCALLY
     // =========================
     if (reportUrl && !creditReport.localPath) {
+  let localFilePath;
+
+  try {
+    const reportsDir = path.join(__dirname, "../reports");
+
+    if (!fs.existsSync(reportsDir)) {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+    localFilePath = path.join(reportsDir, filename);
+
+    const pdfResponse = await axios({
+      method: "GET",
+      url: reportUrl,
+      responseType: "stream",
+      timeout: 30000,
+    });
+
+    const writer = fs.createWriteStream(localFilePath);
+
+    await new Promise((resolve, reject) => {
+      pdfResponse.data.on("error", reject);
+      writer.on("error", reject);
+      writer.on("finish", resolve);
+
+      pdfResponse.data.pipe(writer);
+    });
+
+    // Verify the file is actually a PDF.
+    if (!isValidPdf(localFilePath)) {
+      throw new Error(
+        "Downloaded report is not a valid PDF; expected %PDF- signature"
+      );
+    }
+
+    // Save the local path only after validation succeeds.
+    creditReport.localPath = `/reports/${filename}`;
+    await creditReport.save();
+
+    console.log(`PDF downloaded and validated: ${filename}`);
+  } catch (downloadError) {
+    console.error("PDF DOWNLOAD ERROR:", downloadError.message);
+
+    // Remove incomplete or invalid files.
+    if (localFilePath && fs.existsSync(localFilePath)) {
       try {
-        // CREATE REPORTS FOLDER
-        const reportsDir = path.join(__dirname, "../reports");
-
-        if (!fs.existsSync(reportsDir)) {
-          fs.mkdirSync(reportsDir, { recursive: true });
-        }
-
-        // FILE NAME
-        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-
-        const localFilePath = path.join(reportsDir, filename);
-
-        // DOWNLOAD PDF
-        const pdfResponse = await axios({
-          method: "GET",
-          url: reportUrl,
-          responseType: "stream",
-          timeout: 30000,
-        });
-
-        // SAVE PDF
-        const writer = fs.createWriteStream(localFilePath);
-
-        pdfResponse.data.pipe(writer);
-
-        await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
-          writer.on("error", reject);
-        });
-
-        // SAVE LOCAL PATH
-        creditReport.localPath = `/reports/${filename}`;
-
-        await creditReport.save();
-      } catch (downloadError) {
-        console.log("PDF DOWNLOAD ERROR", downloadError.message);
+        fs.unlinkSync(localFilePath);
+      } catch (cleanupError) {
+        console.error("PDF CLEANUP ERROR:", cleanupError.message);
       }
     }
+  }
+}
 
     // =========================
     // FINAL RESPONSE
