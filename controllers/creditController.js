@@ -11,6 +11,7 @@ const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
 const indiconnectClient = require("../utils/indiconnectApiClient");
 const cibilPdfService = require("../utils/cibilPdfService");
+const cibilStyledPdf = require("../utils/cibilStyledPdf");
 const experianCirPdf = require("../utils/experianCirPdf");
 // const puppeteer = require("puppeteer");
 
@@ -126,25 +127,10 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
   };
   const providerKeys =
     bureau === "crif"
-      ? [
-          "INDICONNECT_CRIF_PROVIDER_CODE",
-          "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-          "INDICONNECT_CIBIL_PROVIDER_CODE",
-          "INDICONNECT_PROVIDERCODE",
-        ]
+      ? ["INDICONNECT_CRIF_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
       : bureau === "experian"
-        ? [
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ]
-        : [
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ];
+        ? ["INDICONNECT_EXPERIAN_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
+        : ["INDICONNECT_CIBIL_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"];
   const endpointKeys =
     bureau === "crif"
       ? ["INDICONNECT_CRIF_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"]
@@ -261,7 +247,7 @@ const runExperianSoftPull = async ({
     fail(500, apiError.message || "Experian check failed");
   }
   const parsed = indiconnectClient.parseExperianSpResponse(response.data);
-  const failReason = indiconnectClient.indiconnectFailed(parsed);
+  const failReason = indiconnectClient.indiconnectFailed(parsed, "experian");
   if (failReason) {
     fail(502, failReason, { error: parsed.error || null, txnId: parsed.txn_id || null });
   }
@@ -476,9 +462,32 @@ const checkCreditScore = async (req, res) => {
         );
         response.__indiconnectBureau = "cibil";
         {
-          const failReason =
-            indiconnectClient.indiconnectFailed(response.__indiconnect);
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+            "cibil",
+          );
           if (failReason) {
+            console.error(
+              "IndiConnect CIBIL rejected: documentType=" +
+                (response.config?.data
+                  ? (() => {
+                      try {
+                        return (
+                          JSON.parse(response.config.data)?.variables?.input
+                            ?.documentType || "unknown"
+                        );
+                      } catch {
+                        return "unknown";
+                      }
+                    })()
+                  : indiconnectClient.getDocumentTypeFor("cibil")) +
+                " providercode=" +
+                (cfg.providerCode
+                  ? `${String(cfg.providerCode).slice(0, 4)}...${String(cfg.providerCode).slice(-4)}`
+                  : "missing") +
+                " gateway=" +
+                JSON.stringify(response.__indiconnect.error || null).slice(0, 300),
+            );
             return res.status(502).json({
               message: failReason,
               error: response.__indiconnect.error || null,
@@ -516,8 +525,10 @@ const checkCreditScore = async (req, res) => {
         response.__indiconnect = parse(response.data);
         response.__indiconnectBureau = bureau;
         {
-          const failReason =
-            indiconnectClient.indiconnectFailed(response.__indiconnect);
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+            bureau,
+          );
           if (failReason) {
             return res.status(502).json({
               message: failReason,
@@ -776,6 +787,38 @@ const checkCreditScore = async (req, res) => {
       await franchise.save();
     }
 
+    // CIBIL: render styled PDF from bureau JSON (reference layout).
+    // Replaces the old htmlUrl screenshot — localPath is set inline so the
+    // PDF button serves /reports/*.pdf directly, never myscore.cibil.com.
+    if (
+      isIndiconnectCibil &&
+      response.__indiconnect?.cibilData &&
+      !creditReport.localPath
+    ) {
+      try {
+        const gen = await cibilStyledPdf.generateCibilPdf(
+          response.__indiconnect,
+          { name, mobile, pan, dob, txnId: response.__indiconnect?.txn_id },
+        );
+        if (gen) {
+          const reportsDir = path.join(__dirname, "../reports");
+          if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+          }
+          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+          creditReport.localPath = `/reports/${filename}`;
+          creditReport.pdfStatus = "ready";
+          await creditReport.save();
+          console.log(
+            `CIBIL styled PDF generated: ${filename} (score ${gen.model.score})`,
+          );
+        }
+      } catch (genErr) {
+        console.error("CIBIL STYLED PDF FAILED:", genErr.message);
+      }
+    }
+
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
     if (
@@ -910,12 +953,13 @@ if (
         req.user.role !== "admin" && franchise ? franchise.credits : null,
     });
 
-    // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
-    // (non-blocking, link-only fallback on failure). Runs after responding.
-    // Rows with a direct PDF link were already downloaded inline above.
+    // Background fallback: only screenshot htmlUrl when the styled PDF
+    // could not be generated inline above (no localPath yet). Styled PDF
+    // is now the primary path, so this rarely runs.
     if (
       isIndiconnectCibil &&
       reportUrl &&
+      !creditReport.localPath &&
       indiconnectClient.isHtmlReportUrl(reportUrl)
     ) {
       cibilPdfService.renderCibilPdfInBackground(
@@ -1687,8 +1731,10 @@ const checkCreditScoreV2 = async (req, res) => {
         indiconnectClient.parseCrifResponse(response.data);
       response.__indiconnectBureau = bureau;
       {
-        const failReason =
-          indiconnectClient.indiconnectFailed(response.__indiconnect);
+        const failReason = indiconnectClient.indiconnectFailed(
+          response.__indiconnect,
+          bureau,
+        );
         if (failReason) {
           return res.status(502).json({
             success: false,
