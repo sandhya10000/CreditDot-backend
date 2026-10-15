@@ -12,16 +12,20 @@ const CONTENT_W = PAGE_W - MARGIN * 2;
 const BOTTOM_LIMIT = 806;
 
 const C = {
-  black: "#000000",
+  black: "#111111",
   grayDark: "#404040",
   grayText: "#595959",
-  grayBar: "#D9D9D9",
-  grid: "#BFBFBF",
+  grayBar: "#EAF4FC",
+  grid: "#8DB9DE",
   sky: "#29ABE2",
-  navy: "#002060",
-  yellow: "#FFC000",
-  teal: "#00A9CE",
-  red: "#C00000",
+  navy: "#005A9C",
+  yellow: "#FFFFFF",
+  teal: "#0878BD",
+  red: "#FF0000",
+  green: "#08752B",
+  white: "#FFFFFF",
+  lightBlue: "#EAF4FC",
+  blue: "#006BB6",
 };
 
 // ---------- helpers ----------
@@ -37,7 +41,8 @@ const num = (v) => {
 const yyyymmdd = (v) => {
   // Accepts YYYYMMDD numbers (20260306), YYYY-MM-DD strings, ISO strings
   const t = s(v).trim();
-  if (/^\d{8}$/.test(t)) return `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`;
+  if (/^\d{8}$/.test(t))
+    return `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`;
   if (t.length >= 10) return t.slice(0, 10);
   return "";
 };
@@ -69,7 +74,11 @@ function buildExperianModel(parsed, meta = {}) {
   const cph = parsed.creditProfileHeader || {};
   const accounts = caisDetails.map((a) => {
     const hist = asArray(a.CAIS_Account_History)
-      .map((h) => ({ y: h.Year, m: h.Month, dpd: h.Days_Past_Due ?? h.Days_Past_Due }))
+      .map((h) => ({
+        y: h.Year,
+        m: h.Month,
+        dpd: h.Days_Past_Due ?? h.Days_Past_Due,
+      }))
       .filter((h) => h.y && h.m);
     hist.sort((x, y) => y.y - x.y || y.m - x.m);
     const curBal = num(a.Current_Balance);
@@ -77,7 +86,9 @@ function buildExperianModel(parsed, meta = {}) {
       subscriber: s(a.Subscriber_Name) || s(a.Identification_Number),
       accountNumber: s(a.Account_Number),
       type: s(a.accountTypeDescription || a.Account_Type),
-      ownership: s(a.accountholdertypecodeDescription || a.AccountHoldertypeCode),
+      ownership: s(
+        a.accountholdertypecodeDescription || a.AccountHoldertypeCode,
+      ),
       amountOverdue: s(a.Amount_Past_Due) === "" ? "" : s(a.Amount_Past_Due),
       interestRate: s(a.Rate_of_Interest),
       opened: yyyymmdd(a.Open_Date),
@@ -95,13 +106,18 @@ function buildExperianModel(parsed, meta = {}) {
       collateralType: s(a.Type_of_Collateral),
       collateralValue: blankDash(a.Value_of_Collateral),
       facilityStatus: s(a.accountStatusDescription || a.Account_Status),
-      suitFiled: s(a.suitfiledWillfuldefaultDescription || a.SuitFiled_WillfulDefault),
+      suitFiled: s(
+        a.suitfiledWillfuldefaultDescription || a.SuitFiled_WillfulDefault,
+      ),
       writtenOffPrincipal: blankDash(a.Written_Off_Amt_Principal),
       writtenOffTotal: blankDash(a.Written_Off_Amt_Total),
       settlement: blankDash(a.Settlement_Amount),
       history: hist.slice(0, 36).map((h) => ({
         label: monthLabel(h.y, h.m),
-        status: h.dpd === undefined || h.dpd === null || h.dpd === "" ? "?" : s(h.dpd),
+        status:
+          h.dpd === undefined || h.dpd === null || h.dpd === ""
+            ? "?"
+            : s(h.dpd),
       })),
       _pastDue: num(a.Amount_Past_Due) || 0,
       _curBal: curBal,
@@ -140,7 +156,10 @@ function buildExperianModel(parsed, meta = {}) {
     };
     return {
       member: pick(["Subscriber_Name", "subscriberName", "Member", "member"]),
-      date: yyyymmdd(pick(["Date_of_Request", "date", "Enquiry_Date", "enquiryDate"])) || pick(["Date_of_Request", "date"]),
+      date:
+        yyyymmdd(
+          pick(["Date_of_Request", "date", "Enquiry_Date", "enquiryDate"]),
+        ) || pick(["Date_of_Request", "date"]),
       purpose: pick(["Enquiry_Reason", "purpose", "Purpose", "enquiryPurpose"]),
       amount: pick(["Amount", "amount", "Enquiry_Amount", "enquiryAmount"]),
     };
@@ -154,8 +173,7 @@ function buildExperianModel(parsed, meta = {}) {
   const ampm = hh >= 12 ? "PM" : "AM";
   hh = hh % 12 || 12;
 
-  const holderPan =
-    s(meta.pan) || s(firstHolder.Income_TAX_PAN);
+  const holderPan = s(meta.pan) || s(firstHolder.Income_TAX_PAN);
 
   return {
     consumer: s(meta.name).toUpperCase() || holderName,
@@ -187,15 +205,17 @@ function buildExperianModel(parsed, meta = {}) {
           .filter((e) => e.includes("@")),
       ),
     ],
-    telephones: caisDetails.flatMap((a) =>
-      asArray(a.CAIS_Holder_Phone_Details).map((t) => ({
-        number: s(t.Mobile_Telephone_Number || t.Telephone_Number),
-        type:
-          String(t.Telephone_Type) === "1" || t.Mobile_Telephone_Number
-            ? "Mobile Phone"
-            : "",
-      })),
-    ).filter((t) => t.number),
+    telephones: caisDetails
+      .flatMap((a) =>
+        asArray(a.CAIS_Holder_Phone_Details).map((t) => ({
+          number: s(t.Mobile_Telephone_Number || t.Telephone_Number),
+          type:
+            String(t.Telephone_Type) === "1" || t.Mobile_Telephone_Number
+              ? "Mobile Phone"
+              : "",
+        })),
+      )
+      .filter((t) => t.number),
     addresses: [
       ...new Map(
         caisDetails
@@ -271,23 +291,35 @@ function tealRule(doc, gapAbove = 4) {
 }
 function sectionBar(doc, text) {
   ensureSpace(doc, 34);
-  doc.moveDown(0.5);
+
+  doc.moveDown(0.35);
+
   const y = doc.y;
-  doc.rect(MARGIN, y, CONTENT_W, 16).fill(C.grayBar);
+  const h = 18;
+
+  doc.rect(MARGIN, y, CONTENT_W, h).fill(C.navy);
+
   doc
-    .fillColor(C.black)
+    .fillColor(C.white)
     .font("Helvetica-Bold")
     .fontSize(9)
-    .text(text, MARGIN + 4, y + 3.5, { width: CONTENT_W - 8, align: "left" });
-  doc.y = y + 18;
-  tealRule(doc, 0);
+    .text(text, MARGIN + 7, y + 4, {
+      width: CONTENT_W - 14,
+      lineBreak: false,
+    });
+
+  doc.y = y + h + 2;
+
+  doc.x = MARGIN;
 }
 function ruledTable(doc, headers, rows, opts = {}) {
   const { size = 7.5, headerSize = 7.5, gap = 6, minRowH = 12 } = opts;
   const n = headers.length;
   const avail = CONTENT_W - gap * (n - 1);
   const raw =
-    opts.widths && opts.widths.length === n ? opts.widths : headers.map(() => 1);
+    opts.widths && opts.widths.length === n
+      ? opts.widths
+      : headers.map(() => 1);
   const total = raw.reduce((a, b) => a + b, 0) || 1;
   const w = raw.map((x) => (x / total) * avail);
   const drawRow = (cols, isHeader) => {
@@ -299,19 +331,27 @@ function ruledTable(doc, headers, rows, opts = {}) {
     const h = Math.max(minRowH, ...heights) + 4;
     ensureSpace(doc, h + 2);
     const y = doc.y;
-    if (isHeader) doc.rect(MARGIN, y, CONTENT_W, h).fill(C.grayBar);
+    if (isHeader) {
+      doc.rect(MARGIN, y, CONTENT_W, h).fill(C.lightBlue);
+    }
     let x = MARGIN;
-    doc.fillColor(C.black);
+    doc.fillColor(isHeader ? C.navy : C.black);
     cols.forEach((c, i) => {
       doc.text(s(c), x + 2, y + 2, { width: w[i] - 4, align: "left" });
       x += w[i] + gap;
     });
-    doc.strokeColor(C.grid).lineWidth(0.5);
-    doc.moveTo(MARGIN, y + h).lineTo(MARGIN + CONTENT_W, y + h).stroke();
+    doc.strokeColor(C.grid).lineWidth(0.6);
+    doc
+      .moveTo(MARGIN, y + h)
+      .lineTo(MARGIN + CONTENT_W, y + h)
+      .stroke();
     let vx = MARGIN;
     for (let i = 0; i < n - 1; i++) {
       vx += w[i] + gap / 2;
-      doc.moveTo(vx, y).lineTo(vx, y + h).stroke();
+      doc
+        .moveTo(vx, y)
+        .lineTo(vx, y + h)
+        .stroke();
       vx += gap / 2;
     }
     doc.y = y + h + 1;
@@ -403,10 +443,16 @@ function accountBlock(doc, t) {
   ensureSpace(doc, Math.min(blockH, BOTTOM_LIMIT - MARGIN));
   const y0 = doc.y;
   doc.strokeColor(C.black).lineWidth(1.4);
-  doc.moveTo(MARGIN, y0).lineTo(MARGIN + CONTENT_W, y0).stroke();
+  doc
+    .moveTo(MARGIN, y0)
+    .lineTo(MARGIN + CONTENT_W, y0)
+    .stroke();
   doc.font("Helvetica-Bold").fontSize(8).fillColor(C.black);
   xs.forEach((x, i) => {
-    doc.text(ACCT_COLS[i].title, x, y0 + 4, { width: widths[i], align: "left" });
+    doc.text(ACCT_COLS[i].title, x, y0 + 4, {
+      width: widths[i],
+      align: "left",
+    });
   });
   doc.y = y0 + 18;
   const yCols = doc.y;
@@ -420,10 +466,19 @@ function accountBlock(doc, t) {
   doc.x = MARGIN;
   if (t.history.length) {
     ensureSpace(doc, 30);
-    bodyText(doc, "DAYS PAST DUE / ASSET CLASSIFICATION (UP TO 36 MONTHS)", 6.5, false, C.grayText);
+    bodyText(
+      doc,
+      "DAYS PAST DUE / ASSET CLASSIFICATION (UP TO 36 MONTHS)",
+      6.5,
+      false,
+      C.grayText,
+    );
     const pairs = t.history.map((mm) => `${mm.status} / ${mm.label}`);
     doc.fillColor(C.black).font("Helvetica").fontSize(7);
-    doc.text(pairs.join("  "), MARGIN, doc.y, { width: CONTENT_W, align: "left" });
+    doc.text(pairs.join("  "), MARGIN, doc.y, {
+      width: CONTENT_W,
+      align: "left",
+    });
     doc.moveDown(0.4);
   }
 }
@@ -446,7 +501,9 @@ function renderModel(doc, m) {
       .fillColor(C.black)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("CONSUMER CREDIT REPORT", MARGIN + 5, y + 3, { width: CONTENT_W - 10 });
+      .text("CONSUMER CREDIT REPORT", MARGIN + 5, y + 3, {
+        width: CONTENT_W - 10,
+      });
     doc.y = y + 19;
   }
 
@@ -459,7 +516,9 @@ function renderModel(doc, m) {
     doc.text(`DATE: ${m.date}`, MARGIN + half, y, { width: half });
     const y2 = doc.y;
     doc.text(`MOBILE: ${m.mobile}`, MARGIN, y2, { width: half - 4 });
-    doc.text(`CONTROL NUMBER: ${m.controlNumber}`, MARGIN + half, y2, { width: half });
+    doc.text(`CONTROL NUMBER: ${m.controlNumber}`, MARGIN + half, y2, {
+      width: half,
+    });
     const y3 = doc.y;
     doc.text(`PAN: ${m.pan}`, MARGIN, y3, { width: half - 4 });
     doc.moveDown(0.2);
@@ -475,12 +534,14 @@ function renderModel(doc, m) {
     const w = widths.map((x) => (x / total) * avail);
     const headers = ["SCORE NAME", "SCORE", "DETAILS"];
     doc.font("Helvetica-Bold").fontSize(7.5);
-    const hh = Math.max(...headers.map((c, i) => doc.heightOfString(c, { width: w[i] })));
+    const hh = Math.max(
+      ...headers.map((c, i) => doc.heightOfString(c, { width: w[i] })),
+    );
     ensureSpace(doc, hh + 8);
     let y = doc.y;
     doc.rect(MARGIN, y, CONTENT_W, hh + 4).fill(C.grayBar);
     let x = MARGIN;
-    doc.fillColor(C.black);
+    doc.fillColor(isHeader ? C.navy : C.black);
     headers.forEach((c, i) => {
       doc.text(c, x + 2, y + 2, { width: w[i] - 4 });
       x += w[i] + 6;
@@ -493,7 +554,7 @@ function renderModel(doc, m) {
     ].filter(Boolean);
     doc.font("Helvetica").fontSize(7.5);
     const c0h = doc.heightOfString("Experian/FCIREXScore", { width: w[0] });
-    doc.font("Helvetica-Bold").fontSize(17).fillColor(C.red);
+    doc.font("Helvetica-Bold").fontSize(20).fillColor(C.green);
     const scoreH = doc.heightOfString(m.score || "-", { width: w[1] });
     doc.font("Helvetica").fontSize(7.5).fillColor(C.black);
     const c2h = doc.heightOfString(details.join("\n") || "-", { width: w[2] });
@@ -504,10 +565,14 @@ function renderModel(doc, m) {
     doc.fillColor(C.black).font("Helvetica").fontSize(7.5);
     doc.text("Experian/FCIREXScore", x + 2, y + 2, { width: w[0] - 4 });
     x += w[0] + 6;
-    doc.fillColor(C.red).font("Helvetica-Bold").fontSize(17).text(m.score || "-", x, y, {
-      width: w[1],
-      align: "center",
-    });
+    doc
+      .fillColor(C.red)
+      .font("Helvetica-Bold")
+      .fontSize(17)
+      .text(m.score || "-", x, y, {
+        width: w[1],
+        align: "center",
+      });
     x += w[1] + 6;
     doc.fillColor(C.black).font("Helvetica").fontSize(7.5);
     doc.text(details.join("\n") || "-", x + 2, y + 2, { width: w[2] - 4 });
@@ -550,9 +615,14 @@ function renderModel(doc, m) {
 
   if (m.emails.length) {
     sectionBar(doc, "EMAIL CONTACT(S):");
-    ruledTable(doc, ["EMAIL ADDRESS"], m.emails.map((e) => [e]), {
-      widths: [1],
-    });
+    ruledTable(
+      doc,
+      ["EMAIL ADDRESS"],
+      m.emails.map((e) => [e]),
+      {
+        widths: [1],
+      },
+    );
   }
 
   if (m.addresses.length) {
@@ -578,8 +648,18 @@ function renderModel(doc, m) {
       doc,
       ["ACCOUNT TYPE", "ACCOUNTS", "BALANCES", "DATE OPENED"],
       [
-        ["All Accounts", `TOTAL: ${sm.total}`, `OUTSTANDING: ${sm.currSum}`, `RECENT: ${sm.recent}`],
-        [`OVERDUE: ${sm.overdueCount}`, `OVERDUE AMT: ${sm.odSum}`, "", `OLDEST: ${sm.oldest}`],
+        [
+          "All Accounts",
+          `TOTAL: ${sm.total}`,
+          `OUTSTANDING: ${sm.currSum}`,
+          `RECENT: ${sm.recent}`,
+        ],
+        [
+          `OVERDUE: ${sm.overdueCount}`,
+          `OVERDUE AMT: ${sm.odSum}`,
+          "",
+          `OLDEST: ${sm.oldest}`,
+        ],
         [`ZERO-BALANCE: ${sm.zeroBal}`, "", "", ""],
       ],
       { widths: [100, 140, 140, 143], size: 7, headerSize: 7 },
@@ -589,7 +669,12 @@ function renderModel(doc, m) {
   bodyText(doc, "ENQUIRIES", 8, true);
   ruledTable(
     doc,
-    ["TOTAL (7 DAYS)", "TOTAL (30 DAYS)", "TOTAL (90 DAYS)", "TOTAL (180 DAYS)"],
+    [
+      "TOTAL (7 DAYS)",
+      "TOTAL (30 DAYS)",
+      "TOTAL (90 DAYS)",
+      "TOTAL (180 DAYS)",
+    ],
     [
       [
         s(m.totalCaps.TotalCAPSLast7Days ?? "-"),
@@ -630,10 +715,15 @@ function renderModel(doc, m) {
   doc.moveDown(0.4);
   ensureSpace(doc, 14);
   doc.fillColor(C.grayText).font("Helvetica").fontSize(7);
-  doc.text(`Generated on ${m.date} ${m.time} (IST). Report No: ${m.controlNumber}`, MARGIN, doc.y, {
-    width: CONTENT_W,
-    align: "center",
-  });
+  doc.text(
+    `Generated on ${m.date} ${m.time} (IST). Report No: ${m.controlNumber}`,
+    MARGIN,
+    doc.y,
+    {
+      width: CONTENT_W,
+      align: "center",
+    },
+  );
 }
 
 async function generateExperianPdf(parsed, meta = {}) {
