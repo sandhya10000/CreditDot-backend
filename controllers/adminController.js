@@ -74,6 +74,116 @@ const getDashboardStats = async (req, res) => {
 
     const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
 
+    // Current date and time
+    const now = new Date();
+
+    // Start of current month
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Start of current year
+    const currentYearStart = new Date(now.getFullYear(), 0, 1);
+
+    // Current month revenue
+    const currentMonthRevenueResult = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: {
+            $gte: currentMonthStart,
+            $lte: now,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const currentMonthRevenue = currentMonthRevenueResult[0]?.total || 0;
+
+    // Current year revenue
+    const currentYearRevenueResult = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: {
+            $gte: currentYearStart,
+            $lte: now,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const currentYearRevenue = currentYearRevenueResult[0]?.total || 0;
+
+    // Month-wise revenue
+    const monthlyRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: { $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            year: {
+              $year: {
+                date: "$createdAt",
+                timezone: "Asia/Kolkata",
+              },
+            },
+            month: {
+              $month: {
+                date: "$createdAt",
+                timezone: "Asia/Kolkata",
+              },
+            },
+          },
+          revenue: { $sum: "$amount" },
+        },
+      },
+      {
+        $sort: {
+          "_id.year": 1,
+          "_id.month": 1,
+        },
+      },
+    ]);
+
+    // Year-wise revenue
+    const yearlyRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: { $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $year: {
+              date: "$createdAt",
+              timezone: "Asia/Kolkata",
+            },
+          },
+          revenue: { $sum: "$amount" },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ]);
+
     // Calculate revenue from franchise packages (regular packages)
     // Need to ensure these transactions are linked to active franchises/users
     const franchisePackageRevenueResult = await Transaction.aggregate([
@@ -179,6 +289,12 @@ const getDashboardStats = async (req, res) => {
       totalLeads,
       totalTransactions,
       totalRevenue,
+      // New revenue fields
+      currentMonthRevenue,
+      currentYearRevenue,
+      monthlyRevenue,
+      yearlyRevenue,
+
       franchisePackageRevenue,
       customerPackageRevenue,
     });
@@ -784,7 +900,6 @@ const getAllFranchisesWithCredits = async (req, res) => {
 };
 
 // Create franchise user by admin (admin only)
-// Create franchise user by admin (admin only)
 const createFranchiseUser = async (req, res) => {
   try {
     const { name, email, assignedPackages, role, subRole } = req.body;
@@ -837,18 +952,6 @@ const createFranchiseUser = async (req, res) => {
 
     // ONLY for franchise user
     if (user.role === "franchise_user") {
-      const lastFranchise = await Franchise.findOne({
-        franchiseCode: { $exists: true },
-      }).sort({ createdAt: -1 });
-
-      let nextNumber = 1;
-
-      if (lastFranchise?.franchiseCode) {
-        nextNumber =
-          parseInt(lastFranchise.franchiseCode.replace("FP-", "")) + 1;
-      }
-
-      const franchiseCode = `FP-${String(nextNumber).padStart(3, "0")}`;
       const franchiseData = {
         userId: user._id,
         businessName: name,
@@ -856,10 +959,11 @@ const createFranchiseUser = async (req, res) => {
         email,
 
         phone,
-        franchiseCode, // <-- add this
+        franchiseCode: null, // <-- add this
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
+        //Login allow
         isActive: true,
       };
 

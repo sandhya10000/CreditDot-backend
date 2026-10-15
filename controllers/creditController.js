@@ -13,7 +13,6 @@ const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
-const cibilStyledPdf = require("../utils/cibilStyledPdf");
 const experianCirPdf = require("../utils/experianCirPdf");
 // const puppeteer = require("puppeteer");
 
@@ -182,10 +181,7 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
         return indc && ac ? `x-api-access ${indc}:${ac}` : null;
       })(),
     providerCode:
-      (await getIndiconnectValue(
-        settingKey,
-        settingKey.toUpperCase(),
-      )) ||
+      (await getIndiconnectValue(settingKey, settingKey.toUpperCase())) ||
       pickEnv(providerKeys) ||
       null,
     endpoint: pickEnv(endpointKeys) || "/idverifygr/verification",
@@ -236,7 +232,10 @@ const runExperianSoftPull = async ({
   };
   const cfg = await getIndiconnectConfig("experian");
   if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
-    fail(500, "IndiConnect Experian credentials not configured (service-key / auth / provider code)");
+    fail(
+      500,
+      "IndiConnect Experian credentials not configured (service-key / auth / provider code)",
+    );
   }
   const appId = await getIndiconnectValue(
     "indiconnect_experian_app_id",
@@ -267,27 +266,45 @@ const runExperianSoftPull = async ({
     );
   } catch (apiError) {
     if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
-      fail(504, "Request timeout when connecting to Experian. Please try again later.", { error: "TIMEOUT_ERROR" });
+      fail(
+        504,
+        "Request timeout when connecting to Experian. Please try again later.",
+        { error: "TIMEOUT_ERROR" },
+      );
     }
     if (apiError.isAxiosError && !apiError.response) {
-      fail(502, "Network error when connecting to Experian.", { error: "NETWORK_ERROR" });
+      fail(502, "Network error when connecting to Experian.", {
+        error: "NETWORK_ERROR",
+      });
     }
     if (apiError.response?.status === 429) {
-      fail(429, "Too many requests to Experian. Please try again later.", { error: "RATE_LIMIT_EXCEEDED" });
+      fail(429, "Too many requests to Experian. Please try again later.", {
+        error: "RATE_LIMIT_EXCEEDED",
+      });
     }
     const ed = apiError?.response?.data;
-    if (ed?.message_code === "balance_exhausted" || ed?.message === "API Balance Exhausted. Please recharge.") {
+    if (
+      ed?.message_code === "balance_exhausted" ||
+      ed?.message === "API Balance Exhausted. Please recharge."
+    ) {
       fail(503, "Service is temporarily unavailable. Please try again later.");
     }
     if (apiError.response) {
-      fail(apiError.response.status, apiError.response.data?.message || "Experian check failed", { error: apiError.response.data });
+      fail(
+        apiError.response.status,
+        apiError.response.data?.message || "Experian check failed",
+        { error: apiError.response.data },
+      );
     }
     fail(500, apiError.message || "Experian check failed");
   }
   const parsed = indiconnectClient.parseExperianSpResponse(response.data);
   const failReason = indiconnectClient.indiconnectFailed(parsed, "experian");
   if (failReason) {
-    fail(502, failReason, { error: parsed.error || null, txnId: parsed.txn_id || null });
+    fail(502, failReason, {
+      error: parsed.error || null,
+      txnId: parsed.txn_id || null,
+    });
   }
   console.log(
     `IndiConnect Experian-SP: score=${parsed.score ?? "null"} conf=${parsed.scoreConfidence ?? "-"} match=${parsed.exactMatch ?? "-"} report=${parsed.creditProfileHeader?.ReportNumber ?? "-"} txn=${parsed.txn_id}`,
@@ -395,19 +412,20 @@ const getBureauConfig = (bureau) => {
   return configs[bureau] || configs.cibil;
 };
 
-// Check credit score for specific bureau
 const checkCreditScore = async (req, res) => {
   try {
     let franchise = null;
-    // Validate request body
+    let response = null;
+
+    // 1. Validate request
     const { error } = creditCheckSchema.validate(req.body, {
       abortEarly: false,
     });
+
     if (error) {
-      const errorMessages = error.details.map((detail) => detail.message);
       return res.status(400).json({
         message: "Validation error",
-        details: errorMessages,
+        details: error.details.map((detail) => detail.message),
       });
     }
 
@@ -420,71 +438,82 @@ const checkCreditScore = async (req, res) => {
       aadhaar,
       dob,
       gender,
+      pincode,
+      id_number,
+      id_type,
     } = req.body;
 
-    if (req.user.role !== "admin") {
-      // Check same mobile/pan credit report in last 15 days
-      // Apply 15 days restriction ONLY for CIBIL
+    const normalizedBureau = String(bureau).toLowerCase();
+    const isAdmin = req.user.role === "admin";
 
-      const lastReport = await CreditReport.findOne({
-        mobile,
-        pan,
-        bureau,
-      }).sort({ createdAt: -1 });
+    const isCibilRequest = ["cibil", "cibil-surepass", "cibil-ongrid"].includes(
+      normalizedBureau,
+    );
 
-      if (lastReport) {
-        const lastDate = new Date(lastReport.createdAt);
-        const currentDate = new Date();
+    // 2. Franchise checks and CIBIL-only 15-day restriction
+    if (!isAdmin) {
+      if (isCibilRequest) {
+        const lastReport = await CreditReport.findOne({
+          mobile,
+          pan,
+          bureau: normalizedBureau === "cibil" ? "cibil" : normalizedBureau,
+        }).sort({ createdAt: -1 });
 
-        const diffTime = currentDate - lastDate;
-        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        // if (lastReport?.createdAt) {
+        //   const diffDays =
+        //     (Date.now() - new Date(lastReport.createdAt).getTime()) /
+        //     (1000 * 60 * 60 * 24);
 
-        if (diffDays < 15) {
-          const remainingDays = Math.ceil(15 - diffDays);
+        //   if (diffDays >= 0 && diffDays < 15) {
+        //     const remainingDays = Math.ceil(15 - diffDays);
 
-          return res.status(400).json({
-            message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-          });
-        }
+        //     return res.status(400).json({
+        //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+        //     });
+        //   }
+        // }
       }
 
-      // Get franchise details to check credits
       franchise = await Franchise.findById(req.user.franchiseId);
+
       if (!franchise) {
-        return res.status(404).json({ message: "Franchise not found" });
+        return res.status(404).json({
+          message: "Franchise not found",
+        });
       }
 
-      //Check if franchise has enough credits
-      if (franchise.credits < 1) {
+      if (Number(franchise.credits) < 1) {
         return res.status(400).json({
           message: "Insufficient credits to generate credit report",
         });
       }
     }
 
-    // Get Surepass API key
-
-    let response;
-
+    // 3. Fetch report from the selected bureau
     try {
-      if (isIndiconnectCibilBureau(bureau)) {
-        // ---- CIBIL via IndiConnect (franchise-first cutover, htmlUrl accepted) ----
+      if (isIndiconnectCibilBureau(normalizedBureau)) {
+        // CIBIL via IndiConnect
         const cfg = await getIndiconnectCibilConfig();
-        if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+
+        if (!cfg?.serviceKey || !cfg?.auth || !cfg?.providerCode) {
           return res.status(500).json({
             message:
               "IndiConnect CIBIL credentials not configured (service-key / auth / provider code)",
           });
         }
-        const ep = cfg.endpoint.startsWith("/")
+
+        const endpoint = cfg.endpoint.startsWith("/")
           ? cfg.endpoint
           : `/${cfg.endpoint}`;
-        const url = `${cfg.baseUrl}${ep}`;
+
+        const url = `${cfg.baseUrl}${endpoint}`;
+
         const payload = indiconnectClient.buildCibilPayload({
           pan,
           name,
           mobile,
         });
+
         response = await axios.post(url, payload, {
           headers: {
             "Content-Type": "application/json",
@@ -494,7 +523,7 @@ const checkCreditScore = async (req, res) => {
           },
           timeout: 60000,
         });
-        // stash parsed view for the extractor below without changing response shape
+
         response.__indiconnect = indiconnectClient.parseCibilResponse(
           response.data,
         );
@@ -502,30 +531,8 @@ const checkCreditScore = async (req, res) => {
         {
           const failReason = indiconnectClient.indiconnectFailed(
             response.__indiconnect,
-            "cibil",
           );
           if (failReason) {
-            console.error(
-              "IndiConnect CIBIL rejected: documentType=" +
-                (response.config?.data
-                  ? (() => {
-                      try {
-                        return (
-                          JSON.parse(response.config.data)?.variables?.input
-                            ?.documentType || "unknown"
-                        );
-                      } catch {
-                        return "unknown";
-                      }
-                    })()
-                  : indiconnectClient.getDocumentTypeFor("cibil")) +
-                " providercode=" +
-                (cfg.providerCode
-                  ? `${String(cfg.providerCode).slice(0, 4)}...${String(cfg.providerCode).slice(-4)}`
-                  : "missing") +
-                " gateway=" +
-                JSON.stringify(response.__indiconnect.error || null).slice(0, 300),
-            );
             return res.status(502).json({
               message: failReason,
               error: response.__indiconnect.error || null,
@@ -538,18 +545,23 @@ const checkCreditScore = async (req, res) => {
         const cfg = await getIndiconnectConfig(bureau);
         if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
           return res.status(500).json({
-            message: `IndiConnect ${bureau.toUpperCase()} credentials not configured (service-key / auth / provider code)`,
+            message:
+              "IndiConnect CRIF credentials not configured (service-key / auth / provider code)",
           });
         }
-        const ep = cfg.endpoint.startsWith("/")
+
+        const endpoint = cfg.endpoint.startsWith("/")
           ? cfg.endpoint
           : `/${cfg.endpoint}`;
-        const url = `${cfg.baseUrl}${ep}`;
+
+        const url = `${cfg.baseUrl}${endpoint}`;
+
         const payload = indiconnectClient.buildCrifPayload({
           pan,
           name,
           mobile,
         });
+
         response = await axios.post(url, payload, {
           headers: {
             "Content-Type": "application/json",
@@ -565,7 +577,6 @@ const checkCreditScore = async (req, res) => {
         {
           const failReason = indiconnectClient.indiconnectFailed(
             response.__indiconnect,
-            bureau,
           );
           if (failReason) {
             return res.status(502).json({
@@ -587,47 +598,67 @@ const checkCreditScore = async (req, res) => {
         if (missing.length) {
           return res.status(400).json({
             message: "Missing required fields for Experian",
-            missingFields: missing,
+            missingFields,
           });
         }
+
         const split = indiconnectClient.splitFullName(name);
+
         if (!split) {
           return res.status(400).json({
             message: "Full name must contain first and last name for Experian",
           });
         }
-        try {
-          const out = await runExperianSoftPull({
-            firstName: split.firstName,
-            lastName: split.lastName,
-            mobile,
-            panNumber: pan,
-            dob:
-              dob instanceof Date
-                ? dob.toISOString().slice(0, 10)
-                : String(dob).slice(0, 10),
-            pincode,
-            consentIp: req.ip,
-          });
-          response = out.response;
-          response.__indiconnect = out.parsed;
-          response.__indiconnectBureau = "experian";
-        } catch (spErr) {
-          return res
-            .status(spErr.statusCode || 500)
-            .json(spErr.body || { message: spErr.message });
+
+        const normalizedDob =
+          dob instanceof Date
+            ? dob.toISOString().slice(0, 10)
+            : String(dob).slice(0, 10);
+
+        const out = await runExperianSoftPull({
+          firstName: split.firstName,
+          lastName: split.lastName,
+          mobile,
+          panNumber: pan,
+          dob: normalizedDob,
+          pincode,
+          consentIp: req.ip,
+        });
+
+        if (!out?.response) {
+          throw new Error("Experian Soft-Pull did not return a valid response");
+        }
+
+        response = out.response;
+        response.__indiconnect = out.parsed;
+        response.__indiconnectBureau = "experian";
+
+        if (!response.__indiconnect) {
+          throw new Error("Experian response could not be parsed");
         }
       } else {
+        // Surepass: Equifax and other configured bureaus
         const surepassApiKey = await getSurepassApiKeyValue();
+
         if (!surepassApiKey) {
-          return res
-            .status(500)
-            .json({ message: "Surepass API key not configured" });
+          return res.status(500).json({
+            message: "Surepass API key not configured",
+          });
         }
 
         const bureauConfig = getBureauConfig(
-          bureau !== "cibil-surepass" ? bureau : "cibil",
+          normalizedBureau === "cibil-surepass" ? "cibil" : normalizedBureau,
         );
+
+        if (
+          !bureauConfig ||
+          typeof bureauConfig.formatData !== "function" ||
+          !bureauConfig.endpoint
+        ) {
+          return res.status(400).json({
+            message: `Unsupported bureau: ${normalizedBureau}`,
+          });
+        }
 
         const requestData = bureauConfig.formatData({
           name,
@@ -637,24 +668,43 @@ const checkCreditScore = async (req, res) => {
           aadhaar,
           dob,
           gender,
-          // Pass through Equifax-specific fields if provided
-          id_number: req.body.id_number || null,
-          id_type: req.body.id_type || null,
+          id_number: id_number || null,
+          id_type: id_type || null,
         });
 
         const start = Date.now();
+
         response = await surepassClient.makeCreditCheckRequest(
           surepassApiKey,
           bureauConfig.endpoint,
           requestData,
         );
+
         console.log(`Credit bureau response took ${Date.now() - start} ms`);
       }
+
+      if (!response || typeof response !== "object") {
+        throw new Error("Credit bureau returned an invalid response");
+      }
     } catch (apiError) {
-      console.error("API ERROR:", apiError);
+      console.error("CREDIT BUREAU API ERROR:", {
+        bureau: normalizedBureau,
+        message: apiError.message,
+        status: apiError.response?.status,
+        data: apiError.response?.data,
+      });
+
+      // Preserve the existing Experian provider error response
+      if (apiError.statusCode && normalizedBureau === "experian") {
+        return res.status(apiError.statusCode).json(
+          apiError.body || {
+            message: apiError.message || "Experian request failed",
+          },
+        );
+      }
+
       const errorData = apiError?.response?.data;
 
-      // Hide Surepass Balance Exhausted message
       if (
         errorData?.message_code === "balance_exhausted" ||
         errorData?.message === "API Balance Exhausted. Please recharge."
@@ -665,6 +715,7 @@ const checkCreditScore = async (req, res) => {
             "Service is temporarily unavailable. Please try again later.",
         });
       }
+
       if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {
         return res.status(504).json({
           message:
@@ -673,21 +724,15 @@ const checkCreditScore = async (req, res) => {
         });
       }
 
-      // Handle network errors
       if (apiError.isAxiosError && !apiError.response) {
         return res.status(502).json({
           message:
-            "Network error when connecting to credit bureau. Please check your internet connection and try again.",
+            "Network error when connecting to credit bureau. Please try again later.",
           error: "NETWORK_ERROR",
         });
       }
 
-      // Handle rate limiting specifically (HTTP 429)
       if (apiError.response?.status === 429) {
-        console.error(
-          "Surepass API rate limit exceeded:",
-          apiError.response.data,
-        );
         return res.status(429).json({
           message:
             "Too many requests to credit bureau. Please try again later.",
@@ -695,12 +740,17 @@ const checkCreditScore = async (req, res) => {
         });
       }
 
-      // Forward the error from Surepass API if available
       if (apiError.response) {
-        return res.status(apiError.response.status).json({
-          message: apiError.response.data.message || "Credit check failed",
-          error: apiError.response.data || apiError.message,
-        });
+        return res
+          .status(
+            apiError.response.status >= 400 && apiError.response.status < 600
+              ? apiError.response.status
+              : 502,
+          )
+          .json({
+            message: errorData?.message || "Credit check failed",
+            error: errorData || apiError.message,
+          });
       }
 
       return res.status(500).json({
@@ -709,45 +759,52 @@ const checkCreditScore = async (req, res) => {
       });
     }
 
+    // 4. Parse score and report URL safely
     let score = null;
     let reportUrl = null;
 
     const indiconnectBureau = response.__indiconnectBureau || null;
 
-    if (isIndiconnectCibilBureau(bureau)) {
+    if (isIndiconnectCibilBureau(normalizedBureau)) {
       const parsed =
         response.__indiconnect ||
         indiconnectClient.parseCibilResponse(response.data);
-      score = parsed.score;
-      // Prefer the direct S3 PDF link; fall back to the CIBIL web page link
-      reportUrl = parsed.pdfUrl || parsed.htmlUrl;
+
       response.__indiconnect = parsed;
-      console.log(
-        `IndiConnect CIBIL: score=${score ?? "null"} pdf=${parsed.pdfUrl ? "yes" : "no"} html=${parsed.htmlUrl ? "yes" : "no"} bureau=${parsed.bureauStatus}/${parsed.bureauMessage} txn=${parsed.txn_id}`,
-      );
-    } else if (indiconnectBureau === "crif" || indiconnectBureau === "experian") {
+
+      score = parsed?.score ?? null;
+      reportUrl = parsed?.pdfUrl || parsed?.htmlUrl || null;
+    } else if (
+      indiconnectBureau === "crif" ||
+      indiconnectBureau === "experian"
+    ) {
       const parsed = response.__indiconnect;
-      score = parsed.score;
-      reportUrl = parsed.reportUrl;
-    } else {
-      score =
-        response?.data?.data?.score ||
-        response?.data?.data?.credit_score ||
-        null;
+
+      score = parsed?.score ?? null;
+
+      // Experian PDF is generated locally from parsed data.
       reportUrl =
-        response?.data?.data?.report_url ||
-        response?.data?.data?.pdf_url ||
-        response?.data?.data?.credit_report_link ||
-        response.data.data.report_link ||
+        indiconnectBureau === "experian" ? null : parsed?.reportUrl || null;
+    } else {
+      const data = response?.data?.data;
+
+      score = data?.score ?? data?.credit_score ?? null;
+
+      reportUrl =
+        data?.report_url ||
+        data?.pdf_url ||
+        data?.credit_report_link ||
+        data?.report_link ||
         null;
     }
 
-    const isIndiconnectCibil = isIndiconnectCibilBureau(bureau);
-    // Any bureau served via IndiConnect in this request (cibil/crif/experian)
     const isIndiconnectBureau = Boolean(indiconnectBureau);
+    const isIndiconnectCibil = isIndiconnectCibilBureau(normalizedBureau);
+
+    // 5. Save report record
     const reportTableData = {
       userId: req.user.id,
-      franchiseId: req.user.role === "admin" ? null : req.user.franchiseId,
+      franchiseId: isAdmin ? null : req.user.franchiseId,
       name,
       mobile,
       pan,
@@ -755,31 +812,33 @@ const checkCreditScore = async (req, res) => {
       dob,
       gender,
       score,
-
-      bureau: ["cibil-ongrid", "cibil-surepass"].includes(bureau)
+      bureau: ["cibil-ongrid", "cibil-surepass"].includes(normalizedBureau)
         ? "cibil"
-        : bureau,
-      reportData: response.data,
+        : normalizedBureau,
+      reportData: response.data ?? response.__indiconnect ?? {},
       reportUrl,
-      // IndiConnect rows with a report URL: direct PDF links download inline;
-      // htmlUrl-only rows are rendered to PDF in background after responding
-      ...(isIndiconnectBureau && reportUrl
-        ? { pdfStatus: "pending" }
-        : {}),
+      ...(isIndiconnectBureau && reportUrl ? { pdfStatus: "pending" } : {}),
+      ...(indiconnectBureau === "experian" ? { pdfStatus: "pending" } : {}),
     };
 
     const creditReport = new CreditReport(reportTableData);
 
     await creditReport.save();
 
-    // Sync with Google Sheets
+    // 6. Deduct credits after successful bureau response and DB save
+    if (!isAdmin && franchise) {
+      franchise.credits = Number(franchise.credits) - 1;
+      await franchise.save();
+    }
+
+    // 7. Sync with Google Sheets without blocking the API response
     googleSheetsService
       .initialize()
       .then(() => googleSheetsService.syncCreditScoreData())
       .catch((syncError) => {
         console.error(
           "Failed to sync credit score data with Google Sheets:",
-          syncError,
+          syncError.message,
         );
       });
 
@@ -789,64 +848,69 @@ const checkCreditScore = async (req, res) => {
       await franchise.save();
     }
 
-    // CIBIL: render styled PDF from bureau JSON (reference layout).
-    // Replaces the old htmlUrl screenshot — localPath is set inline so the
-    // PDF button serves /reports/*.pdf directly, never myscore.cibil.com.
-    if (
-      isIndiconnectCibil &&
-      response.__indiconnect?.cibilData &&
-      !creditReport.localPath
-    ) {
-      try {
-        const gen = await cibilStyledPdf.generateCibilPdf(
-          response.__indiconnect,
-          { name, mobile, pan, dob, txnId: response.__indiconnect?.txn_id },
-        );
-        if (gen) {
-          const reportsDir = path.join(__dirname, "../reports");
-          if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-          }
-          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-          creditReport.localPath = `/reports/${filename}`;
-          creditReport.pdfStatus = "ready";
-          await creditReport.save();
-          console.log(
-            `CIBIL styled PDF generated: ${filename} (score ${gen.model.score})`,
-          );
-        }
-      } catch (genErr) {
-        console.error("CIBIL STYLED PDF FAILED:", genErr.message);
-      }
-    }
-
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
     if (
       indiconnectBureau === "experian" &&
-      response.__indiconnect &&
+      response?.data &&
       !creditReport.localPath
     ) {
       try {
-        const gen = await experianCirPdf.generateExperianPdf(
-          response.__indiconnect,
-          { name, mobile, pan },
-        );
-        if (gen) {
-          const reportsDir = path.join(__dirname, "../reports");
-          if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-          }
-          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-          creditReport.localPath = `/reports/${filename}`;
-          creditReport.pdfStatus = "ready";
-          await creditReport.save();
-          console.log(
-            `Experian styled PDF generated: ${filename} (score ${gen.model.score})`,
+        const reportId = String(creditReport._id);
+
+        // Template expects raw Experian report structure.
+        const rawExperianResult =
+          response.data?.data?.verify?.result ||
+          response.data?.verify?.result ||
+          response.data?.data?.data?.verify?.result ||
+          response.data;
+
+        if (
+          !rawExperianResult ||
+          typeof rawExperianResult !== "object" ||
+          !rawExperianResult.SCORE
+        ) {
+          throw new Error(
+            "Raw Experian result not found. Check response.data structure.",
           );
         }
+
+        const pdfBuffer = await generateExperianPdf(rawExperianResult);
+
+        if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
+          throw new Error(
+            "generateExperianPdf must return a non-empty PDF Buffer",
+          );
+        }
+
+        const reportsDir = path.resolve(__dirname, "../reports");
+        fs.mkdirSync(reportsDir, { recursive: true });
+
+        const filename = `credit_report_${reportId}_${Date.now()}.pdf`;
+        const absolutePath = path.join(reportsDir, filename);
+
+        fs.writeFileSync(absolutePath, pdfBuffer);
+
+        const stats = fs.statSync(absolutePath);
+        const header = pdfBuffer.subarray(0, 5).toString();
+
+        if (stats.size === 0 || header !== "%PDF-") {
+          throw new Error(
+            `Invalid PDF file. Size=${stats.size}, header=${header}`,
+          );
+        }
+
+        creditReport.localPath = `/reports/${filename}`;
+        creditReport.pdfStatus = "ready";
+
+        await creditReport.save();
+
+        console.log("[EXPERIAN PDF] Generated successfully:", {
+          creditReportId: reportId,
+          filename,
+          size: stats.size,
+          header,
+        });
       } catch (genErr) {
         console.error("EXPERIAN PDF GENERATE FAILED:", genErr.message);
       }
@@ -855,75 +919,47 @@ const checkCreditScore = async (req, res) => {
     // If we have a report URL, download and save the PDF locally.
     // Direct PDF links (Surepass + IndiConnect) download inline;
     // IndiConnect htmlUrl-only rows use the background renderer below.
-    // Download report only when a local copy does not already exist.
-// IndiConnect HTML reports are handled by the background PDF renderer.
-if (
-  reportUrl &&
-  !creditReport.localPath &&
-  (!isIndiconnectBureau || !indiconnectClient.isHtmlReportUrl(reportUrl))
-) {
-  let localFilePath;
-
-  try {
-    const reportsDir = path.join(__dirname, "../reports");
-
-    if (!fs.existsSync(reportsDir)) {
-      fs.mkdirSync(reportsDir, { recursive: true });
-    }
-
-    const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-    localFilePath = path.join(reportsDir, filename);
-
-    const pdfResponse = await axios({
-      method: "GET",
-      url: reportUrl,
-      responseType: "stream",
-      timeout: 180000,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-    });
-
-    const writer = fs.createWriteStream(localFilePath);
-
-    await new Promise((resolve, reject) => {
-      pdfResponse.data.on("error", reject);
-      writer.on("error", reject);
-      writer.on("finish", resolve);
-      pdfResponse.data.pipe(writer);
-    });
-
-    // Never treat HTML or another file type as a PDF.
-    if (!isValidPdf(localFilePath)) {
-      throw new Error(
-        "Downloaded report is not a valid PDF; expected %PDF- signature"
-      );
-    }
-
-    // Save the path only after validation succeeds.
-    creditReport.localPath = `/reports/${filename}`;
-
-    if (isIndiconnectBureau) {
-      creditReport.pdfStatus = "ready";
-    }
-
-    await creditReport.save();
-
-    console.log(`PDF downloaded and validated: ${filename}`);
-  } catch (downloadError) {
-    console.error("PDF DOWNLOAD ERROR:", downloadError.message);
-
-    // Remove an invalid or incomplete download.
-    if (localFilePath && fs.existsSync(localFilePath)) {
+    if (
+      reportUrl &&
+      !creditReport.localPath &&
+      (!isIndiconnectBureau || !indiconnectClient.isHtmlReportUrl(reportUrl))
+    ) {
       try {
-        fs.unlinkSync(localFilePath);
-      } catch (cleanupError) {
-        console.error("PDF CLEANUP ERROR:", cleanupError.message);
+        const reportsDir = path.join(__dirname, "../reports");
+
+        if (!fs.existsSync(reportsDir)) {
+          fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+        const localFilePath = path.join(reportsDir, filename);
+
+        const pdfResponse = await axios({
+          method: "GET",
+          url: reportUrl,
+          responseType: "stream",
+          timeout: 180000,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        });
+        const writer = fs.createWriteStream(localFilePath);
+
+        pdfResponse.data.pipe(writer);
+
+        await new Promise((resolve, reject) => {
+          writer.on("finish", resolve);
+          writer.on("error", reject);
+        });
+
+        creditReport.localPath = `/reports/${filename}`;
+        if (isIndiconnectBureau) creditReport.pdfStatus = "ready";
+        await creditReport.save();
+      } catch (downloadError) {
+        console.error("PDF DOWNLOAD ERROR:", downloadError.message);
       }
     }
-  }
-}
 
     const noCibilRecord =
       isIndiconnectCibil &&
@@ -932,10 +968,10 @@ if (
           response.__indiconnect?.bureauMessage || "",
         ));
 
-    res.status(200).json({
+    const responsePayload = {
       message: noCibilRecord
         ? "No CIBIL record found for these details"
-        : `Credit report retrieved successfully from ${bureau.toUpperCase()}`,
+        : `Credit report retrieved successfully from ${normalizedBureau.toUpperCase()}`,
       provider: isIndiconnectBureau ? "indiconnect" : "surepass",
       creditReport: {
         id: creditReport._id,
@@ -946,39 +982,60 @@ if (
         score: creditReport.score,
         bureau: creditReport.bureau,
         reportUrl: creditReport.reportUrl,
-        localPath: creditReport.localPath,
+        localPath: creditReport.localPath || null,
         pdfStatus: creditReport.pdfStatus || null,
         txnId: response.__indiconnect?.txn_id || null,
         createdAt: creditReport.createdAt,
       },
-      remainingCredits:
-        req.user.role !== "admin" && franchise ? franchise.credits : null,
-    });
+      remainingCredits: !isAdmin && franchise ? franchise.credits : null,
+    };
 
-    // Background fallback: only screenshot htmlUrl when the styled PDF
-    // could not be generated inline above (no localPath yet). Styled PDF
-    // is now the primary path, so this rarely runs.
+    // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
+    // (non-blocking, link-only fallback on failure). Runs after responding.
+    // Rows with a direct PDF link were already downloaded inline above.
     if (
       isIndiconnectCibil &&
       reportUrl &&
       !creditReport.localPath &&
       indiconnectClient.isHtmlReportUrl(reportUrl)
     ) {
-      cibilPdfService.renderCibilPdfInBackground(
-        CreditReport,
-        creditReport._id,
-        reportUrl,
-      );
+      Promise.resolve()
+        .then(() =>
+          cibilPdfService.renderCibilPdfInBackground(
+            CreditReport,
+            creditReport._id,
+            reportUrl,
+          ),
+        )
+        .catch((backgroundError) => {
+          console.error(
+            "[CIBIL PDF BACKGROUND ERROR]:",
+            backgroundError.message,
+          );
+        });
     }
 
-    console.log(response.data, "ongrid-----");
+    console.log(`[CREDIT REPORT] ${normalizedBureau.toUpperCase()} processed`, {
+      creditReportId: String(creditReport._id),
+      score: creditReport.score,
+      pdfStatus: creditReport.pdfStatus || null,
+    });
   } catch (error) {
-    console.error("Credit check error:", error);
-    res.status(500).json({
+    console.error("Credit check controller error:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    if (res.headersSent) {
+      return;
+    }
+
+    return res.status(500).json({
       message: "Server error",
       error: error.message,
-      // Don't expose sensitive error details in production
-      ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
+      ...(process.env.NODE_ENV === "development" && {
+        stack: error.stack,
+      }),
     });
   }
 };
@@ -1186,27 +1243,86 @@ const checkCreditScorePublic = async (req, res) => {
 
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
-    if (response.__indiconnect && !creditReport.localPath) {
+
+    /**
+ * Generate and save Experian PDF
+ 
+ */
+
+    if (
+      response?.__indiconnectBureau === "experian" &&
+      !creditReport.localPath
+    ) {
       try {
-        const gen = await experianCirPdf.generateExperianPdf(
-          response.__indiconnect,
-          { name, mobile, pan },
-        );
-        if (gen) {
-          const reportsDir = path.join(__dirname, "../reports");
-          if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-          }
-          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-          creditReport.localPath = `/reports/${filename}`;
-          await creditReport.save();
-          console.log(
-            `Experian public styled PDF generated: ${filename} (score ${gen.model.score})`,
+        // The template expects the raw Experian report fields.
+        // Prefer the original API response, not the normalized parsed score.
+        const rawExperianResponse = response?.data;
+
+        if (!rawExperianResponse || typeof rawExperianResponse !== "object") {
+          throw new Error(
+            "Raw Experian response is missing. Check response.data.",
           );
         }
+
+        // Log only field names; do not log sensitive credit-report data.
+        console.log("[EXPERIAN PDF] Response keys:", {
+          responseKeys: Object.keys(response || {}),
+          rawKeys: Object.keys(rawExperianResponse || {}),
+          parsedKeys: Object.keys(response.__indiconnect || {}),
+        });
+
+        const pdfBuffer = await generateExperianPdf(
+          rawExperianResponse,
+          String(creditReport._id),
+        );
+
+        if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
+          throw new Error("PDF generator did not return a non-empty Buffer.");
+        }
+
+        if (pdfBuffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
+          throw new Error("Generated output is not a valid PDF.");
+        }
+
+        const reportsDir = path.resolve(__dirname, "../reports");
+        fs.mkdirSync(reportsDir, { recursive: true });
+
+        const filename = `experian_${creditReport._id}.pdf`;
+        const absolutePath = path.join(reportsDir, filename);
+
+        fs.writeFileSync(absolutePath, pdfBuffer);
+
+        // Verify the file exists and has content.
+        const stats = fs.statSync(absolutePath);
+
+        if (!stats.isFile() || stats.size === 0) {
+          throw new Error("Generated PDF file is missing or empty.");
+        }
+
+        creditReport.localPath = `/reports/${filename}`;
+        creditReport.pdfStatus = "ready";
+
+        await creditReport.save();
+
+        console.log("[EXPERIAN PDF] Saved successfully:", {
+          reportId: String(creditReport._id),
+          size: stats.size,
+          localPath: creditReport.localPath,
+        });
       } catch (genErr) {
-        console.error("EXPERIAN PDF GENERATE FAILED:", genErr.message);
+        console.error(
+          "[EXPERIAN PDF] Generation failed:",
+          genErr.stack || genErr.message,
+        );
+
+        creditReport.pdfStatus = "failed";
+
+        await creditReport.save().catch((saveErr) => {
+          console.error(
+            "[EXPERIAN PDF] Status update failed:",
+            saveErr.message,
+          );
+        });
       }
     }
 
@@ -1397,7 +1513,7 @@ const getAllCreditReports = async (req, res) => {
       }
     }
     if (bureau) {
-      filter.bureau = { $regex: new RegExp(`^${bureau}$`, 'i') };
+      filter.bureau = { $regex: new RegExp(`^${bureau}$`, "i") };
     }
     const reports = await CreditReport.find(filter)
       .select(
@@ -1753,8 +1869,9 @@ const checkCreditScoreV2 = async (req, res) => {
       );
       response.__indiconnectBureau = "cibil";
       {
-        const failReason =
-          indiconnectClient.indiconnectFailed(response.__indiconnect);
+        const failReason = indiconnectClient.indiconnectFailed(
+          response.__indiconnect,
+        );
         if (failReason) {
           return res.status(502).json({
             success: false,
@@ -1822,7 +1939,9 @@ const checkCreditScoreV2 = async (req, res) => {
           console.error("DIGI ERROR data: <unserializable>");
         }
         const dmsg =
-          digiErr.response?.data?.message || digiErr.message || "Digi check failed";
+          digiErr.response?.data?.message ||
+          digiErr.message ||
+          "Digi check failed";
         // Auth failures are free — no Failed row (VerifyHub parity)
         if (digiApiClient.isDigiAuthFailure(st, dmsg)) {
           return res.status(502).json({
@@ -1838,7 +1957,8 @@ const checkCreditScoreV2 = async (req, res) => {
         if (digiErr.code === "ETIMEDOUT" || digiErr.code === "ECONNABORTED") {
           return res.status(504).json({
             success: false,
-            message: "Request timeout when connecting to Digi CIBIL. Please try again later.",
+            message:
+              "Request timeout when connecting to Digi CIBIL. Please try again later.",
             provider: "digi",
             apiType: "digi",
             creditReportId: failedReport._id,
@@ -1932,8 +2052,7 @@ const checkCreditScoreV2 = async (req, res) => {
         requestData,
       );
       console.log("Surepass V2 CRIF response received");
-    }
-    else if (bureau === "crif") {
+    } else if (bureau === "crif") {
       const cfg = await getIndiconnectConfig(bureau);
       if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
         return res.status(500).json({
@@ -1957,13 +2076,13 @@ const checkCreditScoreV2 = async (req, res) => {
         },
         timeout: 60000,
       });
-      response.__indiconnect =
-        indiconnectClient.parseCrifResponse(response.data);
+      response.__indiconnect = indiconnectClient.parseCrifResponse(
+        response.data,
+      );
       response.__indiconnectBureau = bureau;
       {
         const failReason = indiconnectClient.indiconnectFailed(
           response.__indiconnect,
-          bureau,
         );
         if (failReason) {
           return res.status(502).json({
@@ -2002,8 +2121,7 @@ const checkCreditScoreV2 = async (req, res) => {
         requestData,
       );
       console.log("Surepass V2 Experian response received");
-    }
-    else if (bureau === "experian") {
+    } else if (bureau === "experian") {
       const { dob: v2dob, pincode: v2pincode } = req.body;
       const missing = [];
       if (!v2pincode) missing.push("pincode");
@@ -2098,7 +2216,9 @@ const checkCreditScoreV2 = async (req, res) => {
     if (bureau === "cibil" && cibilApiType === "indiconnect") {
       // Prefer the direct PDF link; fall back to the CIBIL web page link
       reportUrl =
-        response.__indiconnect?.pdfUrl || response.__indiconnect?.htmlUrl || null;
+        response.__indiconnect?.pdfUrl ||
+        response.__indiconnect?.htmlUrl ||
+        null;
     } else if (bureau === "cibil" && cibilApiType === "digi") {
       // Digi v7 returns bureau JSON only — our styled PDF is rendered locally below
       reportUrl = null;
@@ -2148,10 +2268,11 @@ const checkCreditScoreV2 = async (req, res) => {
       !creditReport.localPath
     ) {
       try {
-        const gen = await experianCirPdf.generateExperianPdf(
-          response.__indiconnect,
-          { name, mobile, pan },
-        );
+        const gen = await generateExperianPdf(response.__indiconnect, {
+          name,
+          mobile,
+          pan,
+        });
         if (gen) {
           const reportsDir = path.join(__dirname, "../reports");
           if (!fs.existsSync(reportsDir)) {
@@ -2206,63 +2327,62 @@ const checkCreditScoreV2 = async (req, res) => {
     if (
       reportUrl &&
       !creditReport.localPath &&
-      (!isV2IndiconnectCibil ||
-        !indiconnectClient.isHtmlReportUrl(reportUrl))
+      (!isV2IndiconnectCibil || !indiconnectClient.isHtmlReportUrl(reportUrl))
     ) {
-  let localFilePath;
+      let localFilePath;
 
-  try {
-    const reportsDir = path.join(__dirname, "../reports");
-
-    if (!fs.existsSync(reportsDir)) {
-      fs.mkdirSync(reportsDir, { recursive: true });
-    }
-
-    const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-    localFilePath = path.join(reportsDir, filename);
-
-    const pdfResponse = await axios({
-      method: "GET",
-      url: reportUrl,
-      responseType: "stream",
-      timeout: 30000,
-    });
-
-    const writer = fs.createWriteStream(localFilePath);
-
-    await new Promise((resolve, reject) => {
-      pdfResponse.data.on("error", reject);
-      writer.on("error", reject);
-      writer.on("finish", resolve);
-
-      pdfResponse.data.pipe(writer);
-    });
-
-    // Verify the file is actually a PDF.
-    if (!isValidPdf(localFilePath)) {
-      throw new Error(
-        "Downloaded report is not a valid PDF; expected %PDF- signature"
-      );
-    }
-
-    // Save the local path only after validation succeeds.
-    creditReport.localPath = `/reports/${filename}`;
-    await creditReport.save();
-
-    console.log(`PDF downloaded and validated: ${filename}`);
-  } catch (downloadError) {
-    console.error("PDF DOWNLOAD ERROR:", downloadError.message);
-
-    // Remove incomplete or invalid files.
-    if (localFilePath && fs.existsSync(localFilePath)) {
       try {
-        fs.unlinkSync(localFilePath);
-      } catch (cleanupError) {
-        console.error("PDF CLEANUP ERROR:", cleanupError.message);
+        const reportsDir = path.join(__dirname, "../reports");
+
+        if (!fs.existsSync(reportsDir)) {
+          fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+        localFilePath = path.join(reportsDir, filename);
+
+        const pdfResponse = await axios({
+          method: "GET",
+          url: reportUrl,
+          responseType: "stream",
+          timeout: 30000,
+        });
+
+        const writer = fs.createWriteStream(localFilePath);
+
+        await new Promise((resolve, reject) => {
+          pdfResponse.data.on("error", reject);
+          writer.on("error", reject);
+          writer.on("finish", resolve);
+
+          pdfResponse.data.pipe(writer);
+        });
+
+        // Verify the file is actually a PDF.
+        if (!isValidPdf(localFilePath)) {
+          throw new Error(
+            "Downloaded report is not a valid PDF; expected %PDF- signature",
+          );
+        }
+
+        // Save the local path only after validation succeeds.
+        creditReport.localPath = `/reports/${filename}`;
+        await creditReport.save();
+
+        console.log(`PDF downloaded and validated: ${filename}`);
+      } catch (downloadError) {
+        console.error("PDF DOWNLOAD ERROR:", downloadError.message);
+
+        // Remove incomplete or invalid files.
+        if (localFilePath && fs.existsSync(localFilePath)) {
+          try {
+            fs.unlinkSync(localFilePath);
+          } catch (cleanupError) {
+            console.error("PDF CLEANUP ERROR:", cleanupError.message);
+          }
+        }
       }
     }
-  }
-}
 
     // =========================
     // FINAL RESPONSE
@@ -2429,17 +2549,16 @@ const generateExperianReport = async (req, res) => {
         pan,
         bureau: "experian",
       }).sort({ createdAt: -1 });
-      if (lastReport) {
-        const diffDays =
-          (new Date() - new Date(lastReport.createdAt)) /
-          (1000 * 60 * 60 * 24);
-        if (diffDays < 15) {
-          const remainingDays = Math.ceil(15 - diffDays);
-          return res.status(400).json({
-            message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-          });
-        }
-      }
+      // if (lastReport) {
+      //   const diffDays =
+      //     (new Date() - new Date(lastReport.createdAt)) / (1000 * 60 * 60 * 24);
+      //   if (diffDays < 15) {
+      //     const remainingDays = Math.ceil(15 - diffDays);
+      //     return res.status(400).json({
+      //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+      //     });
+      //   }
+      // }
       franchise = await Franchise.findById(req.user.franchiseId);
       if (!franchise) {
         return res.status(404).json({ message: "Franchise not found" });
@@ -2489,28 +2608,88 @@ const generateExperianReport = async (req, res) => {
     await creditReport.save();
 
     // 5. Styled PDF from the bureau JSON
+
+    // 5. Generate PDF using the raw Experian response
     let localPath = null;
+
     try {
-      const gen = await experianCirPdf.generateExperianPdf(parsed, {
-        name: fullName,
-        mobile: mobileNumber,
-        pan,
+      const rawExperianResult =
+        rawData?.data?.verify?.result || rawData?.verify?.result || rawData;
+
+      console.log("[EXPERIAN PDF] Raw response check:", {
+        hasScore: Boolean(rawExperianResult?.SCORE?.FCIREXScore),
+        hasAccounts: Array.isArray(
+          rawExperianResult?.CAIS_Account?.CAIS_Account_DETAILS,
+        ),
+        topLevelKeys: Object.keys(rawExperianResult || {}),
       });
-      if (gen) {
-        const reportsDir = path.join(__dirname, "../reports");
-        if (!fs.existsSync(reportsDir)) {
-          fs.mkdirSync(reportsDir, { recursive: true });
-        }
-        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-        fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-        localPath = `/reports/${filename}`;
-        creditReport.localPath = localPath;
-        creditReport.pdfStatus = "ready";
-        await creditReport.save();
+
+      if (!rawExperianResult?.SCORE) {
+        throw new Error(
+          "Raw Experian result not found. Check response.data nesting.",
+        );
       }
+
+      const pdfBuffer = await generateExperianPdf(
+        rawExperianResult,
+        String(creditReport._id),
+      );
+
+      if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
+        throw new Error(
+          `Invalid PDF output: ${
+            pdfBuffer?.constructor?.name || typeof pdfBuffer
+          }`,
+        );
+      }
+
+      const reportsDir = path.resolve(__dirname, "..", "reports");
+      fs.mkdirSync(reportsDir, { recursive: true });
+
+      const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+
+      const outputPath = path.join(reportsDir, filename);
+
+      fs.writeFileSync(outputPath, pdfBuffer);
+
+      // Verify saved file
+      const stats = fs.statSync(outputPath);
+
+      if (stats.size === 0) {
+        throw new Error("Saved Experian PDF is empty");
+      }
+
+      localPath = `/reports/${filename}`;
+
+      creditReport.localPath = localPath;
+      creditReport.pdfStatus = "ready";
+      await creditReport.save();
+
+      console.log("[EXPERIAN PDF] Generated successfully:", {
+        outputPath,
+        size: stats.size,
+        pdfHeader: pdfBuffer.subarray(0, 5).toString(),
+      });
     } catch (genErr) {
-      console.error("EXPERIAN PDF GENERATE FAILED:", genErr.message);
+      console.error(
+        "[EXPERIAN PDF] Generation failed:",
+        genErr.stack || genErr.message,
+      );
+
+      creditReport.pdfStatus = "failed";
+      await creditReport.save().catch((saveErr) => {
+        console.error("Failed to update PDF status:", saveErr.message);
+      });
     }
+
+    if (!localPath) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to generate Experian report PDF",
+        creditReportId: creditReport._id,
+      });
+    }
+
     if (!localPath) {
       return res.status(500).json({
         message: "Failed to generate Experian report PDF",

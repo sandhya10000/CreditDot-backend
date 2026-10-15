@@ -922,6 +922,71 @@ const sendPackageUpgradeNotification = async (
     );
   }
 };
+const sendFranchiseApprovalEmail = async (user, franchise) => {
+  const email = user?.email || franchise?.email;
+
+  if (!email) {
+    throw new Error("Franchise email address not found");
+  }
+
+  const ownerName = franchise.ownerName || user.name || "Partner";
+
+  const franchiseCode = franchise.franchiseCode;
+
+  if (!franchiseCode) {
+    throw new Error("Franchise ID not generated");
+  }
+
+  const dashboardUrl = `${process.env.FRONTEND_URL}/login`;
+
+  return transporter.sendMail({
+    from: '"Credit Dost Support" <support@creditdost.co.in>',
+    to: email,
+    subject: "Congratulations! Your Credit Dost Franchise Is Approved",
+    text: `
+Hello ${ownerName},
+
+Congratulations! Your Credit Dost franchise has been approved.
+
+Your Franchise ID: ${franchiseCode}
+
+You can now log in to your dashboard:
+${dashboardUrl}
+
+Thank you for partnering with Credit Dost.
+
+Regards,
+Credit Dost Support
+    `,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.7;color:#333;max-width:600px;margin:auto">
+        <h2 style="color:#16794b">Congratulations, ${ownerName}!</h2>
+
+        <p>Your KYC verification has been completed successfully,
+        and your Credit Dost franchise is now approved.</p>
+
+        <div style="background:#f4f7f5;padding:18px;border-radius:8px">
+          <p style="margin:0">Your Franchise ID</p>
+          <h2 style="margin:8px 0;color:#16794b">${franchiseCode}</h2>
+        </div>
+
+        <p>You can now log in to your franchise dashboard.</p>
+
+        <p>
+          <a href="${dashboardUrl}"
+             style="display:inline-block;background:#16794b;color:#fff;
+             padding:12px 20px;text-decoration:none;border-radius:5px">
+            Open Dashboard
+          </a>
+        </p>
+
+        <p>Please keep your Franchise ID safe for future reference.</p>
+
+        <p>Regards,<br/>Credit Dost Support</p>
+      </div>
+    `,
+  });
+};
 
 module.exports = {
   sendJobApplicationEmail,
@@ -952,4 +1017,5 @@ module.exports = {
   sendPackageUpgradeNotification,
   sendCreditRepairFormEmail,
   sendApplyForLoanFormEmail,
+  sendFranchiseApprovalEmail,
 };

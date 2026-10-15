@@ -1,8 +1,11 @@
 const Franchise = require("../models/Franchise");
 const User = require("../models/User");
 const BusinessForm = require("../models/BusinessForm");
+const FranchiseCounter = require("../models/FranchiseCounter");
 const Package = require("../models/Package");
 const Joi = require("joi");
+const { sendFranchiseApprovalEmail } = require("../utils/emailService");
+const generateFranchiseCode = require("../utils/generateFranchiseCode");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -129,32 +132,133 @@ module.exports = {
   getSingleFranchise,
 };
 // Update franchise profile
+// const updateFranchiseProfile = async (req, res) => {
+//   try {
+//     // Validate request body
+//     const { error } = franchiseProfileSchema.validate(req.body);
+//     if (error) {
+//       return res.status(400).json({
+//         message: "Validation error",
+//         details: error.details[0].message,
+//       });
+//     }
+
+//     const franchise = await Franchise.findOne({ userId: req.user.id });
+//     if (!franchise) {
+//       return res.status(404).json({ message: "Franchise not found" });
+//     }
+
+//     // Update franchise
+//     Object.assign(franchise, req.body);
+//     await franchise.save();
+
+//     res.json({
+//       message: "Franchise profile updated successfully",
+//       franchise,
+//     });
+//   } catch (error) {
+//     res.status(500).json({ message: "Server error", error: error.message });
+//   }
+// };
+
+// Apne existing email service se import karein.
+
 const updateFranchiseProfile = async (req, res) => {
   try {
-    // Validate request body
-    const { error } = franchiseProfileSchema.validate(req.body);
+    const { error, value } = franchiseProfileSchema.validate(req.body, {
+      abortEarly: true,
+      stripUnknown: true,
+    });
+
     if (error) {
       return res.status(400).json({
+        success: false,
         message: "Validation error",
         details: error.details[0].message,
       });
     }
 
-    const franchise = await Franchise.findOne({ userId: req.user.id });
+    const franchise = await Franchise.findOne({
+      userId: req.user.id,
+    });
+
     if (!franchise) {
-      return res.status(404).json({ message: "Franchise not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Franchise not found",
+      });
     }
 
-    // Update franchise
-    Object.assign(franchise, req.body);
+    // Prevent partners from changing protected fields.
+    const profileData = { ...value };
+
+    delete profileData.franchiseCode;
+    delete profileData.kycStatus;
+    delete profileData.kycSubmittedAt;
+    delete profileData.kycApprovedAt;
+    delete profileData.kycRejectedAt;
+    delete profileData.kycRejectedReason;
+    delete profileData.isActive;
+    delete profileData.credits;
+    delete profileData.totalCreditsPurchased;
+    delete profileData.assignedPackages;
+
+    Object.assign(franchise, profileData);
+
+    // Confirm that PAN details belong to a successful verification.
+    const panVerified =
+      franchise.panDetails?.success === true &&
+      franchise.panDetails?.data?.status?.toLowerCase() === "valid";
+
+    let newlyApproved = false;
+
+    if (panVerified && franchise.kycStatus !== "approved") {
+      // Generate the franchise ID only after successful PAN verification.
+      if (!franchise.franchiseCode) {
+        franchise.franchiseCode = await generateFranchiseCode();
+      }
+
+      franchise.kycStatus = "approved";
+      franchise.kycApprovedAt = new Date();
+      franchise.isActive = true;
+      newlyApproved = true;
+    } else if (!panVerified && franchise.kycStatus === "pending") {
+      franchise.kycStatus = "submitted";
+      franchise.kycSubmittedAt = new Date();
+    }
+
     await franchise.save();
 
-    res.json({
-      message: "Franchise profile updated successfully",
+    // Send approval email after saving the approval.
+    if (newlyApproved) {
+      try {
+        const user = await User.findById(franchise.userId);
+
+        if (user) {
+          await sendFranchiseApprovalEmail(user, franchise);
+        } else {
+          console.error("Approval email skipped: User not found.");
+        }
+      } catch (emailError) {
+        console.error("Franchise approval email failed:", emailError.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: newlyApproved
+        ? "PAN verified and franchise approved successfully."
+        : "Franchise profile updated successfully.",
       franchise,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Update franchise profile error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -839,9 +943,9 @@ const exportFranchisesCSV = async (req, res) => {
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },
-        { ownerName:    { $regex: search, $options: "i" } },
-        { email:        { $regex: search, $options: "i" } },
-        { phone:        { $regex: search, $options: "i" } },
+        { ownerName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
       ];
     }
     if (kycStatus) {
@@ -853,7 +957,7 @@ const exportFranchisesCSV = async (req, res) => {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="franchise_export_${timestamp}.csv"`
+      `attachment; filename="franchise_export_${timestamp}.csv"`,
     );
     // Flush headers immediately so the browser starts the download
     res.flushHeaders?.();

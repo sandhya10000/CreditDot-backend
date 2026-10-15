@@ -19,6 +19,7 @@ const franchiseSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
       trim: true,
+      default: null,
     },
     ownerName: {
       type: String,

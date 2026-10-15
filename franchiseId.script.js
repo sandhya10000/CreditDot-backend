@@ -1,13 +1,12 @@
 const mongoose = require("mongoose");
 require("dotenv").config();
 
-// .env se MongoDB URI lega
 const MONGO_URI = process.env.MONGODB_URI;
 
 async function updateFranchiseCodes() {
   try {
     if (!MONGO_URI) {
-      throw new Error("MONGO_URI is not defined in .env");
+      throw new Error("MONGODB_URI is not defined in .env");
     }
 
     await mongoose.connect(MONGO_URI);
@@ -18,28 +17,27 @@ async function updateFranchiseCodes() {
     const collection = db.collection("franchises");
 
     // ============================================================
-    // STEP 1: Find all old FI-XXX partner codes
+    // STEP 1: Find FP001, FP002, FP003... codes
     // ============================================================
 
     const partners = await collection
       .find({
         franchiseCode: {
-          $regex: /^FI-\d+$/,
-          $options: "i",
+          $regex: /^FP\d+$/i,
         },
       })
       .sort({ franchiseCode: 1 })
       .toArray();
 
-    console.log(`Found ${partners.length} old FI codes`);
+    console.log(`Found ${partners.length} FP codes`);
 
     if (partners.length === 0) {
-      console.log("No FI-XXX franchise codes found.");
+      console.log("No FP001, FP002... franchise codes found.");
       return;
     }
 
     // ============================================================
-    // STEP 2: Show what will be changed
+    // STEP 2: Prepare updates
     // ============================================================
 
     console.log("\n=================================");
@@ -51,7 +49,7 @@ async function updateFranchiseCodes() {
     for (const partner of partners) {
       const oldCode = partner.franchiseCode;
 
-      // FI-001 -> 001
+      // FP001 -> 001
       const numberPart = oldCode.match(/\d+$/)?.[0];
 
       if (!numberPart) {
@@ -59,8 +57,8 @@ async function updateFranchiseCodes() {
         continue;
       }
 
-      // FI-001 -> FP001
-      const newCode = `FP${numberPart}`;
+      // FP001 -> FP-001
+      const newCode = `FP-${numberPart}`;
 
       updates.push({
         id: partner._id,
@@ -76,7 +74,7 @@ async function updateFranchiseCodes() {
     console.log("=================================\n");
 
     // ============================================================
-    // STEP 3: Check if any new FP codes already exist
+    // STEP 3: Check duplicate FP-XXX codes
     // ============================================================
 
     for (const item of updates) {
@@ -93,7 +91,7 @@ async function updateFranchiseCodes() {
     }
 
     // ============================================================
-    // STEP 4: Update all partners
+    // STEP 4: Update database
     // ============================================================
 
     console.log("Starting database update...\n");
