@@ -376,11 +376,14 @@ const experianReportTemplate = (result) => {
             : [],
         )
         .map((address) => {
-          // Founder rule: show only City / State / PIN — never street lines.
           const addressParts = [
+            address?.First_Line_Of_Address_non_normalized,
+            address?.Second_Line_Of_Address_non_normalized,
+            address?.Third_Line_Of_Address_non_normalized,
             address?.City_non_normalized,
             address?.State_non_normalized,
             address?.ZIP_Postal_Code_non_normalized,
+            address?.CountryCode_non_normalized,
           ]
             .filter(
               (value) =>
@@ -393,7 +396,7 @@ const experianReportTemplate = (result) => {
           const fullAddress = addressParts.join(", ");
 
           return [
-            fullAddress,
+            fullAddress.toLowerCase(),
             {
               ...address,
               fullAddress,
@@ -1456,6 +1459,103 @@ tbody tr:last-child td {
   page-break-before: always;
 }
 
+
+/* Compact holder addresses */
+
+.holder-address-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.holder-address-card {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #dfe7f1;
+  border-radius: 8px;
+  background: #fff;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.address-card-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.address-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: #edf5ff;
+  color: #123b66;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.address-city {
+  color: #123b66;
+  font-size: 10px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.address-full {
+  padding: 7px 8px;
+  margin-bottom: 7px;
+  background: #f6f9fd;
+  border-radius: 5px;
+}
+
+.address-label {
+  display: block;
+  color: #8796aa;
+  font-size: 7px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 3px;
+}
+
+.address-full-value {
+  color: #172033;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.address-card-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.address-detail {
+  min-width: 0;
+}
+
+.address-value {
+  display: block;
+  color: #172033;
+  font-size: 8.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  .holder-address-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+
 </style>
 
 </head>
@@ -1688,6 +1788,122 @@ tbody tr:last-child td {
     </div>
 
   </div>
+
+</div>
+
+<!-- ======================================================
+     HOLDER ADDRESSES - COMPACT GRID WITH FULL ADDRESS
+====================================================== -->
+
+<div class="section holder-address-section">
+
+  <div class="section-title">
+    Holder Addresses
+    <span class="address-count">
+      ${holderAddresses.length}
+    </span>
+  </div>
+
+  ${
+    holderAddresses.length
+      ? `
+        <div class="holder-address-grid">
+
+          ${holderAddresses
+            .map((address, index) => {
+              const fullAddress = [
+                address?.First_Line_Of_Address_non_normalized,
+                address?.Second_Line_Of_Address_non_normalized,
+                address?.Third_Line_Of_Address_non_normalized,
+                address?.City_non_normalized,
+                address?.State_non_normalized,
+                address?.ZIP_Postal_Code_non_normalized,
+                address?.CountryCode_non_normalized,
+              ]
+                .filter(
+                  (value) =>
+                    value !== null &&
+                    value !== undefined &&
+                    String(value).trim() !== "",
+                )
+                .map((value) => String(value).trim())
+                .join(", ");
+
+              return `
+                <div class="holder-address-card">
+
+                  <div class="address-card-header">
+                    <span class="address-index">
+                      ${index + 1}
+                    </span>
+
+                    <span class="address-city">
+                      ${escapeHtml(address?.City_non_normalized || "Address")}
+                    </span>
+                  </div>
+
+                  <!-- Full Address -->
+                  <div class="address-full">
+                    <span class="address-label">
+                      Full Address
+                    </span>
+
+                    <div class="address-full-value">
+                      ${escapeHtml(fullAddress || "-")}
+                    </div>
+                  </div>
+
+                  <div class="address-card-details">
+
+                    <div class="address-detail">
+                      <span class="address-label">PIN</span>
+                      <span class="address-value">
+                        ${escapeHtml(
+                          address?.ZIP_Postal_Code_non_normalized ?? "-",
+                        )}
+                      </span>
+                    </div>
+
+                    <div class="address-detail">
+                      <span class="address-label">State Code</span>
+                      <span class="address-value">
+                        ${escapeHtml(address?.State_non_normalized ?? "-")}
+                      </span>
+                    </div>
+
+                    <div class="address-detail">
+                      <span class="address-label">Country Code</span>
+                      <span class="address-value">
+                        ${escapeHtml(
+                          address?.CountryCode_non_normalized || "-",
+                        )}
+                      </span>
+                    </div>
+
+                    <div class="address-detail">
+                      <span class="address-label">Indicator</span>
+                      <span class="address-value">
+                        ${escapeHtml(
+                          address?.Address_indicator_non_normalized ?? "-",
+                        )}
+                      </span>
+                    </div>
+
+                  </div>
+
+                </div>
+              `;
+            })
+            .join("")}
+
+        </div>
+      `
+      : `
+        <div class="empty">
+          No address details found.
+        </div>
+      `
+  }
 
 </div>
 
@@ -2282,218 +2498,10 @@ ${capsApplications
 
 </div>
 
-<!-- ======================================================
-     HOLDER ADDRESSES
-====================================================== -->
 
-<div class="section">
 
-  <div class="section-title">
-    Holder Addresses
-  </div>
 
-  ${
-    holderAddresses.length
-      ? `
-        <div style="
-          width:100%;
-          border:1px solid #d9dee7;
-          border-radius:6px;
-          overflow:hidden;
-          margin-top:10px;
-        ">
 
-          ${holderAddresses
-            .map(
-              (address, index) => `
-                <div style="
-                  width:100%;
-                  border-bottom:${
-                    index === holderAddresses.length - 1
-                      ? "none"
-                      : "1px solid #e1e5eb"
-                  };
-                  padding:12px 14px;
-                  box-sizing:border-box;
-                ">
-
-                  <!-- Address Row -->
-                  <div style="
-                    display:flex;
-                    width:100%;
-                    align-items:flex-start;
-                  ">
-
-                    <!-- Sr No -->
-                    <div style="
-                      width:45px;
-                      min-width:45px;
-                      font-size:10px;
-                      color:#666;
-                      font-weight:600;
-                    ">
-                      ${index + 1}
-                    </div>
-
-                    <!-- City -->
-                    <div style="
-                      flex:1;
-                      padding-right:15px;
-                    ">
-
-                    <div style="
-  font-size:7.5px;
-  color:#94A3B8;
-  text-transform:uppercase;
-  margin-bottom:4px;
-  font-weight:700;
-  letter-spacing:0.4px;
-">
-  City
-</div>
-
-                      <div style="
-  font-size:10px;
-  color:#172033;
-  line-height:1.4;
-  font-weight:800;
-  word-break:break-word;
-">
-                        ${escapeHtml(address?.City_non_normalized ?? "-")}
-                      </div>
-
-                    </div>
-
-                    <!-- PIN -->
-                    <div style="
-                      width:80px;
-                      min-width:80px;
-                      padding-left:10px;
-                    ">
-
-                      <div style="
-  font-size:10px;
-  color:#172033;
-  line-height:1.4;
-  font-weight:800;
-  word-break:break-word;
-">
-                        PIN Code
-                      </div>
-
-                      <div style="
-                        font-size:11px;
-                        color:#222;
-                        font-weight:500;
-                      ">
-                        ${escapeHtml(
-                          address?.ZIP_Postal_Code_non_normalized ?? "-",
-                        )}
-                      </div>
-
-                    </div>
-
-                    <!-- State -->
-                    <div style="
-                      width:90px;
-                      min-width:90px;
-                      padding-left:10px;
-                    ">
-<div style="
-  font-size:10px;
-  color:#172033;
-  line-height:1.4;
-  font-weight:800;
-  word-break:break-word;
-">
-                        State
-                      </div>
-
-                      <div style="
-                        font-size:11px;
-                        color:#222;
-                        font-weight:500;
-                      ">
-                        ${escapeHtml(address?.State_non_normalized ?? "-")}
-                      </div>
-
-                    </div>
-
-                    <!-- Country -->
-                    <div style="
-                      width:70px;
-                      min-width:70px;
-                      padding-left:10px;
-                    ">
-
-                    <div style="
-  font-size:10px;
-  color:#172033;
-  line-height:1.4;
-  font-weight:800;
-  word-break:break-word;
-">
-                        Country
-                      </div>
-
-                      <div style="
-                        font-size:11px;
-                        color:#222;
-                        font-weight:500;
-                      ">
-                        ${escapeHtml(
-                          address?.CountryCode_non_normalized || "-",
-                        )}
-                      </div>
-
-                    </div>
-
-                    <!-- Indicator -->
-                    <div style="
-                      width:80px;
-                      min-width:80px;
-                      padding-left:10px;
-                    ">
-
-                      <div style="
-  font-size:10px;
-  color:#172033;
-  line-height:1.4;
-  font-weight:800;
-  word-break:break-word;
-">
-                        Indicator
-                      </div>
-
-                      <div style="
-                        font-size:11px;
-                        color:#222;
-                        font-weight:500;
-                      ">
-                        ${escapeHtml(
-                          address?.Address_indicator_non_normalized ?? "-",
-                        )}
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                </div>
-              `,
-            )
-            .join("")}
-
-        </div>
-      `
-      : `
-        <div class="empty">
-          No address details found.
-        </div>
-      `
-  }
-
-</div>
 
 
 <!-- ======================================================
