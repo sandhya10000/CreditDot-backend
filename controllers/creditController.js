@@ -1286,28 +1286,86 @@ const checkCreditScorePublic = async (req, res) => {
 
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
-    if (response.__indiconnect && !creditReport.localPath) {
+
+    /**
+ * Generate and save Experian PDF
+ 
+ */
+
+    if (
+      response?.__indiconnectBureau === "experian" &&
+      !creditReport.localPath
+    ) {
       try {
-        const gen = await generateExperianPdf(response.__indiconnect, {
-          name,
-          mobile,
-          pan,
-        });
-        if (gen) {
-          const reportsDir = path.join(__dirname, "../reports");
-          if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-          }
-          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-          creditReport.localPath = `/reports/${filename}`;
-          await creditReport.save();
-          console.log(
-            `Experian public styled PDF generated: ${filename} (score ${gen.model.score})`,
+        // The template expects the raw Experian report fields.
+        // Prefer the original API response, not the normalized parsed score.
+        const rawExperianResponse = response?.data;
+
+        if (!rawExperianResponse || typeof rawExperianResponse !== "object") {
+          throw new Error(
+            "Raw Experian response is missing. Check response.data.",
           );
         }
+
+        // Log only field names; do not log sensitive credit-report data.
+        console.log("[EXPERIAN PDF] Response keys:", {
+          responseKeys: Object.keys(response || {}),
+          rawKeys: Object.keys(rawExperianResponse || {}),
+          parsedKeys: Object.keys(response.__indiconnect || {}),
+        });
+
+        const pdfBuffer = await generateExperianPdf(
+          rawExperianResponse,
+          String(creditReport._id),
+        );
+
+        if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
+          throw new Error("PDF generator did not return a non-empty Buffer.");
+        }
+
+        if (pdfBuffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
+          throw new Error("Generated output is not a valid PDF.");
+        }
+
+        const reportsDir = path.resolve(__dirname, "../reports");
+        fs.mkdirSync(reportsDir, { recursive: true });
+
+        const filename = `experian_${creditReport._id}.pdf`;
+        const absolutePath = path.join(reportsDir, filename);
+
+        fs.writeFileSync(absolutePath, pdfBuffer);
+
+        // Verify the file exists and has content.
+        const stats = fs.statSync(absolutePath);
+
+        if (!stats.isFile() || stats.size === 0) {
+          throw new Error("Generated PDF file is missing or empty.");
+        }
+
+        creditReport.localPath = `/reports/${filename}`;
+        creditReport.pdfStatus = "ready";
+
+        await creditReport.save();
+
+        console.log("[EXPERIAN PDF] Saved successfully:", {
+          reportId: String(creditReport._id),
+          size: stats.size,
+          localPath: creditReport.localPath,
+        });
       } catch (genErr) {
-        console.error("EXPERIAN PDF GENERATE FAILED:", genErr.message);
+        console.error(
+          "[EXPERIAN PDF] Generation failed:",
+          genErr.stack || genErr.message,
+        );
+
+        creditReport.pdfStatus = "failed";
+
+        await creditReport.save().catch((saveErr) => {
+          console.error(
+            "[EXPERIAN PDF] Status update failed:",
+            saveErr.message,
+          );
+        });
       }
     }
 
