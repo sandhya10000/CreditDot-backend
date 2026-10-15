@@ -29,6 +29,7 @@ const {
   approveRegistration,
   rejectRegistration,
   deleteFranchise,
+  restoreFranchise,
   updateFranchiseCertificateName,
   getPerformanceOverview,
   // Credit recharge functions
@@ -244,9 +245,14 @@ router.put(
 );
 
 // @route   DELETE /api/admin/franchises/:id
-// @desc    Delete franchise
+// @desc    Soft-delete franchise (data preserved)
 // @access  Private/Admin
 router.delete("/franchises/:id", auth, rbac("admin"), deleteFranchise);
+
+// @route   PUT /api/admin/franchises/:id/restore
+// @desc    Restore soft-deleted franchise
+// @access  Private/Admin
+router.put("/franchises/:id/restore", auth, rbac("admin"), restoreFranchise);
 
 // @route   PUT /api/admin/franchises/certificate-name
 // @desc    Update franchise certificate name

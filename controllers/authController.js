@@ -63,9 +63,15 @@ const register = async (req, res) => {
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ message: "User already exists with this email" });
+      // Email held by a soft-deleted account — free it so the email can register again
+      if (existingUser.isDeleted) {
+        existingUser.email = `deleted_${Date.now()}_${existingUser.email.toLowerCase()}`;
+        await existingUser.save();
+      } else {
+        return res
+          .status(400)
+          .json({ message: "User already exists with this email" });
+      }
     }
 
     // Create user with a temporary password if not provided

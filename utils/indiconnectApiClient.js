@@ -182,13 +182,14 @@ const getEndpoint = (specific, fallback = "/idverifygr/verification") => {
   return ep.startsWith("/") ? ep : `/${ep}`;
 };
 
-// Provider code resolution per bureau (explicit code first, then siblings).
+// Provider code resolution per bureau (STRICT: never borrow another
+// bureau's code — sending e.g. an Experian code with a CIBIL documentType
+// makes the gateway return 400 "Unsupported document type").
+// Order: exact bureau code -> legacy generic -> "" (caller fails fast).
 const getProviderCodeFor = (bureau) => {
   if (bureau === "crif") {
     return (
       process.env.INDICONNECT_CRIF_PROVIDER_CODE ||
-      process.env.INDICONNECT_EXPERIAN_PROVIDER_CODE ||
-      process.env.INDICONNECT_CIBIL_PROVIDER_CODE ||
       process.env.INDICONNECT_PROVIDERCODE ||
       ""
     );
@@ -196,8 +197,6 @@ const getProviderCodeFor = (bureau) => {
   if (bureau === "experian") {
     return (
       process.env.INDICONNECT_EXPERIAN_PROVIDER_CODE ||
-      process.env.INDICONNECT_CRIF_PROVIDER_CODE ||
-      process.env.INDICONNECT_CIBIL_PROVIDER_CODE ||
       process.env.INDICONNECT_PROVIDERCODE ||
       ""
     );
@@ -205,14 +204,25 @@ const getProviderCodeFor = (bureau) => {
   return getCibilProviderCode();
 };
 
-// Provider code resolution for CIBIL:
-// explicit CIBIL code -> experian code -> crif code -> generic -> docs sample
+// Provider code resolution for CIBIL (strict — see above).
 const getCibilProviderCode = () =>
   process.env.INDICONNECT_CIBIL_PROVIDER_CODE ||
-  process.env.INDICONNECT_EXPERIAN_PROVIDER_CODE ||
-  process.env.INDICONNECT_CRIF_PROVIDER_CODE ||
   process.env.INDICONNECT_PROVIDERCODE ||
   "";
+
+// documentType is gateway-validated against the providercode entitlement.
+// Keep defaults per current integration, but allow override via env/DB
+// without a redeploy in case IndiConnect renames a type.
+const getDocumentTypeFor = (bureau) => {
+  if (bureau === "crif")
+    return process.env.INDICONNECT_CRIF_DOCUMENT_TYPE || "bureau-verification-crif";
+  if (bureau === "experian")
+    return (
+      process.env.INDICONNECT_EXPERIAN_DOCUMENT_TYPE ||
+      "bureau-verification-v3-experian"
+    );
+  return process.env.INDICONNECT_CIBIL_DOCUMENT_TYPE || "bureau-verification-cibil";
+};
 
 const getAuthHeader = () => {
   // Docs: Authorization: x-api-access indc_live_...:ac_live_...
@@ -238,11 +248,11 @@ const buildHeaders = (providerCode) => {
   return headers;
 };
 
-const buildCibilPayload = ({ pan, name, mobile }) => ({
+const buildCibilPayload = ({ pan, name, mobile }, opts = {}) => ({
   query: CIBIL_QUERY,
   variables: {
     input: {
-      documentType: "bureau-verification-cibil",
+      documentType: opts.documentType || getDocumentTypeFor("cibil"),
       pan: (pan || "").toUpperCase(),
       name: name || "",
       mobile: mobile || "",
@@ -250,11 +260,11 @@ const buildCibilPayload = ({ pan, name, mobile }) => ({
   },
 });
 
-const buildCrifPayload = ({ pan, name, mobile }) => ({
+const buildCrifPayload = ({ pan, name, mobile }, opts = {}) => ({
   query: CRIF_QUERY,
   variables: {
     input: {
-      documentType: "bureau-verification-crif",
+      documentType: opts.documentType || getDocumentTypeFor("crif"),
       name: name || "",
       mobile: mobile || "",
       ...(pan ? { pan: String(pan).toUpperCase() } : {}),
@@ -262,11 +272,11 @@ const buildCrifPayload = ({ pan, name, mobile }) => ({
   },
 });
 
-const buildExperianPayload = ({ pan, name, mobile }) => ({
+const buildExperianPayload = ({ pan, name, mobile }, opts = {}) => ({
   query: EXPERIAN_QUERY,
   variables: {
     input: {
-      documentType: "bureau-verification-v3-experian",
+      documentType: opts.documentType || getDocumentTypeFor("experian"),
       pan: (pan || "").toUpperCase(),
       ...(name ? { name } : {}),
       ...(mobile ? { mobile } : {}),
@@ -477,16 +487,54 @@ const parseCibilResponse = (resData) => {
   };
 };
 
-const isHtmlReportUrl = (url) =>
-  typeof url === "string" &&
-  (url.includes("myscore.cibil.com") || url.includes("webtoken"));
+const isHtmlReportUrl = (url) => {
+  if (typeof url !== "string") return false;
+
+  try {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const pathname = parsedUrl.pathname.toLowerCase();
+
+    return (
+      hostname === "myscore.cibil.com" ||
+      hostname.includes("webtoken") ||
+      pathname.endsWith(".html") ||
+      pathname.endsWith(".htm")
+    );
+  } catch {
+    return false;
+  }
+};
 
 // Returns a failure message when an IndiConnect bureau result is unusable
 // (transport-level error, or a null/empty result envelope like the
 // "ok:true + result:null" shape). Returns null when there is data worth
 // saving (including bureau-level no-record outcomes, which still carry
 // txn_id + message). Prevents saving empty reports and deducting credits.
-const indiconnectFailed = (parsed) => {
+const indiconnectFailed = (parsed, bureau = "") => {
+  if (!parsed) return "empty provider response";
+  // Gateway-level config mismatch (wrong providercode for this documentType).
+  // Surface an admin-actionable message instead of the raw gateway text.
+  const rawMsg =
+    parsed?.error?.message || parsed?.bureauMessage || parsed?.message || "";
+  if (/unsupported document type/i.test(rawMsg)) {
+    const docHint =
+      bureau === "crif"
+        ? process.env.INDICONNECT_CRIF_DOCUMENT_TYPE || "bureau-verification-crif"
+        : bureau === "experian"
+          ? process.env.INDICONNECT_EXPERIAN_DOCUMENT_TYPE ||
+            "bureau-verification-v3-experian"
+          : process.env.INDICONNECT_CIBIL_DOCUMENT_TYPE ||
+            "bureau-verification-cibil";
+    const bureauLabel = (bureau || "cibil").toUpperCase();
+    return (
+      `IndiConnect rejected documentType "${docHint}" for this provider code ` +
+      `(Unsupported document type). The ${bureauLabel} provider code is missing, ` +
+      `wrong, or not entitled for this API — check Admin Settings ` +
+      `indiconnect_${(bureau || "cibil")}_provider_code (and INDICONNECT_*_DOCUMENT_TYPE override). ` +
+      `No credit deducted.`
+    );
+  }
   if (!parsed) return "empty provider response";
   if (!parsed.hasResult) {
     return (
@@ -528,6 +576,7 @@ module.exports = {
   getEndpoint,
   getCibilProviderCode,
   getProviderCodeFor,
+  getDocumentTypeFor,
   buildHeaders,
   buildCibilPayload,
   buildCrifPayload,

@@ -1,3 +1,4 @@
+const { isValidPdf } = require("../utils/pdfValidation");
 const axios = require("axios");
 const CreditReport = require("../models/CreditReport");
 const Setting = require("../models/Setting");
@@ -12,8 +13,8 @@ const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
-const generateExperianPdf = require("../utils/generateExperianPdf");
-const puppeteer = require("puppeteer");
+const experianCirPdf = require("../utils/experianCirPdf");
+// const puppeteer = require("puppeteer");
 
 // Validation schema for credit check
 const creditCheckSchema = Joi.object({
@@ -53,6 +54,20 @@ const creditCheckSchema = Joi.object({
     .default("indiconnect")
     .messages({
       "any.only": "cibilApiType must be indiconnect, digi or surepass",
+    }),
+  crifApiType: Joi.string()
+    .valid("indiconnect", "surepass")
+    .optional()
+    .default("indiconnect")
+    .messages({
+      "any.only": "crifApiType must be indiconnect or surepass",
+    }),
+  experianApiType: Joi.string()
+    .valid("indiconnect", "surepass")
+    .optional()
+    .default("indiconnect")
+    .messages({
+      "any.only": "experianApiType must be indiconnect or surepass",
     }),
   // Fields for all bureaus
   pan: Joi.string().optional(),
@@ -127,25 +142,10 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
   };
   const providerKeys =
     bureau === "crif"
-      ? [
-          "INDICONNECT_CRIF_PROVIDER_CODE",
-          "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-          "INDICONNECT_CIBIL_PROVIDER_CODE",
-          "INDICONNECT_PROVIDERCODE",
-        ]
+      ? ["INDICONNECT_CRIF_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
       : bureau === "experian"
-        ? [
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ]
-        : [
-            "INDICONNECT_CIBIL_PROVIDER_CODE",
-            "INDICONNECT_EXPERIAN_PROVIDER_CODE",
-            "INDICONNECT_CRIF_PROVIDER_CODE",
-            "INDICONNECT_PROVIDERCODE",
-          ];
+        ? ["INDICONNECT_EXPERIAN_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
+        : ["INDICONNECT_CIBIL_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"];
   const endpointKeys =
     bureau === "crif"
       ? ["INDICONNECT_CRIF_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"]
@@ -299,7 +299,7 @@ const runExperianSoftPull = async ({
     fail(500, apiError.message || "Experian check failed");
   }
   const parsed = indiconnectClient.parseExperianSpResponse(response.data);
-  const failReason = indiconnectClient.indiconnectFailed(parsed);
+  const failReason = indiconnectClient.indiconnectFailed(parsed, "experian");
   if (failReason) {
     fail(502, failReason, {
       error: parsed.error || null,
@@ -528,23 +528,22 @@ const checkCreditScore = async (req, res) => {
           response.data,
         );
         response.__indiconnectBureau = "cibil";
-
-        const failReason = indiconnectClient.indiconnectFailed(
-          response.__indiconnect,
-        );
-
-        if (failReason) {
-          return res.status(502).json({
-            message: failReason,
-            error: response.__indiconnect?.error || null,
-            txnId: response.__indiconnect?.txn_id || null,
-          });
+        {
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+          );
+          if (failReason) {
+            return res.status(502).json({
+              message: failReason,
+              error: response.__indiconnect.error || null,
+              txnId: response.__indiconnect.txn_id || null,
+            });
+          }
         }
-      } else if (normalizedBureau === "crif") {
-        // CRIF via IndiConnect
-        const cfg = await getIndiconnectConfig("crif");
-
-        if (!cfg?.serviceKey || !cfg?.auth || !cfg?.providerCode) {
+      } else if (bureau === "crif") {
+        // ---- CRIF via IndiConnect (full replace of Surepass) ----
+        const cfg = await getIndiconnectConfig(bureau);
+        if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
           return res.status(500).json({
             message:
               "IndiConnect CRIF credentials not configured (service-key / auth / provider code)",
@@ -572,37 +571,31 @@ const checkCreditScore = async (req, res) => {
           },
           timeout: 60000,
         });
-
-        response.__indiconnect = indiconnectClient.parseCrifResponse(
-          response.data,
-        );
-        response.__indiconnectBureau = "crif";
-
-        const failReason = indiconnectClient.indiconnectFailed(
-          response.__indiconnect,
-        );
-
-        if (failReason) {
-          return res.status(502).json({
-            message: failReason,
-            error: response.__indiconnect?.error || null,
-            txnId: response.__indiconnect?.txn_id || null,
-          });
+        const parse = indiconnectClient.parseCrifResponse;
+        response.__indiconnect = parse(response.data);
+        response.__indiconnectBureau = bureau;
+        {
+          const failReason = indiconnectClient.indiconnectFailed(
+            response.__indiconnect,
+          );
+          if (failReason) {
+            return res.status(502).json({
+              message: failReason,
+              error: response.__indiconnect.error || null,
+              txnId: response.__indiconnect.txn_id || null,
+            });
+          }
         }
-
-        console.log("IndiConnect CRIF:", {
-          score: response.__indiconnect?.score ?? null,
-          reportUrl: Boolean(response.__indiconnect?.reportUrl),
-          txnId: response.__indiconnect?.txn_id || null,
-        });
-      } else if (normalizedBureau === "experian") {
-        // Experian Soft-Pull via IndiConnect
-        const missingFields = [];
-
-        if (!pincode) missingFields.push("pincode");
-        if (!dob) missingFields.push("dob");
-
-        if (missingFields.length) {
+        console.log(
+          `IndiConnect ${bureau.toUpperCase()}: score=${response.__indiconnect.score ?? "null"} pdf=${response.__indiconnect.reportUrl ? "yes" : "no"} bureau=${response.__indiconnect.bureauStatus}/${response.__indiconnect.bureauMessage} txn=${response.__indiconnect.txn_id}`,
+        );
+      } else if (bureau === "experian") {
+        // ---- Experian Soft-Pull via IndiConnect ----
+        const { pincode } = req.body;
+        const missing = [];
+        if (!pincode) missing.push("pincode");
+        if (!dob) missing.push("dob");
+        if (missing.length) {
           return res.status(400).json({
             message: "Missing required fields for Experian",
             missingFields,
@@ -849,7 +842,14 @@ const checkCreditScore = async (req, res) => {
         );
       });
 
-    // 8. Generate Experian PDF from raw bureau response
+    // Deduct credit from franchise
+    if (req.user.role !== "admin" && franchise) {
+      franchise.credits -= 1;
+      await franchise.save();
+    }
+
+    // Experian Soft-Pull: render our styled PDF from the bureau JSON
+    // (the bureau returns Excel data, not a PDF link).
     if (
       indiconnectBureau === "experian" &&
       response?.data &&
@@ -912,39 +912,27 @@ const checkCreditScore = async (req, res) => {
           header,
         });
       } catch (genErr) {
-        console.error(
-          "[EXPERIAN PDF] Generation failed:",
-          genErr.stack || genErr.message,
-        );
-
-        creditReport.pdfStatus = "failed";
-        await creditReport.save().catch((saveErr) => {
-          console.error(
-            "[EXPERIAN PDF] Status update failed:",
-            saveErr.message,
-          );
-        });
+        console.error("EXPERIAN PDF GENERATE FAILED:", genErr.message);
       }
     }
 
-    // 9. Download direct PDF reports locally.
-    // Experian is excluded because its PDF is generated above.
+    // If we have a report URL, download and save the PDF locally.
+    // Direct PDF links (Surepass + IndiConnect) download inline;
+    // IndiConnect htmlUrl-only rows use the background renderer below.
     if (
       reportUrl &&
       !creditReport.localPath &&
-      indiconnectBureau !== "experian" &&
       (!isIndiconnectBureau || !indiconnectClient.isHtmlReportUrl(reportUrl))
     ) {
-      let localFilePath = null;
-
       try {
-        const reportsDir = path.resolve(__dirname, "..", "reports");
+        const reportsDir = path.join(__dirname, "../reports");
 
-        fs.mkdirSync(reportsDir, { recursive: true });
+        if (!fs.existsSync(reportsDir)) {
+          fs.mkdirSync(reportsDir, { recursive: true });
+        }
 
         const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-
-        localFilePath = path.join(reportsDir, filename);
+        const localFilePath = path.join(reportsDir, filename);
 
         const pdfResponse = await axios({
           method: "GET",
@@ -956,54 +944,23 @@ const checkCreditScore = async (req, res) => {
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           },
         });
-
-        if (!pdfResponse.data || typeof pdfResponse.data.pipe !== "function") {
-          throw new Error(
-            "Credit bureau report URL did not return a readable stream",
-          );
-        }
-
         const writer = fs.createWriteStream(localFilePath);
 
-        await new Promise((resolve, reject) => {
-          pdfResponse.data.on("error", reject);
-          writer.on("error", reject);
-          writer.on("finish", resolve);
+        pdfResponse.data.pipe(writer);
 
-          pdfResponse.data.pipe(writer);
+        await new Promise((resolve, reject) => {
+          writer.on("finish", resolve);
+          writer.on("error", reject);
         });
 
-        const stats = fs.statSync(localFilePath);
-
-        if (stats.size === 0) {
-          throw new Error("Downloaded report PDF is empty");
-        }
-
         creditReport.localPath = `/reports/${filename}`;
-
-        if (isIndiconnectBureau) {
-          creditReport.pdfStatus = "ready";
-        }
-
+        if (isIndiconnectBureau) creditReport.pdfStatus = "ready";
         await creditReport.save();
       } catch (downloadError) {
-        console.error("[PDF DOWNLOAD ERROR]:", downloadError.message);
-
-        // Remove incomplete files if a download failed
-        if (localFilePath && fs.existsSync(localFilePath)) {
-          try {
-            fs.unlinkSync(localFilePath);
-          } catch (unlinkError) {
-            console.error(
-              "Failed to remove incomplete PDF:",
-              unlinkError.message,
-            );
-          }
-        }
+        console.error("PDF DOWNLOAD ERROR:", downloadError.message);
       }
     }
 
-    // 10. Build final response
     const noCibilRecord =
       isIndiconnectCibil &&
       (response.__indiconnect?.bureauStatus === 2 ||
@@ -1033,13 +990,13 @@ const checkCreditScore = async (req, res) => {
       remainingCredits: !isAdmin && franchise ? franchise.credits : null,
     };
 
-    // Respond before starting CIBIL background rendering
-    res.status(200).json(responsePayload);
-
-    // 11. Background CIBIL HTML report rendering
+    // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
+    // (non-blocking, link-only fallback on failure). Runs after responding.
+    // Rows with a direct PDF link were already downloaded inline above.
     if (
       isIndiconnectCibil &&
       reportUrl &&
+      !creditReport.localPath &&
       indiconnectClient.isHtmlReportUrl(reportUrl)
     ) {
       Promise.resolve()
@@ -1865,6 +1822,8 @@ const checkCreditScoreV2 = async (req, res) => {
       mobile,
       bureau = "cibil",
       cibilApiType = "indiconnect",
+      crifApiType = "indiconnect",
+      experianApiType = "indiconnect",
       pan,
     } = req.body;
 
@@ -2073,9 +2032,27 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // =========================
-    // CRIF -> INDICONNECT (full replace of Surepass)
+    // CRIF -> INDICONNECT (default) or SUREPASS (picker)
     // =========================
-    else if (bureau === "crif") {
+    else if (bureau === "crif" && crifApiType === "surepass") {
+      if (!surepassApiKey) {
+        return res.status(500).json({
+          message: "Surepass API key not configured",
+        });
+      }
+      const bureauConfig = getBureauConfig("crif");
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+      console.log("Surepass V2 CRIF response received");
+    } else if (bureau === "crif") {
       const cfg = await getIndiconnectConfig(bureau);
       if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
         return res.status(500).json({
@@ -2122,9 +2099,29 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // =========================
-    // EXPERIAN -> SOFT-PULL (full replace of Surepass)
+    // EXPERIAN -> SOFT-PULL (default) or SUREPASS (picker)
     // =========================
-    else if (bureau === "experian") {
+    else if (bureau === "experian" && experianApiType === "surepass") {
+      if (!surepassApiKey) {
+        return res.status(500).json({
+          message: "Surepass API key not configured",
+        });
+      }
+      // Surepass Experian needs only name/mobile/pan — no pincode/dob,
+      // no two-word-name rule (unlike the IndiConnect Soft-Pull path).
+      const bureauConfig = getBureauConfig("experian");
+      const requestData = bureauConfig.formatData({
+        name,
+        mobile,
+        pan,
+      });
+      response = await surepassClient.makeCreditCheckRequest(
+        surepassApiKey,
+        bureauConfig.endpoint,
+        requestData,
+      );
+      console.log("Surepass V2 Experian response received");
+    } else if (bureau === "experian") {
       const { dob: v2dob, pincode: v2pincode } = req.body;
       const missing = [];
       if (!v2pincode) missing.push("pincode");
@@ -2332,20 +2329,18 @@ const checkCreditScoreV2 = async (req, res) => {
       !creditReport.localPath &&
       (!isV2IndiconnectCibil || !indiconnectClient.isHtmlReportUrl(reportUrl))
     ) {
+      let localFilePath;
+
       try {
-        // CREATE REPORTS FOLDER
         const reportsDir = path.join(__dirname, "../reports");
 
         if (!fs.existsSync(reportsDir)) {
           fs.mkdirSync(reportsDir, { recursive: true });
         }
 
-        // FILE NAME
         const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+        localFilePath = path.join(reportsDir, filename);
 
-        const localFilePath = path.join(reportsDir, filename);
-
-        // DOWNLOAD PDF
         const pdfResponse = await axios({
           method: "GET",
           url: reportUrl,
@@ -2353,22 +2348,39 @@ const checkCreditScoreV2 = async (req, res) => {
           timeout: 30000,
         });
 
-        // SAVE PDF
         const writer = fs.createWriteStream(localFilePath);
 
-        pdfResponse.data.pipe(writer);
-
         await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
+          pdfResponse.data.on("error", reject);
           writer.on("error", reject);
+          writer.on("finish", resolve);
+
+          pdfResponse.data.pipe(writer);
         });
 
-        // SAVE LOCAL PATH
-        creditReport.localPath = `/reports/${filename}`;
+        // Verify the file is actually a PDF.
+        if (!isValidPdf(localFilePath)) {
+          throw new Error(
+            "Downloaded report is not a valid PDF; expected %PDF- signature",
+          );
+        }
 
+        // Save the local path only after validation succeeds.
+        creditReport.localPath = `/reports/${filename}`;
         await creditReport.save();
+
+        console.log(`PDF downloaded and validated: ${filename}`);
       } catch (downloadError) {
-        console.log("PDF DOWNLOAD ERROR", downloadError.message);
+        console.error("PDF DOWNLOAD ERROR:", downloadError.message);
+
+        // Remove incomplete or invalid files.
+        if (localFilePath && fs.existsSync(localFilePath)) {
+          try {
+            fs.unlinkSync(localFilePath);
+          } catch (cleanupError) {
+            console.error("PDF CLEANUP ERROR:", cleanupError.message);
+          }
+        }
       }
     }
 
@@ -2400,7 +2412,12 @@ const checkCreditScoreV2 = async (req, res) => {
       message: v2NoCibilRecord
         ? "No CIBIL record found for these details"
         : `${bureau.toUpperCase()} report fetched successfully`,
-      apiType: cibilApiType,
+      apiType:
+        bureau === "crif"
+          ? crifApiType
+          : bureau === "experian"
+            ? experianApiType
+            : cibilApiType,
       provider: isV2DigiCibil
         ? "digi"
         : response.__indiconnectBureau
