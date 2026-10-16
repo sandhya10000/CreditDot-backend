@@ -13,6 +13,7 @@ const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
+const cibilStyledPdf = require("../utils/cibilStyledPdf");
 const experianCirPdf = require("../utils/experianCirPdf");
 const generateExperianPdf = require("../utils/generateExperianPdf");
 // const puppeteer = require("puppeteer");
@@ -849,6 +850,39 @@ const checkCreditScore = async (req, res) => {
       await franchise.save();
     }
 
+    // CIBIL (franchise-only): render styled PDF from bureau JSON (reference layout).
+    // Ported from staging — localPath is set inline so the PDF button serves
+    // /reports/*.pdf directly, never myscore.cibil.com.
+    if (
+      !isAdmin &&
+      isIndiconnectCibil &&
+      response.__indiconnect?.cibilData &&
+      !creditReport.localPath
+    ) {
+      try {
+        const gen = await cibilStyledPdf.generateCibilPdf(
+          response.__indiconnect,
+          { name, mobile, pan, dob, txnId: response.__indiconnect?.txn_id },
+        );
+        if (gen) {
+          const reportsDir = path.join(__dirname, "../reports");
+          if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+          }
+          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+          creditReport.localPath = `/reports/${filename}`;
+          creditReport.pdfStatus = "ready";
+          await creditReport.save();
+          console.log(
+            `CIBIL styled PDF generated: ${filename} (score ${gen.model.score})`,
+          );
+        }
+      } catch (genErr) {
+        console.error("CIBIL STYLED PDF FAILED:", genErr.message);
+      }
+    }
+
     // Experian Soft-Pull: render our styled PDF from the bureau JSON
     // (the bureau returns Excel data, not a PDF link).
     if (
@@ -1021,6 +1055,8 @@ const checkCreditScore = async (req, res) => {
       score: creditReport.score,
       pdfStatus: creditReport.pdfStatus || null,
     });
+
+    return res.status(200).json(responsePayload);
   } catch (error) {
     console.error("Credit check controller error:", {
       message: error.message,
