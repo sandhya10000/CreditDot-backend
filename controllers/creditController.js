@@ -14,6 +14,7 @@ const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
 const experianCirPdf = require("../utils/experianCirPdf");
+const generateExperianPdf = require("../utils/generateExperianPdf");
 // const puppeteer = require("puppeteer");
 
 // Validation schema for credit check
@@ -459,19 +460,19 @@ const checkCreditScore = async (req, res) => {
           bureau: normalizedBureau === "cibil" ? "cibil" : normalizedBureau,
         }).sort({ createdAt: -1 });
 
-        // if (lastReport?.createdAt) {
-        //   const diffDays =
-        //     (Date.now() - new Date(lastReport.createdAt).getTime()) /
-        //     (1000 * 60 * 60 * 24);
+        if (lastReport?.createdAt) {
+          const diffDays =
+            (Date.now() - new Date(lastReport.createdAt).getTime()) /
+            (1000 * 60 * 60 * 24);
 
-        //   if (diffDays >= 0 && diffDays < 15) {
-        //     const remainingDays = Math.ceil(15 - diffDays);
+          if (diffDays >= 0 && diffDays < 15) {
+            const remainingDays = Math.ceil(15 - diffDays);
 
-        //     return res.status(400).json({
-        //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-        //     });
-        //   }
-        // }
+            return res.status(400).json({
+              message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+            });
+          }
+        }
       }
 
       franchise = await Franchise.findById(req.user.franchiseId);
@@ -2549,16 +2550,16 @@ const generateExperianReport = async (req, res) => {
         pan,
         bureau: "experian",
       }).sort({ createdAt: -1 });
-      // if (lastReport) {
-      //   const diffDays =
-      //     (new Date() - new Date(lastReport.createdAt)) / (1000 * 60 * 60 * 24);
-      //   if (diffDays < 15) {
-      //     const remainingDays = Math.ceil(15 - diffDays);
-      //     return res.status(400).json({
-      //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-      //     });
-      //   }
-      // }
+      if (lastReport) {
+        const diffDays =
+          (new Date() - new Date(lastReport.createdAt)) / (1000 * 60 * 60 * 24);
+        if (diffDays < 15) {
+          const remainingDays = Math.ceil(15 - diffDays);
+          return res.status(400).json({
+            message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+          });
+        }
+      }
       franchise = await Franchise.findById(req.user.franchiseId);
       if (!franchise) {
         return res.status(404).json({ message: "Franchise not found" });
