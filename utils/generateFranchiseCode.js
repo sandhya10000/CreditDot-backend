@@ -13,7 +13,7 @@ const generateFranchiseCode = async () => {
       },
     );
 
-    const franchiseCode = `FP-${String(counter.seq).padStart(3, "0")}`;
+    const franchiseCode = `FP${String(counter.seq).padStart(3, "0")}`;
 
     const exists = await Franchise.exists({ franchiseCode });
 
@@ -22,7 +22,5 @@ const generateFranchiseCode = async () => {
     }
   }
 };
-
-module.exports = generateFranchiseCode;
 
 module.exports = generateFranchiseCode;

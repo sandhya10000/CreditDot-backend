@@ -10,46 +10,33 @@ async function updateFranchiseCodes() {
     }
 
     await mongoose.connect(MONGO_URI);
-
     console.log("MongoDB connected");
 
-    const db = mongoose.connection.db;
-    const collection = db.collection("franchises");
+    const collection = mongoose.connection.db.collection("franchises");
 
-    // ============================================================
-    // STEP 1: Find FP001, FP002, FP003... codes
-    // ============================================================
-
+    // STEP 1: Find FP-001, FP-002, FP-003... codes
     const partners = await collection
       .find({
         franchiseCode: {
-          $regex: /^FP\d+$/i,
+          $regex: /^FP-\d+$/i,
         },
       })
-      .sort({ franchiseCode: 1 })
       .toArray();
 
-    console.log(`Found ${partners.length} FP codes`);
+    console.log(`Found ${partners.length} FP- codes`);
 
     if (partners.length === 0) {
-      console.log("No FP001, FP002... franchise codes found.");
+      console.log("No FP-001, FP-002... codes found.");
       return;
     }
 
-    // ============================================================
-    // STEP 2: Prepare updates
-    // ============================================================
-
-    console.log("\n=================================");
-    console.log("FRANCHISE CODE MIGRATION");
-    console.log("=================================\n");
-
+    // STEP 2: Prepare migration
     const updates = [];
+
+    console.log("\nFRANCHISE CODE MIGRATION\n");
 
     for (const partner of partners) {
       const oldCode = partner.franchiseCode;
-
-      // FP001 -> 001
       const numberPart = oldCode.match(/\d+$/)?.[0];
 
       if (!numberPart) {
@@ -57,8 +44,8 @@ async function updateFranchiseCodes() {
         continue;
       }
 
-      // FP001 -> FP-001
-      const newCode = `FP-${numberPart}`;
+      // FP-001 -> FP001
+      const newCode = `FP${numberPart}`;
 
       updates.push({
         id: partner._id,
@@ -66,18 +53,19 @@ async function updateFranchiseCodes() {
         newCode,
       });
 
-      console.log(`${oldCode}  ->  ${newCode}`);
+      console.log(`${oldCode} -> ${newCode}`);
     }
 
-    console.log("\n=================================");
-    console.log(`Total records to update: ${updates.length}`);
-    console.log("=================================\n");
-
-    // ============================================================
-    // STEP 3: Check duplicate FP-XXX codes
-    // ============================================================
+    // STEP 3: Check duplicates before updating
+    const newCodes = new Set();
 
     for (const item of updates) {
+      if (newCodes.has(item.newCode)) {
+        throw new Error(`Duplicate target code: ${item.newCode}`);
+      }
+
+      newCodes.add(item.newCode);
+
       const existingPartner = await collection.findOne({
         franchiseCode: item.newCode,
         _id: { $ne: item.id },
@@ -85,16 +73,13 @@ async function updateFranchiseCodes() {
 
       if (existingPartner) {
         throw new Error(
-          `Duplicate code detected: ${item.newCode}. Migration stopped.`,
+          `Code ${item.newCode} already exists. Migration stopped.`,
         );
       }
     }
 
-    // ============================================================
     // STEP 4: Update database
-    // ============================================================
-
-    console.log("Starting database update...\n");
+    console.log("\nStarting database update...\n");
 
     let updatedCount = 0;
 
@@ -110,24 +95,19 @@ async function updateFranchiseCodes() {
 
       if (result.modifiedCount === 1) {
         updatedCount++;
-
         console.log(`Updated: ${item.oldCode} -> ${item.newCode}`);
       }
     }
 
-    // ============================================================
     // STEP 5: Final result
-    // ============================================================
-
     console.log("\n=================================");
     console.log("MIGRATION COMPLETED");
     console.log("=================================");
     console.log(`Found:   ${partners.length}`);
     console.log(`Updated: ${updatedCount}`);
-    console.log("=================================\n");
+    console.log("=================================");
   } catch (error) {
-    console.error("\nMigration failed:");
-    console.error(error);
+    console.error("\nMigration failed:", error.message);
   } finally {
     await mongoose.disconnect();
     console.log("MongoDB disconnected");
