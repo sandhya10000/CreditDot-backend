@@ -74,6 +74,116 @@ const getDashboardStats = async (req, res) => {
 
     const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
 
+    // Current date and time
+    const now = new Date();
+
+    // Start of current month
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Start of current year
+    const currentYearStart = new Date(now.getFullYear(), 0, 1);
+
+    // Current month revenue
+    const currentMonthRevenueResult = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: {
+            $gte: currentMonthStart,
+            $lte: now,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const currentMonthRevenue = currentMonthRevenueResult[0]?.total || 0;
+
+    // Current year revenue
+    const currentYearRevenueResult = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: {
+            $gte: currentYearStart,
+            $lte: now,
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const currentYearRevenue = currentYearRevenueResult[0]?.total || 0;
+
+    // Month-wise revenue
+    const monthlyRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: { $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            year: {
+              $year: {
+                date: "$createdAt",
+                timezone: "Asia/Kolkata",
+              },
+            },
+            month: {
+              $month: {
+                date: "$createdAt",
+                timezone: "Asia/Kolkata",
+              },
+            },
+          },
+          revenue: { $sum: "$amount" },
+        },
+      },
+      {
+        $sort: {
+          "_id.year": 1,
+          "_id.month": 1,
+        },
+      },
+    ]);
+
+    // Year-wise revenue
+    const yearlyRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "paid",
+          createdAt: { $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $year: {
+              date: "$createdAt",
+              timezone: "Asia/Kolkata",
+            },
+          },
+          revenue: { $sum: "$amount" },
+        },
+      },
+      {
+        $sort: { _id: 1 },
+      },
+    ]);
+
     // Calculate revenue from franchise packages (regular packages)
     // Need to ensure these transactions are linked to active franchises/users
     const franchisePackageRevenueResult = await Transaction.aggregate([
@@ -179,6 +289,12 @@ const getDashboardStats = async (req, res) => {
       totalLeads,
       totalTransactions,
       totalRevenue,
+      // New revenue fields
+      currentMonthRevenue,
+      currentYearRevenue,
+      monthlyRevenue,
+      yearlyRevenue,
+
       franchisePackageRevenue,
       customerPackageRevenue,
     });
@@ -773,7 +889,7 @@ const updateSetting = async (req, res) => {
 // Get all franchises with credit information (admin only)
 const getAllFranchisesWithCredits = async (req, res) => {
   try {
-    const franchises = await Franchise.find({ isActive: true })
+    const franchises = await Franchise.find({ isActive: true, isDeleted: { $ne: true } })
       .select("businessName credits totalCreditsPurchased kycStatus")
       .sort({ businessName: 1 });
 
@@ -783,7 +899,6 @@ const getAllFranchisesWithCredits = async (req, res) => {
   }
 };
 
-// Create franchise user by admin (admin only)
 // Create franchise user by admin (admin only)
 const createFranchiseUser = async (req, res) => {
   try {
@@ -799,9 +914,16 @@ const createFranchiseUser = async (req, res) => {
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
-      return res.status(400).json({
-        message: "User already exists with this email",
-      });
+      // Email held by a soft-deleted account (deleted before email-release
+      // was added) — free it so the email can be reused
+      if (existingUser.isDeleted) {
+        existingUser.email = `deleted_${Date.now()}_${existingUser.email.toLowerCase()}`;
+        await existingUser.save();
+      } else {
+        return res.status(400).json({
+          message: "User already exists with this email",
+        });
+      }
     }
 
     // Generate password
@@ -830,18 +952,6 @@ const createFranchiseUser = async (req, res) => {
 
     // ONLY for franchise user
     if (user.role === "franchise_user") {
-      const lastFranchise = await Franchise.findOne({
-        franchiseCode: { $exists: true },
-      }).sort({ createdAt: -1 });
-
-      let nextNumber = 1;
-
-      if (lastFranchise?.franchiseCode) {
-        nextNumber =
-          parseInt(lastFranchise.franchiseCode.replace("FP-", "")) + 1;
-      }
-
-      const franchiseCode = `FP-${String(nextNumber).padStart(3, "0")}`;
       const franchiseData = {
         userId: user._id,
         businessName: name,
@@ -849,10 +959,11 @@ const createFranchiseUser = async (req, res) => {
         email,
 
         phone,
-        franchiseCode, // <-- add this
+        franchiseCode: null, // <-- add this
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
+        //Login allow
         isActive: true,
       };
 
@@ -961,10 +1072,16 @@ const createFranchiseUser = async (req, res) => {
   }
 };
 
-// Recharge credits for a franchise (admin only)
+// Add or deduct credits for a franchise (admin only)
 const rechargeFranchiseCredits = async (req, res) => {
   try {
-    const { franchiseId, credits, remarks } = req.body;
+    const { franchiseId, credits, remarks, type = "add" } = req.body;
+
+    if (type !== "add" && type !== "deduct") {
+      return res.status(400).json({
+        message: "Type must be either 'add' or 'deduct'",
+      });
+    }
 
     // Validate input
     if (!franchiseId || credits === undefined || credits <= 0) {
@@ -979,11 +1096,27 @@ const rechargeFranchiseCredits = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
+    if (franchise.isDeleted) {
+      return res.status(400).json({ message: "Franchise is deleted" });
+    }
+
+    if (type === "deduct" && franchise.credits < credits) {
+      return res.status(400).json({
+        message: `Insufficient credit balance. Available: ${franchise.credits}`,
+      });
+    }
+
     // Update credits
     const oldCredits = franchise.credits;
-    franchise.credits += credits;
-    franchise.totalCreditsPurchased += credits;
+    if (type === "deduct") {
+      franchise.credits -= credits;
+    } else {
+      franchise.credits += credits;
+      franchise.totalCreditsPurchased += credits;
+    }
     await franchise.save();
+
+    const isDeduct = type === "deduct";
 
     // Log the transaction (optional)
     // Only create transaction if franchise has a valid userId
@@ -994,13 +1127,17 @@ const rechargeFranchiseCredits = async (req, res) => {
         amount: 0, // Free recharge
         currency: "INR",
         status: "paid",
-        paymentMethod: "admin_recharge",
-        remarks: remarks || `Admin credit recharge: ${credits} credits`,
+        paymentMethod: isDeduct ? "admin_deduct" : "admin_recharge",
+        remarks:
+          remarks ||
+          (isDeduct
+            ? `Admin credit deduct: ${credits} credits`
+            : `Admin credit recharge: ${credits} credits`),
         metadata: {
           adminId: req.user.id,
           oldCredits,
           newCredits: franchise.credits,
-          creditsAdded: credits,
+          ...(isDeduct ? { creditsDeducted: credits } : { creditsAdded: credits }),
         },
       });
 
@@ -1018,7 +1155,9 @@ const rechargeFranchiseCredits = async (req, res) => {
     }
 
     res.json({
-      message: "Credits recharged successfully",
+      message: isDeduct
+        ? "Credits deducted successfully"
+        : "Credits recharged successfully",
       franchise: {
         id: franchise._id,
         businessName: franchise.businessName,
@@ -1034,9 +1173,9 @@ const rechargeFranchiseCredits = async (req, res) => {
 // Get credit recharge history (admin only)
 const getCreditRechargeHistory = async (req, res) => {
   try {
-    const transactions = await Transaction.find({
-      paymentMethod: "admin_recharge",
-    })
+      const transactions = await Transaction.find({
+        paymentMethod: { $in: ["admin_recharge", "admin_deduct"] },
+      })
       .populate("userId", "name email")
       .sort({ createdAt: -1 })
       .limit(50);
@@ -1436,7 +1575,7 @@ const rejectRegistration = async (req, res) => {
   }
 };
 
-// Delete franchise (admin only)
+// Soft-delete franchise (admin only) — data is preserved, franchise is marked deleted
 const deleteFranchise = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1447,43 +1586,93 @@ const deleteFranchise = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
-    // Find user
-    const user = await User.findById(franchise.userId);
+    if (franchise.isDeleted) {
+      return res.status(400).json({ message: "Franchise is already deleted" });
+    }
 
-    // Delete all related data
-    // Delete KYC requests
-    await KycRequest.deleteMany({ franchiseId: id });
+    // Soft-delete franchise (preserve all linked data: leads, business, reports, etc.)
+    franchise.isDeleted = true;
+    franchise.deletedAt = new Date();
+    franchise.isActive = false;
+    await franchise.save();
 
-    // Delete leads
-    await Lead.deleteMany({ franchiseId: id });
-
-    // Delete credit reports
-    await CreditReport.deleteMany({ franchiseId: id });
-
-    // Delete business forms
-    await BusinessForm.deleteMany({ franchiseId: id });
-
-    // Delete transactions
-    await Transaction.deleteMany({ userId: franchise.userId });
-
-    // Delete payouts
-    await Payout.deleteMany({ franchiseId: id });
-
-    // Delete referrals
-    await Referral.deleteMany({
-      $or: [{ referrerFranchiseId: id }, { referredFranchiseId: id }],
-    });
-
-    // Delete the franchise
-    await Franchise.findByIdAndDelete(id);
-
-    // Delete the user if exists
-    if (user) {
-      await User.findByIdAndDelete(user._id);
+    // Soft-delete linked user (block login, keep record)
+    // Rename email to free the unique address so the same email can register again
+    if (franchise.userId) {
+      const linkedUser = await User.findById(franchise.userId);
+      if (linkedUser && !linkedUser.isDeleted) {
+        linkedUser.isDeleted = true;
+        linkedUser.deletedAt = new Date();
+        linkedUser.isActive = false;
+        if (linkedUser.email && !linkedUser.email.startsWith("deleted_")) {
+          linkedUser.email = `deleted_${Date.now()}_${linkedUser.email.toLowerCase()}`;
+        }
+        await linkedUser.save();
+      } else if (linkedUser) {
+        linkedUser.isDeleted = true;
+        linkedUser.deletedAt = new Date();
+        linkedUser.isActive = false;
+        await linkedUser.save();
+      }
     }
 
     res.json({
-      message: "Franchise deleted successfully",
+      message: "Franchise is deleted",
+      franchise,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Restore soft-deleted franchise (admin only)
+const restoreFranchise = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const franchise = await Franchise.findById(id);
+    if (!franchise) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+
+    if (!franchise.isDeleted) {
+      return res.status(400).json({ message: "Franchise is not deleted" });
+    }
+
+    franchise.isDeleted = false;
+    franchise.deletedAt = null;
+    franchise.isActive = true;
+    await franchise.save();
+
+    if (franchise.userId) {
+      const linkedUser = await User.findById(franchise.userId);
+      if (linkedUser) {
+        // Reclaim the original email (franchise.email was preserved on delete)
+        const originalEmail = (franchise.email || "").toLowerCase();
+        if (originalEmail) {
+          const takenByOther = await User.findOne({
+            email: originalEmail,
+            _id: { $ne: linkedUser._id },
+            isDeleted: { $ne: true },
+          });
+          if (takenByOther) {
+            return res.status(400).json({
+              message:
+                "Cannot restore: this email is now used by another account",
+            });
+          }
+          linkedUser.email = originalEmail;
+        }
+        linkedUser.isDeleted = false;
+        linkedUser.deletedAt = null;
+        linkedUser.isActive = true;
+        await linkedUser.save();
+      }
+    }
+
+    res.json({
+      message: "Franchise restored successfully",
+      franchise,
     });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -1825,6 +2014,7 @@ module.exports = {
   approveRegistration,
   rejectRegistration,
   deleteFranchise,
+  restoreFranchise,
   updateFranchiseCertificateName,
   getPerformanceOverview,
   getDownloadStats,

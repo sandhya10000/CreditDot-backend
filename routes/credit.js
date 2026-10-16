@@ -9,6 +9,8 @@ const {
   updateSurepassApiKey,
   getIndiconnectKeys,
   updateIndiconnectKeys,
+  getDigiKeys,
+  updateDigiKeys,
   getSingleCreditReports,
   checkCreditScoreV2,
   getFranchiseReports,
@@ -82,6 +84,16 @@ router.put(
   rbac("admin"),
   updateIndiconnectKeys,
 );
+
+// @route   GET /api/credit/settings/digi-keys
+// @desc    Get Digi CIBIL keys (masked)
+// @access  Private/Admin
+router.get("/settings/digi-keys", auth, rbac("admin"), getDigiKeys);
+
+// @route   PUT /api/credit/settings/digi-keys
+// @desc    Update Digi CIBIL keys
+// @access  Private/Admin
+router.put("/settings/digi-keys", auth, rbac("admin"), updateDigiKeys);
 
 //@route GET  /api/credit/customer-report
 //@desc  get single report with userId

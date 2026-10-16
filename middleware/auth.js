@@ -28,6 +28,11 @@ const auth = async (req, res, next) => {
       console.log('Token invalid, access denied');
       return res.status(401).json({ message: 'Token invalid, access denied' });
     }
+
+    if (user.isDeleted) {
+      console.log('Deleted account, access denied:', user.email);
+      return res.status(403).json({ message: 'Account has been deleted. Please contact admin.' });
+    }
     
     console.log('Authenticated user:', user.email, 'Role:', user.role);
     

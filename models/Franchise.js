@@ -19,6 +19,7 @@ const franchiseSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
       trim: true,
+      default: null,
     },
     ownerName: {
       type: String,
@@ -89,6 +90,14 @@ const franchiseSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
     },
     // Field to track assigned packages
     assignedPackages: [
