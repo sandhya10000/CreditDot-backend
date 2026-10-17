@@ -1604,9 +1604,9 @@ const deleteFranchise = async (req, res) => {
         linkedUser.isDeleted = true;
         linkedUser.deletedAt = new Date();
         linkedUser.isActive = false;
-        if (linkedUser.email && !linkedUser.email.startsWith("deleted_")) {
-          linkedUser.email = `deleted_${Date.now()}_${linkedUser.email.toLowerCase()}`;
-        }
+        // if (linkedUser.email && !linkedUser.email.startsWith("deleted_")) {
+        //   linkedUser.email = `deleted_${Date.now()}_${linkedUser.email.toLowerCase()}`;
+        // }
         await linkedUser.save();
       } else if (linkedUser) {
         linkedUser.isDeleted = true;
