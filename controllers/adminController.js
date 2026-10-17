@@ -911,10 +911,9 @@ const createFranchiseUser = async (req, res) => {
     const language = "en";
 
     // Check existing user
-    const existingUser = await User.findOne({ email, isDeleted: { $ne: true } });
+    const existingUser = await User.findOne({ email, isDeleted: true });
 
     if (existingUser) {
-      console.log(existingUser);
       // Email held by a soft-deleted account (deleted before email-release
       // was added) — free it so the email can be reused
       if (existingUser.isDeleted) {
