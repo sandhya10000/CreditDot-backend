@@ -90,7 +90,7 @@ jobs:
                 exit 1
               fi
 
-              echo "Waiting for port 5002... attempt $i/15"
+              echo "Waiting for port 5004... attempt $i/15"
               sleep 2
             done
 
@@ -104,7 +104,7 @@ jobs:
             echo "Final health check"
             echo "========================================"
 
-            curl -fsS http://127.0.0.1:5002/
+            curl -fsS http://127.0.0.1:5004/
 
             echo ""
             echo "========================================"
