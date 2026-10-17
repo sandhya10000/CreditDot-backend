@@ -20,11 +20,16 @@ jobs:
           script: |
             set -e
 
+            APP_NAME="creditdost-staging"
+            APP_DIR="/var/www/creditdost-staging/CreditDot-backend"
+            APP_PORT="5004"
+            HEALTH_URL="http://127.0.0.1:${APP_PORT}/"
+
             echo "========================================"
             echo "Starting staging backend deployment"
             echo "========================================"
 
-            cd /var/www/creditdost-staging/CreditDot-backend
+            cd "$APP_DIR"
 
             echo "Fetching latest code..."
             git fetch origin
@@ -38,75 +43,110 @@ jobs:
             echo "Installing production dependencies..."
             npm ci --omit=dev
 
-            echo "Restarting staging backend..."
-            pm2 restart creditdost-staging --update-env
+            echo "========================================"
+            echo "Restarting staging backend"
+            echo "========================================"
+
+            pm2 restart "$APP_NAME" --update-env
 
             echo "========================================"
             echo "Waiting for PM2 process to stabilize"
             echo "========================================"
+
+            PM2_ONLINE=false
 
             for i in {1..15}; do
               STATUS=$(pm2 jlist | node -e "
                 let data = '';
                 process.stdin.on('data', c => data += c);
                 process.stdin.on('end', () => {
-                  const apps = JSON.parse(data);
-                  const app = apps.find(a => a.name === 'creditdost-staging');
-                  console.log(app ? app.pm2_env.status : 'missing');
+                  try {
+                    const apps = JSON.parse(data);
+                    const app = apps.find(a => a.name === '${APP_NAME}');
+                    console.log(app ? app.pm2_env.status : 'missing');
+                  } catch (e) {
+                    console.log('unknown');
+                  }
                 });
               ")
 
-              echo "PM2 status: $STATUS"
+              echo "PM2 status: $STATUS (attempt $i/15)"
 
               if [ "$STATUS" = "online" ]; then
+                PM2_ONLINE=true
                 break
               fi
 
-              if [ "$i" -eq 15 ]; then
-                echo "PM2 process failed to become online."
-                echo "Last 50 PM2 log lines:"
-                pm2 logs creditdost-staging --lines 50 --nostream
-                exit 1
-              fi
-
-              echo "Waiting for PM2... attempt $i/15"
               sleep 2
             done
 
+            if [ "$PM2_ONLINE" != "true" ]; then
+              echo "ERROR: PM2 process did not become online."
+
+              echo "PM2 status:"
+              pm2 status
+
+              echo "Recent staging backend logs:"
+              pm2 logs "$APP_NAME" --lines 50 --nostream || true
+
+              exit 1
+            fi
+
+            echo "PM2 process is online."
+
             echo "========================================"
-            echo "Waiting for port 5002"
+            echo "Waiting for application on port ${APP_PORT}"
             echo "========================================"
+
+            HEALTHY=false
 
             for i in {1..15}; do
-              if curl -fsS http://127.0.0.1:5002/ > /dev/null; then
-                echo "Staging backend is healthy."
+              if curl --connect-timeout 2 --max-time 5 -fsS "$HEALTH_URL" > /dev/null; then
+                echo "Staging backend is healthy on port ${APP_PORT}."
+                HEALTHY=true
                 break
               fi
 
-              if [ "$i" -eq 15 ]; then
-                echo "Staging backend did not respond on port 5002."
-                echo "Last 50 PM2 log lines:"
-                pm2 logs creditdost-staging --lines 50 --nostream
-                exit 1
-              fi
+              echo "Health check failed (attempt $i/15)."
 
-              echo "Waiting for port 5002... attempt $i/15"
-              sleep 2
+              if [ "$i" -lt 15 ]; then
+                sleep 2
+              fi
             done
 
-            echo "========================================"
-            echo "PM2 status"
-            echo "========================================"
+            if [ "$HEALTHY" != "true" ]; then
+              echo "========================================"
+              echo "ERROR: Staging backend health check failed"
+              echo "========================================"
 
-            pm2 status
+              echo "Health URL: $HEALTH_URL"
+
+              echo "Listening ports:"
+              ss -ltnp || true
+
+              echo "PM2 status:"
+              pm2 status
+
+              echo "Recent staging backend logs:"
+              pm2 logs "$APP_NAME" --lines 50 --nostream || true
+
+              exit 1
+            fi
 
             echo "========================================"
             echo "Final health check"
             echo "========================================"
 
-            curl -fsS http://127.0.0.1:5002/
+            curl --connect-timeout 2 --max-time 5 -fsS "$HEALTH_URL" > /dev/null
 
-            echo ""
+            echo "Final health check passed."
+
+            echo "========================================"
+            echo "Final PM2 status"
+            echo "========================================"
+
+            pm2 status
+
             echo "========================================"
             echo "Staging backend deployment successful"
             echo "========================================"

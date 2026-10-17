@@ -1862,6 +1862,8 @@ const checkCreditScoreV2 = async (req, res) => {
       crifApiType = "indiconnect",
       experianApiType = "indiconnect",
       pan,
+      dob,
+      gender,
     } = req.body;
 
     // Legacy cached frontends may still send "ongrid" — route to IndiConnect
@@ -2298,6 +2300,44 @@ const checkCreditScoreV2 = async (req, res) => {
 
     await creditReport.save();
 
+    // IndiConnect CIBIL: render our styled PDF from the bureau JSON — same
+    // reference layout the partner panel gets (shared cibilStyledPdf).
+    if (
+      isV2IndiconnectCibil &&
+      response.__indiconnect?.cibilData &&
+      !creditReport.localPath
+    ) {
+      try {
+        const gen = await cibilStyledPdf.generateCibilPdf(
+          response.__indiconnect,
+          {
+            name,
+            mobile,
+            pan,
+            dob,
+            gender,
+            txnId: response.__indiconnect?.txn_id,
+          },
+        );
+        if (gen) {
+          const reportsDir = path.join(__dirname, "../reports");
+          if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+          }
+          const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+          creditReport.localPath = `/reports/${filename}`;
+          creditReport.pdfStatus = "ready";
+          await creditReport.save();
+          console.log(
+            `CIBIL styled PDF generated (V2): ${filename} (score ${gen.model.score})`,
+          );
+        }
+      } catch (genErr) {
+        console.error("CIBIL STYLED PDF FAILED (V2):", genErr.message);
+      }
+    }
+
     // Experian Soft-Pull: render our styled PDF from the bureau JSON.
     if (
       response.__indiconnectBureau === "experian" &&
@@ -2425,10 +2465,12 @@ const checkCreditScoreV2 = async (req, res) => {
     // FINAL RESPONSE
     // =========================
     // IndiConnect CIBIL htmlUrl-only rows render to local PDF in background
-    // (non-blocking, link fallback on failure).
+    // (non-blocking, link fallback on failure). Skipped when a styled PDF was
+    // already generated above so the raw render never overwrites localPath.
     if (
       isV2IndiconnectCibil &&
       reportUrl &&
+      !creditReport.localPath &&
       indiconnectClient.isHtmlReportUrl(reportUrl)
     ) {
       cibilPdfService.renderCibilPdfInBackground(

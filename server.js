@@ -253,7 +253,7 @@ app.use("/api", require("./routes/CustomerBureau"));
 app.use("/api", require("./routes/supporticket"));
 
 // Routes
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5004;
 
 // Start automatic sync if enabled
 const startAutoSync = async () => {
