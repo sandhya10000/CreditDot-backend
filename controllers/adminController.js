@@ -458,12 +458,12 @@ const createLead = async (req, res) => {
       assignedTo,
       notes: notes
         ? [
-            {
-              note: notes,
-              createdBy: req.user.id,
-              createdAt: new Date(),
-            },
-          ]
+          {
+            note: notes,
+            createdBy: req.user.id,
+            createdAt: new Date(),
+          },
+        ]
         : undefined,
     });
 
@@ -911,9 +911,10 @@ const createFranchiseUser = async (req, res) => {
     const language = "en";
 
     // Check existing user
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email, isDeleted: { $ne: true } });
 
     if (existingUser) {
+      console.log(existingUser);
       // Email held by a soft-deleted account (deleted before email-release
       // was added) — free it so the email can be reused
       if (existingUser.isDeleted) {
@@ -1173,9 +1174,9 @@ const rechargeFranchiseCredits = async (req, res) => {
 // Get credit recharge history (admin only)
 const getCreditRechargeHistory = async (req, res) => {
   try {
-      const transactions = await Transaction.find({
-        paymentMethod: { $in: ["admin_recharge", "admin_deduct"] },
-      })
+    const transactions = await Transaction.find({
+      paymentMethod: { $in: ["admin_recharge", "admin_deduct"] },
+    })
       .populate("userId", "name email")
       .sort({ createdAt: -1 })
       .limit(50);

@@ -16,7 +16,6 @@ const franchiseSchema = new mongoose.Schema(
     //franchise code/id
     franchiseCode: {
       type: String,
-      unique: true,
       sparse: true,
       trim: true,
       default: null,

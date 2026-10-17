@@ -188,17 +188,41 @@ const getKycStatus = async (req, res) => {
 const getKycByFranchiseId = async (req, res) => {
   try {
     const { franchiseId } = req.params;
-    
+
     // Find KYC request by franchise ID
     const kycRequest = await KycRequest.findOne({ franchiseId })
       .populate('userId', 'name email phone')
       .populate('franchiseId', 'businessName ownerName');
-    
-    if (!kycRequest) {
-      return res.status(404).json({ message: 'KYC request not found' });
+
+    // If a real KYC submission exists, return it unchanged.
+    if (kycRequest) {
+      return res.json(kycRequest);
     }
-    
-    res.json(kycRequest);
+
+    // No KYC submission on record (e.g. admin-created or profile/PAN-approved
+    // franchises). Fall back to the franchise's embedded profile data so the
+    // admin can still view the details instead of getting a 404.
+    const franchise = await Franchise.findById(franchiseId);
+    if (!franchise) {
+      return res.status(404).json({ message: 'Franchise not found' });
+    }
+
+    return res.json({
+      _id: null,
+      userId: franchise.userId,
+      franchiseId: {
+        _id: franchise._id,
+        businessName: franchise.businessName,
+        ownerName: franchise.ownerName,
+      },
+      aadhaarNumber: null,
+      panNumber: franchise.panNumber || null,
+      status: franchise.kycStatus,
+      submittedAt: franchise.kycSubmittedAt || franchise.createdAt,
+      isDigiLockerSubmission: false,
+      submissionMethod: 'none',
+      source: 'franchise-profile',
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
