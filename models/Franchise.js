@@ -14,11 +14,18 @@ const franchiseSchema = new mongoose.Schema(
       trim: true,
     },
     //franchise code/id
+    // franchiseCode: {
+    //   type: String,
+    //   sparse: true,
+    //   trim: true,
+    //   default: null,
+    // },
+
     franchiseCode: {
       type: String,
+      unique: true,
       sparse: true,
       trim: true,
-      default: null,
     },
     ownerName: {
       type: String,
@@ -43,6 +50,13 @@ const franchiseSchema = new mongoose.Schema(
         type: String,
         default: "India",
       },
+    },
+    // Track registration source
+    registrationSource: {
+      type: String,
+      enum: ["website", "admin"],
+      default: "admin",
+      index: true,
     },
     kycStatus: {
       type: String,

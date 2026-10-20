@@ -106,6 +106,8 @@ const register = async (req, res) => {
       ownerName: name,
       email,
       phone,
+      registrationSource: "website",
+      kycStatus: "pending",
     });
 
     await franchise.save();

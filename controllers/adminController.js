@@ -458,12 +458,12 @@ const createLead = async (req, res) => {
       assignedTo,
       notes: notes
         ? [
-          {
-            note: notes,
-            createdBy: req.user.id,
-            createdAt: new Date(),
-          },
-        ]
+            {
+              note: notes,
+              createdBy: req.user.id,
+              createdAt: new Date(),
+            },
+          ]
         : undefined,
     });
 
@@ -889,7 +889,10 @@ const updateSetting = async (req, res) => {
 // Get all franchises with credit information (admin only)
 const getAllFranchisesWithCredits = async (req, res) => {
   try {
-    const franchises = await Franchise.find({ isActive: true, isDeleted: { $ne: true } })
+    const franchises = await Franchise.find({
+      isActive: true,
+      isDeleted: { $ne: true },
+    })
       .select("businessName credits totalCreditsPurchased kycStatus")
       .sort({ businessName: 1 });
 
@@ -900,43 +903,51 @@ const getAllFranchisesWithCredits = async (req, res) => {
 };
 
 // Create franchise user by admin (admin only)
+
 const createFranchiseUser = async (req, res) => {
   try {
-    const { name, email, assignedPackages, role, subRole } = req.body;
+    const { name, assignedPackages, role, subRole } = req.body;
 
-    // Default values
-    const phone = "0000000000";
-    const state = "Not Provided";
-    const pincode = "000000";
-    const language = "en";
+    // Normalize email
+    const normalizedEmail = req.body.email?.trim().toLowerCase();
 
-    // Check existing user
-    const existingUser = await User.findOne({ email, isDeleted: true });
+    // Validate required fields
+    if (!name?.trim() || !normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and email are required",
+      });
+    }
+
+    // Check whether email belongs to an existing user
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (existingUser) {
-      // Email held by a soft-deleted account (deleted before email-release
-      // was added) — free it so the email can be reused
-      if (existingUser.isDeleted) {
-        existingUser.email = `deleted_${Date.now()}_${existingUser.email.toLowerCase()}`;
+      if (existingUser.isDeleted === true) {
+        // Release email from the soft-deleted account
+        existingUser.email = `deleted_${Date.now()}_${existingUser._id}_${normalizedEmail}`;
+
         await existingUser.save();
       } else {
-        return res.status(400).json({
+        return res.status(409).json({
+          success: false,
           message: "User already exists with this email",
         });
       }
     }
 
-    // Generate password
+    // Generate temporary password
     const tempPassword = Math.random().toString(36).slice(-8);
 
     // Create user
     const user = new User({
-      name,
-      email,
-      //phone,
-      state,
-      pincode,
-      language,
+      name: name.trim(),
+      email: normalizedEmail,
+      state: "Not Provided",
+      pincode: "000000",
+      language: "en",
       password: tempPassword,
       role: role || "franchise_user",
       subRole: subRole || "franchise",
@@ -944,35 +955,29 @@ const createFranchiseUser = async (req, res) => {
       isVerified: true,
     });
 
-    // SAVE USER
     await user.save();
 
-    // Default franchise
+    // Create franchise only for franchise users
     let franchise = null;
 
-    // ONLY for franchise user
     if (user.role === "franchise_user") {
       const franchiseData = {
         userId: user._id,
-        businessName: name,
-        ownerName: name,
-        email,
+        businessName: name.trim(),
+        ownerName: name.trim(),
+        email: normalizedEmail,
 
-        phone,
-        franchiseCode: null, // <-- add this
+        // No default phone number
+        franchiseCode: null,
+        registrationSource: "admin",
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
-        //Login allow
         isActive: true,
       };
 
-      // Packages
-      if (
-        assignedPackages &&
-        Array.isArray(assignedPackages) &&
-        assignedPackages.length > 0
-      ) {
+      // Assign packages
+      if (Array.isArray(assignedPackages) && assignedPackages.length > 0) {
         franchiseData.assignedPackages = assignedPackages;
 
         const packages = await Package.find({
@@ -993,7 +998,7 @@ const createFranchiseUser = async (req, res) => {
         franchiseData.credits = totalCredits;
         franchiseData.totalCreditsPurchased = totalCredits;
 
-        // Agreement update
+        // Update agreement package details
         try {
           await updateAgreementPackageDetails(user._id, {
             price: `Rs. ${totalPrice}`,
@@ -1012,49 +1017,42 @@ const createFranchiseUser = async (req, res) => {
       console.log("Franchise saved:", franchise);
     }
 
-    // =========================
-    // SEND EMAILS
-    // =========================
-
+    // Send role-specific email
     try {
       if (user.subRole === "relationship_manager") {
         await sendRelationshipManagerEmail(user, tempPassword);
-
         console.log("RM mail sent");
       } else if (user.subRole === "credit_analyst") {
         await sendCreditAnalystEmail(user, tempPassword);
-
         console.log("CA mail sent");
       } else if (user.subRole === "franchise") {
         await sendRegistrationApprovalEmail(user, franchise, tempPassword);
-
         console.log("Franchise mail sent");
       }
     } catch (emailError) {
       console.error("Mail sending failed:", emailError);
     }
 
-    // Admin notification
+    // Send admin notification
     try {
       await sendAdminNotificationEmail(user);
     } catch (emailError) {
       console.error("Admin notification failed:", emailError);
     }
 
-    // Google sheet sync
+    // Sync Google Sheets
     try {
       const initialized = await googleSheetsService.initialize();
 
       if (initialized) {
         await googleSheetsService.syncRegistrationData();
-
         console.log("Google sheet synced");
       }
     } catch (syncError) {
       console.error("Google sheet sync failed:", syncError);
     }
 
-    // FINAL RESPONSE
+    // Final response
     return res.status(201).json({
       success: true,
       message: `${user.role} created successfully`,
@@ -1063,6 +1061,14 @@ const createFranchiseUser = async (req, res) => {
     });
   } catch (error) {
     console.error("Create franchise user error:", error);
+
+    // Handle duplicate-key errors safely
+    if (error.code === 11000 && error.keyPattern?.email) {
+      return res.status(409).json({
+        success: false,
+        message: "User already exists with this email",
+      });
+    }
 
     return res.status(500).json({
       success: false,
@@ -1137,7 +1143,9 @@ const rechargeFranchiseCredits = async (req, res) => {
           adminId: req.user.id,
           oldCredits,
           newCredits: franchise.credits,
-          ...(isDeduct ? { creditsDeducted: credits } : { creditsAdded: credits }),
+          ...(isDeduct
+            ? { creditsDeducted: credits }
+            : { creditsAdded: credits }),
         },
       });
 
