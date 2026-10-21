@@ -14,6 +14,13 @@ const {
   updateBusinessForm,
   deleteBusinessForm,
 } = require("../controllers/businessController");
+const {
+  getAmcCustomers,
+  getFranchiseAmcCustomers,
+  upsertAmc,
+  renewAmc,
+  cancelAmc,
+} = require("../controllers/amcController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
 
@@ -45,10 +52,46 @@ router.get(
   rbac("franchise_user", "admin"),
   getFranchiseBusinessForms,
 );
+// @route   GET /api/business/franchise/amc
+// @desc    Get the logged-in franchise's AMC customers (read-only)
+// @access  Private/Franchise User
+// NOTE: must stay above "/franchise/:_id" so "amc" isn't treated as an id
+router.get(
+  "/franchise/amc",
+  auth,
+  rbac("franchise_user"),
+  getFranchiseAmcCustomers,
+);
+
 // @route   GET /api/business/franchise/:franchiseId
 // @desc    Get business forms for franchise user
 // @access  Private/Admin User
 router.get("/franchise/:_id", auth, rbac("admin"), getBusinessFormsByFranchise);
+
+// @route   GET /api/business/amc
+// @desc    Get all AMC customers (admin only)
+// @access  Private/Admin
+router.get("/amc", auth, rbac("admin"), getAmcCustomers);
+
+// @route   PUT /api/admin/business-forms/:id/amc
+// @desc    Enroll customer in AMC or edit the current AMC term
+// @access  Private/Admin
+router.put("/admin/business-forms/:id/amc", auth, rbac("admin"), upsertAmc);
+
+// @route   POST /api/admin/business-forms/:id/amc/renew
+// @desc    Renew AMC (current term moves to history)
+// @access  Private/Admin
+router.post(
+  "/admin/business-forms/:id/amc/renew",
+  auth,
+  rbac("admin"),
+  renewAmc,
+);
+
+// @route   DELETE /api/admin/business-forms/:id/amc
+// @desc    Cancel AMC enrollment (kept in history)
+// @access  Private/Admin
+router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 
 // @route   GET /api/business/all
 // @desc    Get all business forms (admin only)

@@ -188,10 +188,46 @@ const businessFormSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
+
+    // Annual Maintenance Contract (current term). Status (active / expiring /
+    // expired / upcoming) is derived from the dates — see utils/amcStatus.js
+    amc: {
+      isEnrolled: { type: Boolean, default: false, index: true },
+      startDate: Date, // UTC midnight of the chosen day
+      endDate: Date, // inclusive, UTC midnight
+      amount: { type: Number, min: 0 },
+      paymentStatus: {
+        type: String,
+        enum: ["pending", "paid"],
+        default: "pending",
+      },
+      paidAt: Date,
+      remarks: { type: String, trim: true },
+      enrolledAt: Date,
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
+
+    // Past AMC terms (renewed or cancelled)
+    amcHistory: [
+      {
+        startDate: Date,
+        endDate: Date,
+        amount: Number,
+        paymentStatus: String,
+        paidAt: Date,
+        remarks: String,
+        endedReason: { type: String, enum: ["renewed", "cancelled"] },
+        cancelReason: String,
+        closedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        closedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,
   },
 );
+
+businessFormSchema.index({ "amc.isEnrolled": 1, "amc.endDate": 1 });
 
 module.exports = mongoose.model("BusinessForm", businessFormSchema);
