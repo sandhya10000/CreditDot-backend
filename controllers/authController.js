@@ -249,6 +249,16 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Account is deactivated" });
     }
 
+    // Record login time (updateOne avoids re-running the password hash hook)
+    try {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { lastLoginAt: new Date() } },
+      );
+    } catch (loginStampError) {
+      console.error("Failed to record lastLoginAt:", loginStampError);
+    }
+
     // Generate token
     const token = generateToken({ id: user._id, role: user.role });
 

@@ -151,6 +151,22 @@ const franchiseSchema = new mongoose.Schema(
         },
       },
     ],
+
+    // Audit trail of admin-initiated login email changes
+    emailChangeHistory: [
+      {
+        oldEmail: String,
+        newEmail: String,
+        changedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,

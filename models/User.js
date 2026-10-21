@@ -76,6 +76,19 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
     },
+    // Invite / credentials tracking
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+    credentialsSentAt: {
+      type: Date,
+      default: null,
+    },
+    credentialsSentCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
