@@ -27,6 +27,8 @@ const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const mongoose = require("mongoose");
 const ReportDownload = require("../models/ReportDownload");
 
 // Configure CSV file upload
@@ -900,6 +902,79 @@ const getAllFranchisesWithCredits = async (req, res) => {
 };
 
 // Create franchise user by admin (admin only)
+// =========================
+// Credentials / invite helpers
+// =========================
+
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+// 10-char random hex password (always meets the 6-char schema minimum)
+const generateTempPassword = () => crypto.randomBytes(5).toString("hex");
+
+const markCredentialsSent = (userId) =>
+  User.updateOne(
+    { _id: userId },
+    { $set: { credentialsSentAt: new Date() }, $inc: { credentialsSentCount: 1 } },
+  );
+
+// Soft-deleted accounts may still hold an email; rename them so the address
+// can be reused (restore uses franchise.email, so this stays reversible)
+const releaseEmailFromDeletedUsers = async (email, excludeUserId) => {
+  const query = { email, isDeleted: true };
+  if (excludeUserId) query._id = { $ne: excludeUserId };
+  const holders = await User.find(query);
+  for (const holder of holders) {
+    holder.email = `deleted_${Date.now()}_${holder.email.toLowerCase()}`;
+    await holder.save();
+  }
+};
+
+// Sends fresh credentials and only then changes the password, so a failed
+// email never locks the partner out of their existing password.
+const issueFranchiseCredentials = async (user, franchise) => {
+  const newPassword = generateTempPassword();
+
+  let info;
+  try {
+    info = await sendRegistrationApprovalEmail(user, franchise, newPassword, {
+      isResend: true,
+    });
+  } catch (emailError) {
+    console.error("Credentials email failed for", user.email, emailError);
+    return { sent: false, error: emailError.message };
+  }
+
+  if (info && Array.isArray(info.rejected) && info.rejected.length > 0) {
+    return { sent: false, error: "Recipient address was rejected by the mail server" };
+  }
+
+  user.password = newPassword;
+  user.credentialsSentAt = new Date();
+  user.credentialsSentCount = (user.credentialsSentCount || 0) + 1;
+  await user.save();
+
+  return { sent: true };
+};
+
+// Loads a franchise + its user and validates they are an active franchise partner
+const loadFranchisePartner = async (franchiseId) => {
+  if (!mongoose.Types.ObjectId.isValid(franchiseId)) {
+    return { status: 404, message: "Franchise not found" };
+  }
+  const franchise = await Franchise.findById(franchiseId);
+  if (!franchise || franchise.isDeleted) {
+    return { status: 404, message: "Franchise not found" };
+  }
+  const user = await User.findById(franchise.userId);
+  if (!user || user.isDeleted) {
+    return { status: 404, message: "Franchise user not found" };
+  }
+  if (user.role !== "franchise_user" || (user.subRole && user.subRole !== "franchise")) {
+    return { status: 400, message: "This action is only available for franchise partners" };
+  }
+  return { franchise, user };
+};
+
 const createFranchiseUser = async (req, res) => {
   try {
     const { name, email, assignedPackages, role, subRole } = req.body;
@@ -910,30 +985,28 @@ const createFranchiseUser = async (req, res) => {
     const pincode = "000000";
     const language = "en";
 
-    // Check existing user
-    const existingUser = await User.findOne({ email, isDeleted: { $ne: true } });
-
-    if (existingUser) {
-      console.log(existingUser);
-      // Email held by a soft-deleted account (deleted before email-release
-      // was added) — free it so the email can be reused
-      if (existingUser.isDeleted) {
-        existingUser.email = `deleted_${Date.now()}_${existingUser.email.toLowerCase()}`;
-        await existingUser.save();
-      } else {
-        return res.status(400).json({
-          message: "User already exists with this email",
-        });
-      }
+    // Check existing user (active accounts block creation)
+    const normalizedEmail = (email || "").trim().toLowerCase();
+    const activeUser = await User.findOne({
+      email: normalizedEmail,
+      isDeleted: { $ne: true },
+    });
+    if (activeUser) {
+      return res.status(400).json({
+        message: "User already exists with this email",
+      });
     }
 
+    // Email held by a soft-deleted account — free it so the email can be reused
+    await releaseEmailFromDeletedUsers(normalizedEmail);
+
     // Generate password
-    const tempPassword = Math.random().toString(36).slice(-8);
+    const tempPassword = generateTempPassword();
 
     // Create user
     const user = new User({
       name,
-      email,
+      email: normalizedEmail,
       //phone,
       state,
       pincode,
@@ -957,7 +1030,7 @@ const createFranchiseUser = async (req, res) => {
         userId: user._id,
         businessName: name,
         ownerName: name,
-        email,
+        email: normalizedEmail,
 
         phone,
         franchiseCode: null, // <-- add this
@@ -1028,6 +1101,7 @@ const createFranchiseUser = async (req, res) => {
         console.log("CA mail sent");
       } else if (user.subRole === "franchise") {
         await sendRegistrationApprovalEmail(user, franchise, tempPassword);
+        await markCredentialsSent(user._id);
 
         console.log("Franchise mail sent");
       }
@@ -1470,7 +1544,7 @@ const approveRegistration = async (req, res) => {
     await franchise.save();
 
     // Generate a temporary password for first-time activation
-    const tempPassword = Math.random().toString(36).slice(-8);
+    const tempPassword = generateTempPassword();
     user.password = tempPassword;
     await user.save();
 
@@ -1488,6 +1562,7 @@ const approveRegistration = async (req, res) => {
       console.log("Assigned packages:", franchise.assignedPackages);
 
       await sendRegistrationApprovalEmail(user, franchise, tempPassword);
+      await markCredentialsSent(user._id);
       console.log(
         "Successfully sent registration approval email to user:",
         user.email,
@@ -1605,9 +1680,9 @@ const deleteFranchise = async (req, res) => {
         linkedUser.isDeleted = true;
         linkedUser.deletedAt = new Date();
         linkedUser.isActive = false;
-        if (linkedUser.email && !linkedUser.email.startsWith("deleted_")) {
-          linkedUser.email = `deleted_${Date.now()}_${linkedUser.email.toLowerCase()}`;
-        }
+        // if (linkedUser.email && !linkedUser.email.startsWith("deleted_")) {
+        //   linkedUser.email = `deleted_${Date.now()}_${linkedUser.email.toLowerCase()}`;
+        // }
         await linkedUser.save();
       } else if (linkedUser) {
         linkedUser.isDeleted = true;
@@ -1983,7 +2058,150 @@ const getDownloadStats = async (req, res) => {
   }
 };
 
+// Resend invite / fresh login credentials to a franchise partner (admin only)
+const resendFranchiseInvite = async (req, res) => {
+  try {
+    const result = await loadFranchisePartner(req.params.id);
+    if (result.status) {
+      return res.status(result.status).json({ message: result.message });
+    }
+    const { franchise, user } = result;
+
+    if (!user.isActive || !franchise.isActive) {
+      return res.status(400).json({
+        message: "Franchise is inactive. Activate the franchise before sending credentials.",
+      });
+    }
+
+    if (
+      user.credentialsSentAt &&
+      Date.now() - new Date(user.credentialsSentAt).getTime() < RESEND_COOLDOWN_MS
+    ) {
+      return res.status(429).json({
+        message: "Credentials were just sent. Please wait a minute before resending.",
+      });
+    }
+
+    const outcome = await issueFranchiseCredentials(user, franchise);
+    if (!outcome.sent) {
+      return res.status(502).json({
+        message: `Email could not be sent to ${user.email}. Password was not changed.`,
+        error: outcome.error,
+      });
+    }
+
+    return res.json({
+      message: `Login credentials sent to ${user.email}`,
+      sentTo: user.email,
+      credentialsSentAt: user.credentialsSentAt,
+      credentialsSentCount: user.credentialsSentCount,
+    });
+  } catch (error) {
+    console.error("Resend franchise invite error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Change a franchise partner's login email (User + Franchise kept in sync) (admin only)
+const changeFranchiseEmail = async (req, res) => {
+  try {
+    const rawEmail = typeof req.body.newEmail === "string" ? req.body.newEmail : "";
+    const newEmail = rawEmail.trim().toLowerCase();
+    const sendCredentials = req.body.sendCredentials !== false;
+
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      return res.status(400).json({ message: "Please provide a valid email address" });
+    }
+
+    const result = await loadFranchisePartner(req.params.id);
+    if (result.status) {
+      return res.status(result.status).json({ message: result.message });
+    }
+    const { franchise, user } = result;
+
+    const oldEmail = (user.email || "").toLowerCase();
+    if (newEmail === oldEmail) {
+      return res.status(400).json({ message: "New email is the same as the current email" });
+    }
+
+    const takenByOther = await User.findOne({
+      email: newEmail,
+      isDeleted: { $ne: true },
+      _id: { $ne: user._id },
+    });
+    if (takenByOther) {
+      return res.status(409).json({ message: "Email already in use by another account" });
+    }
+
+    await releaseEmailFromDeletedUsers(newEmail, user._id);
+
+    // Update User first; unique index catches a concurrent claim of the same email
+    user.email = newEmail;
+    try {
+      await user.save();
+    } catch (saveError) {
+      if (saveError.code === 11000) {
+        return res.status(409).json({ message: "Email already in use by another account" });
+      }
+      throw saveError;
+    }
+
+    const oldFranchiseEmail = franchise.email;
+    franchise.email = newEmail;
+    franchise.emailChangeHistory.push({
+      oldEmail: oldFranchiseEmail || oldEmail,
+      newEmail,
+      changedBy: req.user._id,
+      changedAt: new Date(),
+    });
+    try {
+      await franchise.save();
+    } catch (franchiseError) {
+      // Roll back the login email so User and Franchise don't drift apart
+      await User.updateOne({ _id: user._id }, { $set: { email: oldEmail } });
+      throw franchiseError;
+    }
+
+    let credentialsSent = false;
+    let warning;
+    if (sendCredentials) {
+      if (!user.isActive || !franchise.isActive) {
+        warning = "Email updated, but credentials were not sent because the franchise is inactive.";
+      } else {
+        const outcome = await issueFranchiseCredentials(user, franchise);
+        credentialsSent = outcome.sent;
+        if (!outcome.sent) {
+          warning = `Email updated, but credentials could not be sent to ${newEmail}. Use "Resend invite" to try again.`;
+        }
+      }
+    }
+
+    // Keep Google Sheets registration data in sync (non-blocking for the response)
+    try {
+      const initialized = await googleSheetsService.initialize();
+      if (initialized) await googleSheetsService.syncRegistrationData();
+    } catch (syncError) {
+      console.error("Google sheet sync after email change failed:", syncError);
+    }
+
+    return res.json({
+      message: credentialsSent
+        ? `Email changed and login credentials sent to ${newEmail}`
+        : "Email changed successfully",
+      emailChanged: true,
+      credentialsSent,
+      warning,
+      email: newEmail,
+    });
+  } catch (error) {
+    console.error("Change franchise email error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
+  resendFranchiseInvite,
+  changeFranchiseEmail,
   getDashboardStats,
   getRecentActivities,
   getAllUsers,

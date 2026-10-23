@@ -41,6 +41,8 @@ const {
   bulkUploadLeads,
   getDownloadStats,
   csvUpload,
+  resendFranchiseInvite,
+  changeFranchiseEmail,
 } = require("../controllers/adminController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -253,6 +255,21 @@ router.delete("/franchises/:id", auth, rbac("admin"), deleteFranchise);
 // @desc    Restore soft-deleted franchise
 // @access  Private/Admin
 router.put("/franchises/:id/restore", auth, rbac("admin"), restoreFranchise);
+
+// @route   POST /api/admin/franchises/:id/resend-invite
+// @desc    Resend login credentials to a franchise partner
+// @access  Private (Admin only)
+router.post(
+  "/franchises/:id/resend-invite",
+  auth,
+  rbac("admin"),
+  resendFranchiseInvite,
+);
+
+// @route   PUT /api/admin/franchises/:id/email
+// @desc    Change franchise partner login email (optionally resend credentials)
+// @access  Private (Admin only)
+router.put("/franchises/:id/email", auth, rbac("admin"), changeFranchiseEmail);
 
 // @route   PUT /api/admin/franchises/certificate-name
 // @desc    Update franchise certificate name

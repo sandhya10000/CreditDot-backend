@@ -202,6 +202,8 @@ const updateFranchiseProfile = async (req, res) => {
     delete profileData.credits;
     delete profileData.totalCreditsPurchased;
     delete profileData.assignedPackages;
+    // Login email can only be changed by an admin (keeps User/Franchise in sync)
+    delete profileData.email;
 
     Object.assign(franchise, profileData);
 
@@ -269,7 +271,10 @@ const getFranchiseList = async (req, res) => {
       ? { isDeleted: true }
       : { isDeleted: { $ne: true } };
     const franchises = await Franchise.find(baseFilter)
-      .populate("userId", "name email phone")
+      .populate(
+        "userId",
+        "name email phone role subRole isDeleted lastLoginAt credentialsSentAt credentialsSentCount",
+      )
       .populate("assignedPackages", "name price creditsIncluded")
       .sort({ createdAt: -1 })
       .lean();
@@ -336,7 +341,10 @@ const getAllFranchises = async (req, res) => {
     }
 
     const franchises = await Franchise.find(filter)
-      .populate("userId", "name email phone")
+      .populate(
+        "userId",
+        "name email phone role subRole isDeleted lastLoginAt credentialsSentAt credentialsSentCount",
+      )
       .populate("assignedPackages", "name price creditsIncluded")
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -467,6 +475,10 @@ const updateFranchise = async (req, res) => {
         req.body.credits = 0;
       }
     }
+
+    // Email changes go through PUT /api/admin/franchises/:id/email so the
+    // login email (User.email) stays in sync
+    delete req.body.email;
 
     // Update franchise with all fields including credits if applicable
     Object.assign(franchise, req.body);

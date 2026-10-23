@@ -14,6 +14,7 @@ const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const cibilPdfService = require("../utils/cibilPdfService");
 const cibilStyledPdf = require("../utils/cibilStyledPdf");
+const crifStyledPdf = require("../utils/crifStyledPdf");
 const experianCirPdf = require("../utils/experianCirPdf");
 const generateExperianPdf = require("../utils/generateExperianPdf");
 // const puppeteer = require("puppeteer");
@@ -828,9 +829,19 @@ const checkCreditScore = async (req, res) => {
     await creditReport.save();
 
     // 6. Deduct credits after successful bureau response and DB save
+    let remainingCredits = null;
     if (!isAdmin && franchise) {
-      franchise.credits = Number(franchise.credits) - 1;
-      await franchise.save();
+      const charged = await Franchise.findOneAndUpdate(
+        { _id: franchise._id, credits: { $gte: 1 } },
+        { $inc: { credits: -1 } },
+        { new: true },
+      );
+      if (!charged) {
+        return res.status(400).json({
+          message: "Insufficient credits to generate credit report",
+        });
+      }
+      remainingCredits = charged.credits;
     }
 
     // 7. Sync with Google Sheets without blocking the API response
@@ -844,11 +855,11 @@ const checkCreditScore = async (req, res) => {
         );
       });
 
-    // Deduct credit from franchise
-    if (req.user.role !== "admin" && franchise) {
-      franchise.credits -= 1;
-      await franchise.save();
-    }
+    // // Deduct credit from franchise
+    // if (req.user.role !== "admin" && franchise) {
+    //   franchise.credits -= 1;
+    //   await franchise.save();
+    // }
 
     // CIBIL (franchise-only): render styled PDF from bureau JSON (reference layout).
     // Ported from staging — localPath is set inline so the PDF button serves
@@ -996,6 +1007,39 @@ const checkCreditScore = async (req, res) => {
       }
     }
 
+    // CRIF: the bureau sent no PDF link, or the download failed. Render the PDF
+    // from the bureau JSON and store it in /reports like every other PDF.
+    // Runs after the charge, so a failure here never changes the balance.
+    if (indiconnectBureau === "crif" && !creditReport.localPath) {
+      try {
+        const rawCrif = response.__indiconnect?.bureauData?.credit_report;
+        if (!rawCrif) {
+          throw new Error("CRIF report data missing from bureau response");
+        }
+
+        const gen = await crifStyledPdf.generateCrifPdf(rawCrif, {
+          name,
+          mobile,
+          pan,
+          txnId: response.__indiconnect?.txn_id,
+        });
+
+        const reportsDir = path.join(__dirname, "../reports");
+        fs.mkdirSync(reportsDir, { recursive: true });
+
+        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
+        fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
+
+        creditReport.localPath = `/reports/${filename}`;
+        creditReport.pdfStatus = "ready";
+        await creditReport.save();
+      } catch (crifPdfErr) {
+        console.error("CRIF PDF GENERATE FAILED:", crifPdfErr.message);
+        creditReport.pdfStatus = "failed";
+        await creditReport.save().catch(() => {});
+      }
+    }
+
     const noCibilRecord =
       isIndiconnectCibil &&
       (response.__indiconnect?.bureauStatus === 2 ||
@@ -1022,7 +1066,7 @@ const checkCreditScore = async (req, res) => {
         txnId: response.__indiconnect?.txn_id || null,
         createdAt: creditReport.createdAt,
       },
-      remainingCredits: !isAdmin && franchise ? franchise.credits : null,
+      remainingCredits,
     };
 
     // Background: render IndiConnect CIBIL htmlUrl-only rows to local PDF
@@ -2777,9 +2821,19 @@ const generateExperianReport = async (req, res) => {
     }
 
     // 6. Deduct credit post-success only
+    let remainingCredits = null;
     if (req.user.role !== "admin" && franchise) {
-      franchise.credits -= 1;
-      await franchise.save();
+      const charged = await Franchise.findOneAndUpdate(
+        { _id: franchise._id, credits: { $gte: 1 } },
+        { $inc: { credits: -1 } },
+        { new: true },
+      );
+      if (!charged) {
+        return res.status(400).json({
+          message: "Insufficient credits to generate credit report",
+        });
+      }
+      remainingCredits = charged.credits;
     }
 
     // 7. Success response (their platform's shape)
@@ -2796,6 +2850,7 @@ const generateExperianReport = async (req, res) => {
       reportTime: cph.ReportTime ?? null,
       version: cph.Version ?? null,
       pdfUrl: localPath,
+      remainingCredits,
       data: {
         header: parsed.header,
         userMessage: parsed.userMessage,

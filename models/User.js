@@ -11,8 +11,8 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: true,
-      unique: true,
       lowercase: true,
+      trim: true
     },
     phone: {
       type: String,
@@ -76,11 +76,26 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
     },
+    // Invite / credentials tracking
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+    credentialsSentAt: {
+      type: Date,
+      default: null,
+    },
+    credentialsSentCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
   },
 );
+
+userSchema.index({ email: 1, isDeleted: 1 }, { unique: true, partialFilterExpression: { isDeleted: false } });
 
 // Hash password before saving
 userSchema.pre("save", async function (next) {

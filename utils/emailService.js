@@ -88,7 +88,12 @@ const sendSelfRegistrationEmail = async (user, franchise) => {
 };
 
 // Send registration approval email
-const sendRegistrationApprovalEmail = async (user, franchise, password) => {
+const sendRegistrationApprovalEmail = async (
+  user,
+  franchise,
+  password,
+  options = {},
+) => {
   try {
     // Get package names if packages are assigned
     let packageNames = [];
@@ -103,12 +108,21 @@ const sendRegistrationApprovalEmail = async (user, franchise, password) => {
     const mailOptions = {
       from: '"Credit Dost Support" <support@creditdost.co.in> ',
       to: user.email,
-      subject: "Registration Approved - Credit Dost Franchise Platform",
+      subject: options.isResend
+        ? "Your Login Credentials - Credit Dost Franchise Platform"
+        : "Registration Approved - Credit Dost Franchise Platform",
       html: `
-        <h2>Registration Approved!</h2>
+        ${
+          options.isResend
+            ? `<h2>Your Login Credentials</h2>
+        <p>Hello ${user.name},</p>
+        <p>As requested, here are your fresh login credentials for the Credit Dost Franchise Platform.</p>
+        <p><strong>Note:</strong> Any password sent to you earlier will no longer work.</p>`
+            : `<h2>Registration Approved!</h2>
         <p>Hello ${user.name},</p>
         <p>Congratulations! Your registration has been approved.</p>
-        <p>Your account is now active. Here are your login credentials:</p>
+        <p>Your account is now active. Here are your login credentials:</p>`
+        }
         <p><strong>Email:</strong> ${user.email}</p>
         <p><strong>Password:</strong> ${password || "Your previously set password"}</p>
         ${packageNames.length > 0 ? `<p><strong>Assigned Package(s):</strong> ${packageNames.join(", ")}</p>` : ""}
