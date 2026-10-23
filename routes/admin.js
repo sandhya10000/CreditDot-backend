@@ -49,6 +49,8 @@ const rbac = require("../middleware/rbac");
 
 const {
   getAllCreditRepairEnquiries,
+  getAllFranchiseLeads,
+  updateFranchiseLeadStatus,
   updateCreditRepairStatus,
   deleteCreditRepairEnquiry,
 } = require("../controllers/formController");
@@ -292,6 +294,21 @@ router.get("/download-stats", auth, rbac("admin"), getDownloadStats);
 // @desc    Get all credit repair enquiries
 // @access  Private/Admin
 router.get("/credit-repair", auth, rbac("admin"), getAllCreditRepairEnquiries);
+
+// @route   GET /api/admin/franchise-leads
+// @desc    Get website franchise leads (optional search, status)
+// @access  Private/Admin
+router.get("/franchise-leads", auth, rbac("admin"), getAllFranchiseLeads);
+
+// @route   PUT /api/admin/franchise-leads/:id/status
+// @desc    Update website franchise lead status
+// @access  Private/Admin
+router.put(
+  "/franchise-leads/:id/status",
+  auth,
+  rbac("admin"),
+  updateFranchiseLeadStatus,
+);
 
 // @route   PUT /api/admin/credit-repair/:id/status
 // @desc    Update credit repair enquiry status

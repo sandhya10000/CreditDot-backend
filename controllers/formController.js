@@ -585,6 +585,60 @@ const deleteCreditRepairEnquiry = async (req, res) => {
   }
 };
 
+// Admin endpoints for website franchise leads
+const getAllFranchiseLeads = async (req, res) => {
+  try {
+    const query = {};
+
+    if (req.query.search) {
+      const searchRegex = new RegExp(
+        req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i",
+      );
+      query.$or = [
+        { fullName: searchRegex },
+        { mobileNumber: searchRegex },
+        { email: searchRegex },
+        { city: searchRegex },
+        { state: searchRegex },
+      ];
+    }
+
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+
+    const leads = await FranchiseOpportunity.find(query).sort({ createdAt: -1 });
+
+    res.json({ leads, total: leads.length });
+  } catch (error) {
+    console.error("Get franchise leads error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const updateFranchiseLeadStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const lead = await FranchiseOpportunity.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true, runValidators: true },
+    );
+
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    res.json({ message: "Status updated successfully", lead });
+  } catch (error) {
+    console.error("Update franchise lead status error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
   submitCreditRepairForm,
   submitContactForm,
@@ -594,4 +648,6 @@ module.exports = {
   getAllCreditRepairEnquiries,
   updateCreditRepairStatus,
   deleteCreditRepairEnquiry,
+  getAllFranchiseLeads,
+  updateFranchiseLeadStatus,
 };

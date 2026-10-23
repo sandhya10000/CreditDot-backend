@@ -32,6 +32,11 @@ const franchiseOpportunitySchema = new mongoose.Schema({
     type: Boolean,
     required: true,
   },
+  status: {
+    type: String,
+    enum: ["New", "Contacted", "Interested", "Not Interested"],
+    default: "New",
+  },
 }, {
   timestamps: true
 });
