@@ -219,6 +219,7 @@ app.use("/api/leads", require("./routes/leads"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/business", require("./routes/business"));
 app.use("/api/admin", require("./routes/admin"));
+app.use("/api/admin", require("./routes/staff"));
 app.use("/api/blogs", require("./routes/blogs"));
 app.use("/api/relationship-managers", require("./routes/relationshipManagers"));
 app.use("/api/emi", require("./routes/emi"));

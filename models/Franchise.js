@@ -13,6 +13,13 @@ const franchiseSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    // Business Manager who owns this partner (null = unassigned, admin-only)
+    businessManager: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
     //franchise code/id
     franchiseCode: {
       type: String,

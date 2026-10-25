@@ -906,6 +906,8 @@ const getAllFranchisesWithCredits = async (req, res) => {
 // Credentials / invite helpers
 // =========================
 
+const { resolveBusinessManagerId } = require("../utils/franchiseScope");
+
 const RESEND_COOLDOWN_MS = 60 * 1000;
 
 // 10-char random hex password (always meets the 6-char schema minimum)
@@ -979,6 +981,13 @@ const createFranchiseUser = async (req, res) => {
   try {
     const { name, email, assignedPackages, role, subRole } = req.body;
 
+    // Admin staff must be created from the Staff page so they get a role's permissions
+    if (role === "admin") {
+      return res.status(400).json({
+        message: "Staff accounts are created from the Staff page and assigned a role",
+      });
+    }
+
     // Default values
     const phone = "0000000000";
     const state = "Not Provided";
@@ -1034,6 +1043,8 @@ const createFranchiseUser = async (req, res) => {
 
         phone,
         franchiseCode: null, // <-- add this
+        // Business Manager who owns this partner (creator, or admin's pick)
+        businessManager: await resolveBusinessManagerId(req, req.body.businessManagerId),
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),

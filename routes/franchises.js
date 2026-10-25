@@ -19,9 +19,11 @@ const {
   getSingleFranchise,
   getAllFranchisesList,
   exportFranchisesCSV,
+  reassignFranchiseManager,
 } = require("../controllers/franchiseController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
+const requireFullAdmin = require("../middleware/fullAdmin");
 
 const router = express.Router();
 
@@ -157,5 +159,16 @@ router.put("/:id/deactivate", auth, rbac("admin"), deactivateFranchise);
 // @desc    Activate franchise
 // @access  Private/Admin
 router.put("/:id/activate", auth, rbac("admin"), activateFranchise);
+
+// @route   PUT /api/franchises/:id/business-manager
+// @desc    Reassign a franchise to another Business Manager (null = unassign)
+// @access  Private/Full Admin only
+router.put(
+  "/:id/business-manager",
+  auth,
+  rbac("admin"),
+  requireFullAdmin,
+  reassignFranchiseManager,
+);
 
 module.exports = router;
