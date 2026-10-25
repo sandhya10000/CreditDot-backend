@@ -465,14 +465,6 @@ const downloadClaudeAnalysis = async (req, res) => {
         });
       }
 
-      if (franchise.credits <= 0) {
-        return res.status(400).json({
-          message: "Credit limit exhausted. Please contact admin.",
-        });
-      }
-
-      franchise.credits -= 1;
-      await franchise.save();
     }
 
     if (!fs.existsSync(document.claudeAnalysisHtml)) {
