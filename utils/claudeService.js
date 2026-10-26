@@ -3,10 +3,151 @@ const fs = require('fs');
 const path = require('path');
 const mime = require('mime-types');
 
+const {
+  getLanguageConfig,
+  isMultiLangEnabled,
+  DEFAULT_LANGUAGE_CODE,
+} = require('../config/languages');
+
 // Initialize Claude client
 const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY,
 });
+
+/**
+ * Pure function: build language directive text.
+ * Returns empty string ('') if language is 'en', empty, or if MULTILANG_ENABLED flag is off.
+ * @param {string} languageCode
+ * @returns {string}
+ */
+const buildLanguageDirective = (languageCode) => {
+  if (!isMultiLangEnabled()) {
+    return '';
+  }
+
+  const lang = getLanguageConfig(languageCode);
+  if (!lang || lang.code === DEFAULT_LANGUAGE_CODE) {
+    return '';
+  }
+
+  return `\n\n` +
+`======================================================================\n` +
+`LANGUAGE INSTRUCTION: GENERATE REPORT IN ${lang.name.toUpperCase()} (${lang.nativeName})\n` +
+`======================================================================\n` +
+`1. OVERRIDE: This language instruction OVERRIDES the instruction to "only replace data". You MUST translate all visible user-facing text, section headings, card titles, table column headers, problem descriptions, analytical summaries, status labels, educational disclaimers, and recommendations into ${lang.name} (${lang.nativeName}).\n` +
+`2. INVARIANCE - STRICTLY PRESERVE THE FOLLOWING WITHOUT TRANSLATION:\n` +
+`   - HTML structure, all tag names, all CSS classes (e.g., "badge-critical", "account-grid", "section-title"), all HTML IDs, and all CSS variable names must remain exactly as shown in the template.\n` +
+`   - Numbers and amounts: Keep all numbers, percentages, tenure months, and currency figures (₹ and INR) in Latin Arabic numerals (e.g. ₹4,50,000, 750, 18.5%, 36 Months). NEVER spell numbers out in words or convert to Indic numerals.\n` +
+`   - Dates: Keep dates in standard format (e.g. 15-AUG-2024, 05/2023).\n` +
+`   - Proper nouns: Client legal name, bank and NBFC names (e.g. HDFC Bank, SBI Cards, ICICI Bank, Bajaj Finance), and CIBIL Control Number / ECN.\n` +
+`   - Financial acronyms: Retain standard industry acronyms in English/Latin, optionally with translated explanation (e.g. DPD, SMA-0, SMA-1, SMA-2, NPA, CIBIL, Credit Score, Written Off, Settled).\n` +
+`   - QuickChart URLs and chart labels: Keep chart query params, canvas configurations, and chart legend text in English so QuickChart can render them correctly.\n` +
+`3. TONE & VOCABULARY: Use formal, respectful, and authoritative Indian financial consulting terminology suitable for Credit Dost's premier advisory reputation.\n` +
+`======================================================================`;
+};
+
+/**
+ * Deterministically post-processes HTML report:
+ * 1. Sets/replaces <html lang="..."> attribute.
+ * 2. Injects Google Font <link> into <head> (idempotent, safe if <head> is missing).
+ * 3. Prepends font family with fallbacks (Noto, Nirmala UI, Segoe UI) into CSS body rule.
+ * @param {string} html
+ * @param {string} languageCode
+ * @returns {string}
+ */
+const postProcessReportHtml = (html, languageCode) => {
+  if (!html || typeof html !== 'string') return html;
+
+  let processed = html;
+
+  // Safety net: Strip "formatter":<number> or %22formatter%22:<number> from quickchart.io URLs.
+  // QuickChart gauge plugins expect a function for formatter; passing a number crashes with "fmt is not a function".
+  if (processed.includes('quickchart.io')) {
+    processed = processed.replace(
+      /(https?:\/\/[^"'\s>]*quickchart\.io\/chart\?[^"'\s>]*)/g,
+      (match) => {
+        return match
+          .replace(/(?:%22formatter%22|"formatter"):(-?\d+(?:\.\d+)?)(%2C|,)?/g, '')
+          .replace(/([,{])(?:\s*(?:%2C|,))+/g, '$1') // clean up double commas if any
+          .replace(/(?:%2C|,)(%7D|\})/g, '$1');       // clean up trailing comma before closing brace
+      }
+    );
+  }
+
+  const lang = getLanguageConfig(languageCode);
+  if (!lang || lang.code === DEFAULT_LANGUAGE_CODE) {
+    return processed; // English requires no font or lang modifications
+  }
+
+  // 1. Update <html lang="en"> -> <html lang="${lang.code}">
+  if (/<html[^>]*>/i.test(processed)) {
+    processed = processed.replace(/<html(\s+[^>]*)?>/i, (match, attrs = '') => {
+      const cleanAttrs = attrs.replace(/\s*lang=(["'])[^"']*\1/i, '');
+      return `<html${cleanAttrs} lang="${lang.code}">`;
+    });
+  }
+
+  // 2. Inject Google Font stylesheet if defined
+  if (lang.googleFont && !processed.includes(lang.googleFont)) {
+    const fontLinkTags =
+      `\n    <link rel="preconnect" href="https://fonts.googleapis.com">\n` +
+      `    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n` +
+      `    <link href="${lang.googleFont}" rel="stylesheet">\n`;
+
+    if (/<head[^>]*>/i.test(processed)) {
+      processed = processed.replace(/(<head[^>]*>)/i, `$1${fontLinkTags}`);
+    } else {
+      processed = `<head>${fontLinkTags}</head>\n` + processed;
+    }
+  }
+
+  // 3. Update body font-family in CSS to prepend target font with Nirmala UI / Segoe UI fallbacks
+  const targetFont = lang.fontFamily;
+  if (targetFont && /font-family\s*:\s*[^;]+;/i.test(processed)) {
+    processed = processed.replace(
+      /(body\s*\{[^}]*?font-family\s*:\s*)([^;]+)(;)/i,
+      (match, prefix, oldFont, suffix) => {
+        if (oldFont.includes(lang.name) || oldFont.includes(lang.script)) {
+          return match; // Already updated
+        }
+        return `${prefix}${targetFont}${suffix}`;
+      }
+    );
+  }
+
+  return processed;
+};
+
+/**
+ * Validates generated report output:
+ * - Must end with </html> (case-insensitive, ignoring trailing whitespace).
+ * - For non-English target languages, must contain at least one character matching the target script's Unicode range.
+ * @param {string} html
+ * @param {string} languageCode
+ * @returns {{valid: boolean, reason?: string}}
+ */
+const validateReportOutput = (html, languageCode) => {
+  if (!html || typeof html !== 'string') {
+    return { valid: false, reason: 'Empty report output' };
+  }
+
+  const trimmed = html.trim();
+  if (!/<\/html>\s*$/i.test(trimmed)) {
+    return { valid: false, reason: 'Report output is truncated or missing closing </html> tag' };
+  }
+
+  const lang = getLanguageConfig(languageCode);
+  if (lang && lang.code !== DEFAULT_LANGUAGE_CODE && lang.unicodeRegex) {
+    if (!lang.unicodeRegex.test(trimmed)) {
+      return {
+        valid: false,
+        reason: `Report output does not contain expected characters for script: ${lang.script} (${lang.name})`,
+      };
+    }
+  }
+
+  return { valid: true };
+};
 
 /**
  * Load AI analysis prompt from file or environment
@@ -77,131 +218,174 @@ const readHTMLFile = async (htmlPath) => {
 };
 
 /**
- * Analyze document content using Claude AI
+ * Internal single attempt execution with Claude
+ */
+const executeClaudeAttempt = async (documentData, basePrompt, documentType, languageCode) => {
+  // Validate API key
+  if (!process.env.CLAUDE_API_KEY || process.env.CLAUDE_API_KEY === 'your_claude_api_key_here') {
+    throw new Error('Claude API key not configured. Please add CLAUDE_API_KEY to your .env file.');
+  }
+
+  // Get model from environment or use default
+  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
+
+  // Load the full prompt and append language directive at runtime (non-en only)
+  const languageDirective = buildLanguageDirective(languageCode);
+  const systemPrompt = `${basePrompt}${languageDirective}`;
+
+  console.log('Analyzing document with Claude model:', model);
+  console.log('Prompt length:', systemPrompt.length, 'characters');
+  if (languageDirective) {
+    console.log('Multi-language directive appended for language:', languageCode);
+  }
+
+  // max_tokens calculation: 25,000 for English; 30,000 for non-English Indic scripts
+  // (Indic scripts require additional token expansion due to multi-byte UTF-8 representations)
+  const maxTokens = (isMultiLangEnabled() && languageCode && languageCode !== DEFAULT_LANGUAGE_CODE)
+    ? 30000
+    : 25000;
+
+  // Build the message content based on document type
+  let messageContent;
+  if (documentType === 'pdf' && documentData.base64) {
+    messageContent = [
+      {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: documentData.mediaType,
+          data: documentData.base64,
+        },
+      },
+      {
+        type: 'text',
+        text: systemPrompt,
+      },
+    ];
+  } else if (documentType === 'html' && documentData.base64) {
+    messageContent = [
+      {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'text/html',
+          data: documentData.base64,
+        },
+      },
+      {
+        type: 'text',
+        text: systemPrompt,
+      },
+    ];
+  } else {
+    messageContent = [
+      {
+        type: 'text',
+        text: `${systemPrompt}\n\n---\nDOCUMENT CONTENT:\n${documentData.text}\n---`,
+      },
+    ];
+  }
+
+  console.log('Sending request to Claude API with max_tokens:', maxTokens);
+
+  const stream = await anthropic.messages.stream({
+    model: model,
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: 'user',
+        content: messageContent,
+      },
+    ],
+  });
+
+  console.log('Received response stream from Claude API');
+  const finalMessage = await stream.finalMessage();
+
+  console.log('Stream completed');
+  if (finalMessage.usage) {
+    console.log(
+      'Response tokens - Input:',
+      finalMessage.usage.input_tokens,
+      ', Output:',
+      finalMessage.usage.output_tokens,
+      ', Total:',
+      finalMessage.usage.input_tokens + finalMessage.usage.output_tokens
+    );
+  }
+
+  // Detect token truncation
+  if (finalMessage.stop_reason === 'max_tokens') {
+    throw new Error('Claude response truncated: stop_reason was max_tokens');
+  }
+
+  let analysisContent = '';
+  if (finalMessage.content && finalMessage.content.length > 0) {
+    analysisContent = finalMessage.content[0].text || '';
+  }
+
+  if (!analysisContent) {
+    throw new Error('No content received from Claude API');
+  }
+
+  // Clean markdown wrappers
+  let cleanedAnalysis = analysisContent;
+  if (cleanedAnalysis.startsWith('```html')) {
+    cleanedAnalysis = cleanedAnalysis.replace(/^```html\s*/, '').replace(/\s*```$/, '');
+  } else if (cleanedAnalysis.startsWith('```')) {
+    cleanedAnalysis = cleanedAnalysis.replace(/^```\s*/, '').replace(/\s*```$/, '');
+  }
+
+  cleanedAnalysis = cleanedAnalysis.trim();
+
+  // Validate output completeness and script
+  const validation = validateReportOutput(cleanedAnalysis, languageCode);
+  if (!validation.valid) {
+    throw new Error(`Output validation failed: ${validation.reason}`);
+  }
+
+  // Deterministically post-process font tags, lang attribute, and fallback font stacks
+  return postProcessReportHtml(cleanedAnalysis, languageCode);
+};
+
+/**
+ * Analyze document content using Claude AI with retry capability.
  * @param {Object} documentData - Document data (base64 or text)
  * @param {string} prompt - Analysis prompt/instructions
  * @param {string} documentType - Type of document ('pdf', 'html', 'text')
+ * @param {string} language - Target language ISO code (optional, defaults to 'en')
  * @returns {Promise<string>} - HTML analysis report
  */
-const analyzeWithClaude = async (documentData, prompt, documentType = 'pdf') => {
+const analyzeWithClaude = async (
+  documentData,
+  prompt,
+  documentType = 'pdf',
+  language = DEFAULT_LANGUAGE_CODE
+) => {
+  const basePrompt = prompt || loadAnalysisPrompt();
+  const effectiveLanguage = isMultiLangEnabled()
+    ? (getLanguageConfig(language)?.code || DEFAULT_LANGUAGE_CODE)
+    : DEFAULT_LANGUAGE_CODE;
+
   try {
-    // Validate API key
-    if (!process.env.CLAUDE_API_KEY || process.env.CLAUDE_API_KEY === 'your_claude_api_key_here') {
-      throw new Error('Claude API key not configured. Please add CLAUDE_API_KEY to your .env file.');
+    return await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+  } catch (firstError) {
+    console.warn(`Claude analysis attempt 1 failed: ${firstError.message}. Retrying once...`);
+    try {
+      return await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+    } catch (retryError) {
+      console.error('Claude analysis attempt 2 (retry) also failed:', retryError.message);
+
+      if (retryError.status === 401) {
+        throw new Error('Invalid Claude API key. Please check your API key configuration.');
+      } else if (retryError.status === 429) {
+        throw new Error('Claude API rate limit exceeded. Please try again later.');
+      } else if (retryError.status === 500) {
+        throw new Error('Claude API server error. Please try again later.');
+      }
+
+      throw new Error(`Claude analysis failed: ${retryError.message}`);
     }
-
-    // Get model from environment or use default
-    const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
-
-    // Load the full prompt (from file, env, or parameter)
-    const systemPrompt = prompt || loadAnalysisPrompt();
-
-    console.log('Analyzing document with Claude model:', model);
-    console.log('Prompt length:', systemPrompt.length, 'characters');
-
-    // Build the message content based on document type
-    let messageContent;
-    
-    if (documentType === 'pdf' && documentData.base64) {
-      // Send PDF file directly to Claude (native support)
-      messageContent = [
-        {
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: documentData.mediaType,
-            data: documentData.base64
-          }
-        },
-        {
-          type: 'text',
-          text: systemPrompt
-        }
-      ];
-    } else if (documentType === 'html' && documentData.base64) {
-      // Send HTML file as document
-      messageContent = [
-        {
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'text/html',
-            data: documentData.base64
-          }
-        },
-        {
-          type: 'text',
-          text: systemPrompt
-        }
-      ];
-    } else {
-      // Send as plain text
-      messageContent = [
-        {
-          type: 'text',
-          text: `${systemPrompt}\n\n---\nDOCUMENT CONTENT:\n${documentData.text}\n---`
-        }
-      ];
-    }
-
-    console.log('Sending request to Claude API...');
-
-    // Call Claude API with streaming for long-running requests
-    // Streaming is required for operations that may take longer than 10 minutes
-    const stream = await anthropic.messages.stream({
-      model: model,
-      max_tokens: 25000, // Increased to 25k tokens for comprehensive analysis reports
-      messages: [
-        {
-          role: 'user',
-          content: messageContent
-        }
-      ]
-    });
-
-    console.log('Received response stream from Claude API');
-
-    // Wait for the final message (this collects all chunks automatically)
-    const finalMessage = await stream.finalMessage();
-    
-    console.log('Stream completed');
-    console.log('Response tokens - Input:', finalMessage.usage.input_tokens, ', Output:', finalMessage.usage.output_tokens, ', Total:', (finalMessage.usage.input_tokens + finalMessage.usage.output_tokens));
-
-    // Extract the analysis from the final message
-    let analysisContent = '';
-    
-    if (finalMessage.content && finalMessage.content.length > 0) {
-      analysisContent = finalMessage.content[0].text || '';
-    }
-    
-    if (!analysisContent) {
-      throw new Error('No content received from Claude API');
-    }
-
-    // Clean up the response - remove markdown code blocks if present
-    let cleanedAnalysis = analysisContent;
-    
-    // Remove markdown code block wrappers if Claude wraps HTML in them
-    if (cleanedAnalysis.startsWith('```html')) {
-      cleanedAnalysis = cleanedAnalysis.replace(/^```html\s*/, '').replace(/\s*```$/, '');
-    } else if (cleanedAnalysis.startsWith('```')) {
-      cleanedAnalysis = cleanedAnalysis.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-
-    return cleanedAnalysis.trim();
-  } catch (error) {
-    console.error('Error analyzing with Claude:', error.message);
-    
-    // Provide more specific error messages
-    if (error.status === 401) {
-      throw new Error('Invalid Claude API key. Please check your API key configuration.');
-    } else if (error.status === 429) {
-      throw new Error('Claude API rate limit exceeded. Please try again later.');
-    } else if (error.status === 500) {
-      throw new Error('Claude API server error. Please try again later.');
-    }
-    
-    throw new Error(`Claude analysis failed: ${error.message}`);
   }
 };
 
@@ -210,37 +394,43 @@ const analyzeWithClaude = async (documentData, prompt, documentType = 'pdf') => 
  * @param {string} filePath - Path to uploaded document
  * @param {string} fileName - Original file name
  * @param {string} customPrompt - Optional custom prompt
+ * @param {string} language - Target language ISO code (optional, defaults to 'en')
  * @returns {Promise<{content: string, type: string}>} - Document content and type
  */
-const processDocument = async (filePath, fileName, customPrompt = null) => {
+const processDocument = async (
+  filePath,
+  fileName,
+  customPrompt = null,
+  language = DEFAULT_LANGUAGE_CODE
+) => {
   try {
     const fileExtension = path.extname(fileName).toLowerCase();
     let documentData;
     let documentType;
 
-    // Prepare document based on file type
     if (['.pdf'].includes(fileExtension)) {
-      // Send PDF directly to Claude as base64
       documentData = await readFileAsBase64(filePath);
       documentType = 'pdf';
     } else if (['.html', '.htm'].includes(fileExtension)) {
-      // Send HTML directly to Claude as base64
       documentData = await readFileAsBase64(filePath);
       documentType = 'html';
     } else {
-      // Try to read as text
       const content = await fs.promises.readFile(filePath, 'utf-8');
       documentData = { text: content };
       documentType = 'text';
     }
 
-    // Analyze with Claude
-    const analysisHtml = await analyzeWithClaude(documentData, customPrompt, documentType);
+    const analysisHtml = await analyzeWithClaude(
+      documentData,
+      customPrompt,
+      documentType,
+      language
+    );
 
     return {
       content: analysisHtml,
       type: 'html',
-      originalType: documentType
+      originalType: documentType,
     };
   } catch (error) {
     console.error('Error processing document:', error.message);
@@ -249,8 +439,12 @@ const processDocument = async (filePath, fileName, customPrompt = null) => {
 };
 
 module.exports = {
+  buildLanguageDirective,
+  postProcessReportHtml,
+  validateReportOutput,
   readFileAsBase64,
   readHTMLFile,
   analyzeWithClaude,
-  processDocument
+  processDocument,
 };
+

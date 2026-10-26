@@ -8,6 +8,7 @@ const {
   analyzeWithClaude,
   downloadClaudeAnalysis,
   getFranchiseAIDocuments,
+  downloadOriginalDocument,
 } = require("../controllers/aiAnalysisController");
 const {
   getAIAnalysisSettings,
@@ -80,6 +81,16 @@ router.get(
   auth,
   rbac("admin"),
   downloadClaudeAnalysis,
+);
+
+// @route   GET /api/ai-analysis/admin/original/:id
+// @desc    View or download original uploaded report (Admin only)
+// @access  Private/Admin
+router.get(
+  "/admin/original/:id",
+  auth,
+  rbac("admin"),
+  downloadOriginalDocument,
 );
 
 // @route   GET /api/ai-analysis/admin/settings

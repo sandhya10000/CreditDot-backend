@@ -6,6 +6,11 @@ const {
   sendAIAnalysisResponseToFranchise,
 } = require("../utils/emailService");
 const { processDocument } = require("../utils/claudeService");
+const {
+  getLanguageConfig,
+  isMultiLangEnabled,
+  DEFAULT_LANGUAGE_CODE,
+} = require("../config/languages");
 const path = require("path");
 const fs = require("fs");
 
@@ -53,6 +58,12 @@ const uploadDocument = async (req, res) => {
         return res.status(404).json({ message: "Franchise not found" });
       }
 
+      // Parse and whitelist language (only when MULTILANG_ENABLED flag is true)
+      const requestedLang = isMultiLangEnabled() && req.body && req.body.language ? req.body.language : DEFAULT_LANGUAGE_CODE;
+      const langConfig = getLanguageConfig(requestedLang);
+      const effectiveLanguage = isMultiLangEnabled() ? langConfig.code : DEFAULT_LANGUAGE_CODE;
+      const effectiveLanguageName = isMultiLangEnabled() ? langConfig.name : "English";
+
       // Create AI Analysis document record
       const aiAnalysisDoc = new AIAnalysis({
         franchise: franchise._id,
@@ -61,6 +72,8 @@ const uploadDocument = async (req, res) => {
         uploadedDocument: req.file.path,
         uploadedDocumentName: req.file.originalname,
         status: "uploaded",
+        language: effectiveLanguage,
+        languageName: effectiveLanguageName,
       });
 
       await aiAnalysisDoc.save();
@@ -92,10 +105,15 @@ const uploadDocument = async (req, res) => {
             req.file.path,
             req.file.originalname,
             null, // Use default prompt from env
+            effectiveLanguage,
           );
 
-          // Generate HTML file name
-          const htmlFileName = `analysis_${path.basename(req.file.originalname, path.extname(req.file.originalname))}_${Date.now()}.html`;
+          // Generate HTML file name: English keeps legacy format, non-English adds language code
+          const baseName = path.basename(req.file.originalname, path.extname(req.file.originalname));
+          const htmlFileName = effectiveLanguage === DEFAULT_LANGUAGE_CODE
+            ? `analysis_${baseName}_${Date.now()}.html`
+            : `analysis_${baseName}_${effectiveLanguage}_${Date.now()}.html`;
+
           const htmlFilePath = path.join(
             path.dirname(req.file.path),
             htmlFileName,
@@ -350,9 +368,17 @@ const analyzeWithClaude = async (req, res) => {
         .json({ message: "Uploaded document file not found" });
     }
 
-    // Update status to processing
+    // Resolve and whitelist language (only when MULTILANG_ENABLED flag is true)
+    const rawRequestedLang = req.body && req.body.language ? req.body.language : (document.language || DEFAULT_LANGUAGE_CODE);
+    const langConfig = getLanguageConfig(rawRequestedLang);
+    const effectiveLanguage = isMultiLangEnabled() ? langConfig.code : DEFAULT_LANGUAGE_CODE;
+    const effectiveLanguageName = isMultiLangEnabled() ? langConfig.name : "English";
+
+    // Update status to processing and update language
     document.claudeAnalysisStatus = "processing";
     document.analysisPrompt = req.body.prompt || process.env.AI_ANALYSIS_PROMPT;
+    document.language = effectiveLanguage;
+    document.languageName = effectiveLanguageName;
     await document.save();
 
     // Run analysis asynchronously
@@ -363,10 +389,15 @@ const analyzeWithClaude = async (req, res) => {
           document.uploadedDocument,
           document.uploadedDocumentName,
           req.body.prompt || null,
+          effectiveLanguage,
         );
 
-        // Generate HTML file name
-        const htmlFileName = `analysis_${path.basename(document.uploadedDocumentName, path.extname(document.uploadedDocumentName))}_${Date.now()}.html`;
+        // Generate HTML file name: English keeps legacy format, non-English adds language code
+        const baseName = path.basename(document.uploadedDocumentName, path.extname(document.uploadedDocumentName));
+        const htmlFileName = effectiveLanguage === DEFAULT_LANGUAGE_CODE
+          ? `analysis_${baseName}_${Date.now()}.html`
+          : `analysis_${baseName}_${effectiveLanguage}_${Date.now()}.html`;
+
         const htmlFilePath = path.join(
           path.dirname(document.uploadedDocument),
           htmlFileName,
@@ -430,6 +461,7 @@ const analyzeWithClaude = async (req, res) => {
       message:
         "AI analysis initiated. You will receive the report via email once completed.",
       documentId: document._id,
+      language: effectiveLanguage,
     });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -515,6 +547,111 @@ const getFranchiseAIDocuments = async (req, res) => {
     });
   }
 };
+
+// Download or view original uploaded document (Admin only)
+const downloadOriginalDocument = async (req, res) => {
+  try {
+    const document = await AIAnalysis.findById(req.params.id);
+
+    if (!document || !document.uploadedDocument) {
+      return res.status(404).json({
+        message: "Original uploaded file not found",
+      });
+    }
+
+    const originalFilename =
+      document.uploadedDocumentName ||
+      path.basename(document.uploadedDocument) ||
+      "original_document";
+
+    // Sanitize filename for Content-Disposition header
+    const safeFilename = originalFilename.replace(/["'\r\n]/g, "_");
+    const fileExt = path.extname(originalFilename).toLowerCase();
+    const isHtml = fileExt === ".html" || fileExt === ".htm";
+    const isPdf = fileExt === ".pdf";
+
+    // Set proper Content-Type
+    let contentType = "application/octet-stream";
+    if (isPdf) {
+      contentType = "application/pdf";
+    } else if (isHtml) {
+      contentType = "text/html; charset=utf-8";
+    }
+
+    // Determine disposition: HTML must ALWAYS be attachment to prevent inline execution on app origin
+    const dispositionType = isHtml ? "attachment" : req.query.disposition === "attachment" ? "attachment" : "inline";
+
+    // Handle AWS S3 URLs or Keys (production)
+    const isS3Url =
+      typeof document.uploadedDocument === "string" &&
+      (document.uploadedDocument.startsWith("http://") ||
+        document.uploadedDocument.startsWith("https://") ||
+        document.uploadedDocument.startsWith("s3://") ||
+        document.uploadedDocument.startsWith("kyc-documents/"));
+
+    if (isS3Url) {
+      try {
+        const aws = require("aws-sdk");
+        const s3 = new aws.S3({
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          region: process.env.AWS_REGION,
+        });
+
+        let s3Key = document.uploadedDocument;
+        if (s3Key.startsWith("http://") || s3Key.startsWith("https://")) {
+          const urlObj = new URL(s3Key);
+          s3Key = decodeURIComponent(urlObj.pathname.replace(/^\/+/, ""));
+        }
+
+        const bucketName = process.env.AWS_S3_BUCKET_NAME;
+        const s3Params = {
+          Bucket: bucketName,
+          Key: s3Key,
+          Expires: 300, // 5 minutes
+          ResponseContentType: contentType,
+          ResponseContentDisposition: `${dispositionType}; filename="${safeFilename}"`,
+        };
+
+        const signedUrl = await s3.getSignedUrlPromise("getObject", s3Params);
+        return res.redirect(signedUrl);
+      } catch (s3Error) {
+        console.error("S3 error getting presigned URL:", s3Error.message);
+        return res.status(500).json({
+          message: "Failed to access original file from storage",
+          error: s3Error.message,
+        });
+      }
+    }
+
+    // Local file handling
+    const resolvedPath = path.resolve(document.uploadedDocument);
+
+    // Path traversal check: verify path exists
+    if (!fs.existsSync(resolvedPath)) {
+      return res.status(404).json({
+        message: "Original file not found on disk",
+      });
+    }
+
+    // Set HTTP response headers
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `${dispositionType}; filename="${safeFilename}"`
+    );
+
+    // Stream file to client
+    return res.sendFile(resolvedPath);
+  } catch (error) {
+    console.error("Error retrieving original document:", error);
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   uploadDocument,
   getAllDocuments,
@@ -524,4 +661,5 @@ module.exports = {
   analyzeWithClaude,
   downloadClaudeAnalysis,
   getFranchiseAIDocuments,
+  downloadOriginalDocument,
 };

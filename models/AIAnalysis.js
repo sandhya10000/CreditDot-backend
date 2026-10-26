@@ -76,6 +76,14 @@ const aiAnalysisSchema = new mongoose.Schema(
     analyzedAt: {
       type: Date,
     },
+    language: {
+      type: String,
+      default: "en",
+    },
+    languageName: {
+      type: String,
+      default: "English",
+    },
   },
   {
     timestamps: true,
