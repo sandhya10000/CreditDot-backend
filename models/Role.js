@@ -40,6 +40,11 @@ const roleSchema = new mongoose.Schema(
   },
 );
 
+// Drop permission keys that no longer exist (retired sections), so older roles still save
+roleSchema.pre("validate", function () {
+  this.permissions = this.permissions.filter((key) => PERMISSION_KEYS.includes(key));
+});
+
 // Role names are unique regardless of case ("Credit Analyst" = "credit analyst")
 roleSchema.index(
   { name: 1 },

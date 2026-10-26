@@ -239,6 +239,12 @@ app.use(require("./middleware/errorHandler"));
 app.use("/api", require("./routes/prefilledRoute"));
 app.use("/api", require("./routes/business"));
 //post upload api route
+// Admin marketing, case-study and reward routes: admin only; staff need the Marketing section
+app.use(
+  ["/api/admin/marketing", "/api/admin/case-studies", "/api/admin/reward"],
+  require("./middleware/auth"),
+  require("./middleware/rbac")("admin"),
+);
 app.use("/api/admin/marketing", require("./routes/marketingRoutes"));
 app.use("/api/admin/case-studies", require("./routes/CaseStudyRoutes"));
 //get api for case study

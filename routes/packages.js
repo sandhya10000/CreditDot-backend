@@ -22,6 +22,11 @@ router.get('/', getPackages);
 // @access  Private/Admin
 router.get('/all', auth, rbac('admin'), getAllPackages);
 
+// @route   GET /api/packages/options
+// @desc    Same list as /all, read-only, for franchise onboarding (package dropdowns)
+// @access  Private/Admin (staff need the Franchises section, not Packages)
+router.get('/options', auth, rbac('admin'), getAllPackages);
+
 // @route   GET /api/packages/:id
 // @desc    Get package by ID
 // @access  Public

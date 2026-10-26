@@ -14,9 +14,6 @@ const {
   getTransactionById,
   getAllPayouts,
   updatePayout,
-  getAllReferrals,
-  getReferralSettings,
-  updateReferralSettings,
   getAllCreditReportsAdmin,
   getSettings,
   updateSetting,
@@ -167,21 +164,6 @@ router.get(
   rbac("admin"),
   getFranchisePayouts,
 );
-
-// @route   GET /api/admin/referrals
-// @desc    Get all referrals
-// @access  Private/Admin
-router.get("/referrals", auth, rbac("admin"), getAllReferrals);
-
-// @route   GET /api/admin/referral-settings
-// @desc    Get referral settings
-// @access  Private/Admin
-router.get("/referral-settings", auth, rbac("admin"), getReferralSettings);
-
-// @route   PUT /api/admin/referral-settings
-// @desc    Update referral settings
-// @access  Private/Admin
-router.put("/referral-settings", auth, rbac("admin"), updateReferralSettings);
 
 // @route   GET /api/admin/credit-reports
 // @desc    Get all credit reports

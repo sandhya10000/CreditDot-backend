@@ -15,8 +15,8 @@ const PERMISSIONS = [
   { key: "blogs", label: "Blogs" },
   { key: "relationship_managers", label: "Relationship Managers" },
   { key: "google_sheets", label: "Google Sheets" },
-  { key: "referrals", label: "Referrals" },
   { key: "users", label: "Users" },
+  { key: "marketing", label: "Marketing Materials, Case Studies & Rewards" },
   { key: "settings", label: "Settings & API Keys" },
 ];
 
@@ -35,25 +35,26 @@ const SCOPABLE_KEYS = [
   "business",
   "ai_analysis",
   "support_tickets",
-  "referrals",
 ];
 
 // First matching rule wins. Matched against req.baseUrl + req.path,
 // e.g. "/api/admin/leads/12". Any path with no rule is denied to staff.
 const ROUTE_RULES = [
+  [/^\/api\/admin\/(marketing|case-studies|reward)/, "marketing"],
   [/^\/api\/admin\/dashboard/, "dashboard"],
   [/^\/api\/admin\/download-stats/, "dashboard"],
   [/^\/api\/admin\/users/, "users"],
   [/^\/api\/admin\/(leads|franchise-leads|credit-repair)/, "leads"],
   [/^\/api\/leads/, "leads"],
   [/^\/api\/admin\/(transactions|payouts|credits)/, "finance"],
-  [/^\/api\/admin\/referral/, "referrals"],
   [/^\/api\/admin\/credit-reports/, "credit"],
   [/^\/api\/credit\/(reports\/all|credit-check-v2)/, "credit"],
   [/^\/api\/credit\/settings/, "settings"],
   [/^\/api\/admin\/settings/, "settings"],
   [/^\/api\/admin\/franchises|^\/api\/franchises/, "franchises"],
   [/^\/api\/kyc/, "kyc"],
+  // Read-only package list used when creating franchises; needs Franchises, not Packages
+  [/^\/api\/packages\/options/, "franchises"],
   [/^\/api\/(customer-)?packages/, "packages"],
   [/^\/api\/admin\/business|^\/api\/(all|amc)(\/|$)|^\/api\/business/, "business"],
   [/^\/api\/franchise\/(?!reward)/, "business"],
