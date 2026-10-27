@@ -1,5 +1,6 @@
 const AIAnalysis = require("../models/AIAnalysis");
 const Franchise = require("../models/Franchise");
+const Package = require("../models/Package");
 const { upload } = require("../utils/fileUpload");
 const {
   sendAIAnalysisNotificationToAdmin,
@@ -11,8 +12,45 @@ const {
   isMultiLangEnabled,
   DEFAULT_LANGUAGE_CODE,
 } = require("../config/languages");
+const { resolveFranchiseAiLimit } = require("../utils/aiLimitService");
 const path = require("path");
 const fs = require("fs");
+
+// Diamond AI analysis hard cap (backend-only, never exposed to the UI)
+const DIAMOND_AI_ANALYSIS_HARD_CAP = parseInt(
+  process.env.DIAMOND_AI_ANALYSIS_HARD_CAP || "1000",
+  10,
+);
+
+/**
+ * Atomically increments aiReportsUsed (and aiUsed) on success.
+ * For Diamond (unlimited) packages, enforces the hidden DIAMOND_AI_ANALYSIS_HARD_CAP.
+ * Returns { ok: true } on success or { ok: false, fairUseLimitReached: true } when
+ * the Diamond cap has been exceeded (never happens for Silver/Gold/Platinum).
+ */
+async function atomicIncrementAiUsage(franchiseId, isUnlimited) {
+  if (isUnlimited) {
+    // Diamond: enforce hidden hard cap with atomic conditional update
+    const updated = await Franchise.findOneAndUpdate(
+      { _id: franchiseId, aiReportsUsed: { $lt: DIAMOND_AI_ANALYSIS_HARD_CAP } },
+      { $inc: { aiReportsUsed: 1, aiUsed: 1 } },
+      { new: false }, // we only need to know if the condition matched
+    );
+    if (!updated) {
+      // Cap already reached (concurrent-safe)
+      return { ok: false, fairUseLimitReached: true };
+    }
+    return { ok: true };
+  }
+
+  // Non-Diamond: simple unconditional increment (limit was already checked before analysis)
+  await Franchise.findOneAndUpdate(
+    { _id: franchiseId },
+    { $inc: { aiReportsUsed: 1, aiUsed: 1 } },
+  );
+  return { ok: true };
+}
+
 
 // Configure multer for PDF uploads
 const pdfUpload = upload.single("document");
@@ -47,15 +85,42 @@ const uploadDocument = async (req, res) => {
           .json({ message: "Only PDF and HTML files are allowed" });
       }
 
-      // Get franchise details
+      // Get franchise details with assigned packages
       const franchise = await Franchise.findOne({
         userId: req.user.id,
-      }).populate("userId", "name email");
+      })
+        .populate("userId", "name email")
+        .populate("assignedPackages");
 
       if (!franchise) {
         // Delete the uploaded file
         fs.unlinkSync(req.file.path);
         return res.status(404).json({ message: "Franchise not found" });
+      }
+
+      // Check package limits
+      const limitInfo = resolveFranchiseAiLimit(franchise);
+      if (!limitInfo.hasActivePackage) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({
+          success: false,
+          code: "AI_NO_ACTIVE_PACKAGE",
+          message:
+            "No active package found. Please purchase or activate a package to use AI report analysis.",
+          used: limitInfo.used,
+          limit: limitInfo.limit,
+        });
+      }
+
+      if (!limitInfo.isUnlimited && limitInfo.used >= limitInfo.limit) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({
+          success: false,
+          code: "AI_LIMIT_REACHED",
+          message: `You have used all ${limitInfo.limit} AI report analyses in your ${limitInfo.packageName} package. Please upgrade to continue.`,
+          used: limitInfo.used,
+          limit: limitInfo.limit,
+        });
       }
 
       // Parse and whitelist language (only when MULTILANG_ENABLED flag is true)
@@ -121,6 +186,23 @@ const uploadDocument = async (req, res) => {
 
           // Save HTML analysis to file
           fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+
+          // Atomically increment AI usage counter on successful analysis.
+          // For Diamond users the hidden hard cap is enforced inside atomicIncrementAiUsage.
+          const incResult = await atomicIncrementAiUsage(
+            franchise._id,
+            limitInfo.isUnlimited,
+          );
+          if (!incResult.ok && incResult.fairUseLimitReached) {
+            // Update document status so the UI shows the failure cleanly
+            aiAnalysisDoc.claudeAnalysisStatus = "failed";
+            aiAnalysisDoc.claudeAnalysisError =
+              "You have reached the maximum AI analysis usage for your plan. Please contact your Relationship Manager.";
+            await aiAnalysisDoc.save();
+            // Return early — do NOT send email or mark completed
+            return;
+          }
+
 
           // Update document with analysis
           aiAnalysisDoc.claudeAnalysisHtml = htmlFilePath;
@@ -350,6 +432,36 @@ const analyzeWithClaude = async (req, res) => {
       return res.status(404).json({ message: "Document not found" });
     }
 
+    // Check if franchise has active package and is under limit
+    const franchise = await Franchise.findById(document.franchise).populate(
+      "assignedPackages",
+    );
+    if (!franchise) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+
+    const limitInfo = resolveFranchiseAiLimit(franchise);
+    if (!limitInfo.hasActivePackage) {
+      return res.status(403).json({
+        success: false,
+        code: "AI_NO_ACTIVE_PACKAGE",
+        message:
+          "No active package found. Please purchase or activate a package to use AI report analysis.",
+        used: limitInfo.used,
+        limit: limitInfo.limit,
+      });
+    }
+
+    if (!limitInfo.isUnlimited && limitInfo.used >= limitInfo.limit) {
+      return res.status(403).json({
+        success: false,
+        code: "AI_LIMIT_REACHED",
+        message: `You have used all ${limitInfo.limit} AI report analyses in your ${limitInfo.packageName} package. Please upgrade to continue.`,
+        used: limitInfo.used,
+        limit: limitInfo.limit,
+      });
+    }
+
     // Check if already analyzed
     if (
       document.claudeAnalysisStatus === "completed" &&
@@ -405,6 +517,21 @@ const analyzeWithClaude = async (req, res) => {
 
         // Save HTML analysis to file
         fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+
+        // Atomically increment AI usage counter on successful analysis.
+        // For Diamond users the hidden hard cap is enforced inside atomicIncrementAiUsage.
+        const incResult = await atomicIncrementAiUsage(
+          franchise._id,
+          limitInfo.isUnlimited,
+        );
+        if (!incResult.ok && incResult.fairUseLimitReached) {
+          document.claudeAnalysisStatus = "failed";
+          document.claudeAnalysisError =
+            "You have reached the maximum AI analysis usage for your plan. Please contact your Relationship Manager.";
+          await document.save();
+          return;
+        }
+
 
         // Update document with analysis
         document.claudeAnalysisHtml = htmlFilePath;
@@ -644,6 +771,41 @@ const downloadOriginalDocument = async (req, res) => {
   }
 };
 
+// Get AI Analysis package usage for logged-in franchise user
+const getFranchiseAiUsage = async (req, res) => {
+  try {
+    const franchise = await Franchise.findOne({ userId: req.user.id }).populate(
+      "assignedPackages",
+    );
+
+    if (!franchise) {
+      return res.status(404).json({
+        success: false,
+        message: "Franchise not found",
+      });
+    }
+
+    const limitInfo = resolveFranchiseAiLimit(franchise);
+
+    return res.status(200).json({
+      success: true,
+      hasActivePackage: limitInfo.hasActivePackage,
+      packageName: limitInfo.packageName,
+      used: limitInfo.used,
+      limit: limitInfo.limit,
+      isUnlimited: limitInfo.isUnlimited,
+      remaining: limitInfo.remaining,
+    });
+  } catch (error) {
+    console.error("Error fetching AI analysis usage:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   uploadDocument,
   getAllDocuments,
@@ -654,4 +816,5 @@ module.exports = {
   downloadClaudeAnalysis,
   getFranchiseAIDocuments,
   downloadOriginalDocument,
+  getFranchiseAiUsage,
 };

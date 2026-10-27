@@ -9,6 +9,7 @@ const {
   downloadClaudeAnalysis,
   getFranchiseAIDocuments,
   downloadOriginalDocument,
+  getFranchiseAiUsage,
 } = require("../controllers/aiAnalysisController");
 const {
   getAIAnalysisSettings,
@@ -18,6 +19,16 @@ const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
 
 const router = express.Router();
+
+// @route   GET /api/ai-analysis/franchise/usage
+// @desc    Get AI analysis usage stats and limits for current franchise
+// @access  Private/Franchise User
+router.get(
+  "/franchise/usage",
+  auth,
+  rbac("franchise_user"),
+  getFranchiseAiUsage,
+);
 
 // @route   POST /api/ai-analysis/upload
 // @desc    Upload PDF document for AI analysis

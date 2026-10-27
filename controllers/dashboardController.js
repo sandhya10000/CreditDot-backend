@@ -75,9 +75,12 @@ const getFranchiseDashboard = async (req, res) => {
     const availableCredits = franchise.credits || 0;
     const usedCredits = totalCredits - availableCredits;
 
-    //2. AI (Used and Avaiable)
-    const aiTotal = franchise.aiTotal || 100; //default
-    const aiUsed = franchise.aiUsed || 0;
+    //2. AI (Used and Available) based on active package
+    const { resolveFranchiseAiLimit } = require("../utils/aiLimitService");
+    const aiLimitInfo = resolveFranchiseAiLimit(franchise);
+    const aiUsed = aiLimitInfo.used;
+    const aiTotal = aiLimitInfo.isUnlimited ? "Unlimited" : (aiLimitInfo.limit ?? 10);
+    const aiAvailable = aiLimitInfo.isUnlimited ? "Unlimited" : (aiLimitInfo.remaining ?? 0);
 
     //Total Cases (using Leads as case)
     const totalCases = totalLeads;
@@ -120,7 +123,8 @@ const getFranchiseDashboard = async (req, res) => {
         },
         aiDetails: {
           used: aiUsed,
-          available: aiTotal - aiUsed,
+          available: aiAvailable,
+          total: aiTotal,
         },
 
         business: {
