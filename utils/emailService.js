@@ -107,7 +107,7 @@ const sendRegistrationApprovalEmail = async (
 
     const mailOptions = {
       from: '"Credit Dost Support" <support@creditdost.co.in> ',
-      to: user.email,
+      to: options.to || user.email,
       subject: options.isResend
         ? "Your Login Credentials - Credit Dost Franchise Platform"
         : "Registration Approved - Credit Dost Franchise Platform",
@@ -1002,7 +1002,89 @@ Credit Dost Support
   });
 };
 
+// ---- Support tickets ----
+const escapeHtml = (value = "") =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || "support@creditdost.co.in";
+
+const sendSupportTicketCreatedEmail = async (ticket, franchiseUser) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: SUPPORT_INBOX,
+    subject: `[${ticket.ticketNumber}] New support ticket: ${ticket.subject}`,
+    html: `
+      <h2>New support ticket</h2>
+      <p><strong>Ticket:</strong> ${escapeHtml(ticket.ticketNumber)}</p>
+      <p><strong>From:</strong> ${escapeHtml(franchiseUser?.name)} (${escapeHtml(franchiseUser?.email)})</p>
+      <p><strong>Category:</strong> ${escapeHtml(ticket.category)}</p>
+      <p><strong>Priority:</strong> ${escapeHtml(ticket.priority)}</p>
+      <p><strong>Subject:</strong> ${escapeHtml(ticket.subject)}</p>
+      <p>${escapeHtml(ticket.message).replace(/\n/g, "<br>")}</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+const sendSupportTicketReplyEmail = async (ticket, to, reply, fromRole) => {
+  const isAdminReply = fromRole === "admin";
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to,
+    subject: `[${ticket.ticketNumber}] ${isAdminReply ? "New reply from Credit Dost" : "New reply from franchise"}: ${ticket.subject}`,
+    html: `
+      <h2>New reply on ${escapeHtml(ticket.ticketNumber)}</h2>
+      <p><strong>Subject:</strong> ${escapeHtml(ticket.subject)}</p>
+      <p>${escapeHtml(reply.message).replace(/\n/g, "<br>")}</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+const sendSupportTicketStatusEmail = async (ticket, user, status) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: user.email,
+    subject: `[${ticket.ticketNumber}] Ticket status: ${status}`,
+    html: `
+      <h2>Your ticket has been updated</h2>
+      <p>Hello ${escapeHtml(user.name)},</p>
+      <p><strong>${escapeHtml(ticket.ticketNumber)}</strong> (${escapeHtml(ticket.subject)}) is now <strong>${escapeHtml(status)}</strong>.</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+// ---- Staff accounts ----
+const sendStaffCredentialsEmail = async (user, tempPassword, roleName) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: user.email,
+    subject: "Your Credit Dost staff account",
+    html: `
+      <h2>Welcome to Credit Dost!</h2>
+      <p>Hello ${escapeHtml(user.name)},</p>
+      <p>You have been added to the Credit Dost team with the role <strong>${escapeHtml(roleName)}</strong>.</p>
+      <p><strong>Login email:</strong> ${escapeHtml(user.email)}<br>
+      <strong>Temporary password:</strong> ${escapeHtml(tempPassword)}</p>
+      <p>Please log in and change your password. Login here: <a href="${process.env.FRONTEND_URL || "#"}/login">${process.env.FRONTEND_URL || ""}/login</a></p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
 module.exports = {
+  sendStaffCredentialsEmail,
+  sendSupportTicketCreatedEmail,
+  sendSupportTicketReplyEmail,
+  sendSupportTicketStatusEmail,
   sendJobApplicationEmail,
   sendRegistrationEmail,
   sendAdminNotificationEmail,

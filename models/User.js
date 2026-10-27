@@ -48,7 +48,23 @@ const userSchema = new mongoose.Schema(
         "relationship_manager",
         "credit_analyst",
         "franchise",
+        "staff",
       ],
+    },
+    // Permanent serial for Business Managers, e.g. "RM-3"
+    staffCode: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    // Set for staff accounts; their sections are limited by this role.
+    // Admins without a staffRole keep full access.
+    staffRole: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Role",
+      default: null,
+      index: true,
     },
     isActive: {
       type: Boolean,

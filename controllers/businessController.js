@@ -123,11 +123,25 @@ const submitBusinessForm = async (req, res) => {
       bankAccountNumber,
       ifscCode,
       documents,
+      customerType,
+      businessDetails,
 
       //Admin
       manualAmount,
       franchiseId,
     } = req.body;
+
+    const isBusinessCustomer = customerType === "business";
+    if (isBusinessCustomer) {
+      const missing = BusinessForm.BUSINESS_DETAIL_FIELDS.filter(
+        (field) => !businessDetails?.[field]?.toString().trim(),
+      );
+      if (missing.length) {
+        return res.status(400).json({
+          message: `Please fill all business details: ${missing.join(", ")}`,
+        });
+      }
+    }
 
     // Check if selected package exists and is active
 
@@ -156,6 +170,16 @@ const submitBusinessForm = async (req, res) => {
       createdByRole: req.user.role,
       entrySource: req.user.role === "franchise" ? "Franchise" : "Direct Login",
       manualAmount: Number(manualAmount) || 0,
+      customerType: isBusinessCustomer ? "business" : "individual",
+      businessDetails: isBusinessCustomer
+        ? {
+            directorName: businessDetails.directorName,
+            gstUsername: businessDetails.gstUsername,
+            gstNumber: businessDetails.gstNumber,
+            companyType: businessDetails.companyType,
+            companyPanNumber: businessDetails.companyPanNumber,
+          }
+        : undefined,
       customerName,
       customerEmail: customerEmail.toLowerCase(),
       customerPhone,
@@ -424,6 +448,13 @@ const getAllBusinessForms = async (req, res) => {
       ["pending", "paid", "failed"].includes(paymentStatus)
     ) {
       filter.paymentStatus = paymentStatus;
+    }
+
+    // Records created before customerType existed count as individual
+    if (req.query.customerType === "business") {
+      filter.customerType = "business";
+    } else if (req.query.customerType === "individual") {
+      filter.customerType = { $ne: "business" };
     }
 
     if (search) {

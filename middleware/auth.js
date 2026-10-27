@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Role = require('../models/Role');
 const Franchise = require('../models/Franchise');
 
 const auth = async (req, res, next) => {
@@ -33,7 +34,20 @@ const auth = async (req, res, next) => {
       console.log('Deleted account, access denied:', user.email);
       return res.status(403).json({ message: 'Account has been deleted. Please contact admin.' });
     }
-    
+
+    // Staff accounts take their permissions from their role, checked on every request
+    // so role edits and deactivation apply without waiting for the token to expire
+    if (user.staffRole) {
+      const staffRole = await Role.findById(user.staffRole).select('name permissions isActive limitToOwnFranchises');
+      if (!user.isActive || !staffRole || !staffRole.isActive) {
+        return res.status(403).json({ message: 'Staff access has been disabled. Please contact admin.' });
+      }
+      user.permissions = staffRole.permissions;
+      user.staffRoleName = staffRole.name;
+      // Business Managers only see franchises they own (see utils/franchiseScope.js)
+      user.scopedToOwnFranchises = Boolean(staffRole.limitToOwnFranchises);
+    }
+
     console.log('Authenticated user:', user.email, 'Role:', user.role);
     
     // If user is a franchise user, get their franchiseId

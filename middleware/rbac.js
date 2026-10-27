@@ -1,3 +1,5 @@
+const { permissionForRoute, SCOPABLE_KEYS } = require("../config/permissions");
+
 const rbac = (...roles) => {
   return (req, res, next) => {
     console.log("RBAC middleware hit, required roles:", roles);
@@ -26,6 +28,23 @@ const rbac = (...roles) => {
           // .json({ message: "Access forbidden: insufficient permissions" });
           .json({ message: JSON.stringify(roles) })
       );
+    }
+
+    // Staff accounts are limited to the sections granted by their role.
+    // Full admins (no staffRole) are not checked here.
+    if (req.user.role === "admin" && req.user.staffRole) {
+      const section = permissionForRoute(req.baseUrl + req.path);
+      if (!section || !(req.user.permissions || []).includes(section)) {
+        return res
+          .status(403)
+          .json({ message: "You do not have access to this section" });
+      }
+      // Business Managers may only use sections that are scoped to their franchises
+      if (req.user.scopedToOwnFranchises && !SCOPABLE_KEYS.includes(section)) {
+        return res
+          .status(403)
+          .json({ message: "This section is not available to Business Managers" });
+      }
     }
 
     console.log("User has required permissions, proceeding to next middleware");

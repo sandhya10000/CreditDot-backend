@@ -906,6 +906,8 @@ const getAllFranchisesWithCredits = async (req, res) => {
 // Credentials / invite helpers
 // =========================
 
+const { resolveBusinessManagerId } = require("../utils/franchiseScope");
+
 const RESEND_COOLDOWN_MS = 60 * 1000;
 
 // 10-char random hex password (always meets the 6-char schema minimum)
@@ -975,9 +977,34 @@ const loadFranchisePartner = async (franchiseId) => {
   return { franchise, user };
 };
 
+// Copies the franchise credentials email to the creating Business Manager and the admin.
+// Each copy is sent separately so one failing address does not block the other.
+const sendFranchiseCopiesToManagerAndAdmin = async (req, user, franchise, tempPassword) => {
+  if (!req.user?.scopedToOwnFranchises) return;
+
+  const recipients = [req.user.email, process.env.ADMIN_EMAIL]
+    .filter(Boolean)
+    .map((email) => email.trim().toLowerCase());
+
+  for (const to of new Set(recipients)) {
+    try {
+      await sendRegistrationApprovalEmail(user, franchise, tempPassword, { to });
+    } catch (copyError) {
+      console.error(`Franchise copy email to ${to} failed:`, copyError);
+    }
+  }
+};
+
 const createFranchiseUser = async (req, res) => {
   try {
     const { name, email, assignedPackages, role, subRole } = req.body;
+
+    // Admin staff must be created from the Staff page so they get a role's permissions
+    if (role === "admin") {
+      return res.status(400).json({
+        message: "Staff accounts are created from the Staff page and assigned a role",
+      });
+    }
 
     // Default values
     const phone = "0000000000";
@@ -1034,6 +1061,8 @@ const createFranchiseUser = async (req, res) => {
 
         phone,
         franchiseCode: null, // <-- add this
+        // Business Manager who owns this partner (creator, or admin's pick)
+        businessManager: await resolveBusinessManagerId(req, req.body.businessManagerId),
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
@@ -1104,6 +1133,9 @@ const createFranchiseUser = async (req, res) => {
         await markCredentialsSent(user._id);
 
         console.log("Franchise mail sent");
+
+        // Business Manager created this franchise: copy the email to the manager and admin
+        await sendFranchiseCopiesToManagerAndAdmin(req, user, franchise, tempPassword);
       }
     } catch (emailError) {
       console.error("Mail sending failed:", emailError);

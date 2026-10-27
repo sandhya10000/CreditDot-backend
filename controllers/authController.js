@@ -2,7 +2,27 @@ const User = require("../models/User");
 const Franchise = require("../models/Franchise");
 const Referral = require("../models/Referral");
 const Transaction = require("../models/Transaction");
+const Role = require("../models/Role");
 const { generateToken } = require("../config/jwt");
+
+// permissions is null for full admins (no staffRole); staff get their role's list.
+// disabled means the staff member or their role is inactive.
+const getStaffAccess = async (user) => {
+  if (!user.staffRole) {
+    return { permissions: null, staffRoleName: null, staffCode: null, scopedToOwnFranchises: false, disabled: false };
+  }
+  const staffRole = await Role.findById(user.staffRole).select("name permissions isActive limitToOwnFranchises");
+  if (!user.isActive || !staffRole || !staffRole.isActive) {
+    return { disabled: true };
+  }
+  return {
+    permissions: staffRole.permissions,
+    staffRoleName: staffRole.name,
+    staffCode: user.staffCode || null,
+    scopedToOwnFranchises: Boolean(staffRole.limitToOwnFranchises),
+    disabled: false,
+  };
+};
 const Joi = require("joi");
 const {
   sendRegistrationEmail,
@@ -260,6 +280,11 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Account is deactivated" });
     }
 
+    const access = await getStaffAccess(user);
+    if (access.disabled) {
+      return res.status(403).json({ message: "Staff access has been disabled. Please contact admin." });
+    }
+
     // Record login time (updateOne avoids re-running the password hash hook)
     try {
       await User.updateOne(
@@ -290,6 +315,10 @@ const login = async (req, res) => {
         email: user.email,
         role: user.role,
         subRole: user.subRole,
+        permissions: access.permissions,
+        staffRoleName: access.staffRoleName,
+        staffCode: access.staffCode,
+        scopedToOwnFranchises: access.scopedToOwnFranchises,
       },
     });
 
@@ -384,7 +413,20 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({ user });
+    const access = await getStaffAccess(user);
+    if (access.disabled) {
+      return res.status(403).json({ message: "Staff access has been disabled. Please contact admin." });
+    }
+
+    res.json({
+      user: {
+        ...user.toObject(),
+        permissions: access.permissions,
+        staffRoleName: access.staffRoleName,
+        staffCode: access.staffCode,
+        scopedToOwnFranchises: access.scopedToOwnFranchises,
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
