@@ -93,6 +93,17 @@ const franchiseSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    aiReportsUsed: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Diamond login credit bonus: tracks last grant timestamp for cooldown enforcement
+    lastLoginCreditAt: {
+      type: Date,
+      default: null,
+    },
+
     isActive: {
       type: Boolean,
       default: true,
