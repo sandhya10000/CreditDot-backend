@@ -161,7 +161,7 @@ const businessFormSchema = new mongoose.Schema(
     //add new field to know  business status from admin
     workStatus: {
       type: String,
-      enum: ["in_progress", "closed", "pending", "hold"],
+      enum: ["in_progress", "closed", "pending"],
       default: "in_progress",
     },
 

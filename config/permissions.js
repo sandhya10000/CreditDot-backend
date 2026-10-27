@@ -43,6 +43,7 @@ const ROUTE_RULES = [
   [/^\/api\/admin\/(marketing|case-studies|reward)/, "marketing"],
   [/^\/api\/admin\/dashboard/, "dashboard"],
   [/^\/api\/admin\/download-stats/, "dashboard"],
+  [/^\/api\/(dashboard|analytics)/, "dashboard"],
   [/^\/api\/admin\/users/, "users"],
   [/^\/api\/admin\/(leads|franchise-leads|credit-repair)/, "leads"],
   [/^\/api\/leads/, "leads"],
@@ -51,6 +52,10 @@ const ROUTE_RULES = [
   [/^\/api\/credit\/(reports\/all|credit-check-v2)/, "credit"],
   [/^\/api\/credit\/settings/, "settings"],
   [/^\/api\/admin\/settings/, "settings"],
+  [/^\/api\/credit\/(check|reports|customer-report|generate-experian-report)/, "credit"],
+  [/^\/api\/admin\/franchises\/(credits|recharge)/, "finance"],
+  // Franchise name picker used by the Business form (not the Franchises pages)
+  [/^\/api\/franchises\/admin\/allFranchises-Namelist/, "business"],
   [/^\/api\/admin\/franchises|^\/api\/franchises/, "franchises"],
   [/^\/api\/kyc/, "kyc"],
   // Read-only package list used when creating franchises; needs Franchises, not Packages
