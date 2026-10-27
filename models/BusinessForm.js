@@ -236,6 +236,26 @@ const businessFormSchema = new mongoose.Schema(
         closedAt: { type: Date, default: Date.now },
       },
     ],
+
+    // Follow-up: next date to contact the customer (YYYY-MM-DD, local calendar day)
+    nextFollowUpDate: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    // Every follow-up that was scheduled, newest last
+    followUpHistory: [
+      {
+        followUpDate: { type: String, required: true },
+        note: { type: String, trim: true, maxlength: 500, default: "" },
+        createdBy: {
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+          name: String,
+          role: String,
+        },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,

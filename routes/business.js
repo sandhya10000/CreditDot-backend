@@ -15,6 +15,11 @@ const {
   deleteBusinessForm,
 } = require("../controllers/businessController");
 const {
+  getBusinessFollowUps,
+  setBusinessFollowUp,
+  clearBusinessFollowUp,
+} = require("../controllers/followUpController");
+const {
   getAmcCustomers,
   getFranchiseAmcCustomers,
   upsertAmc,
@@ -97,6 +102,31 @@ router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route   GET /api/business/follow-ups
+// @desc    Customers with a scheduled follow-up (search, date range, pagination)
+// @access  Private/Admin
+router.get("/follow-ups", auth, rbac("admin"), getBusinessFollowUps);
+
+// @route   PUT /api/business/admin/business-forms/:id/follow-up
+// @desc    Schedule the next follow-up date for a customer
+// @access  Private/Admin
+router.put(
+  "/admin/business-forms/:id/follow-up",
+  auth,
+  rbac("admin"),
+  setBusinessFollowUp,
+);
+
+// @route   DELETE /api/business/admin/business-forms/:id/follow-up
+// @desc    Mark the current follow-up as done (history kept)
+// @access  Private/Admin
+router.delete(
+  "/admin/business-forms/:id/follow-up",
+  auth,
+  rbac("admin"),
+  clearBusinessFollowUp,
+);
 
 // @route PUT /api/admin/business/${id}/close
 //@desc put all business forms(admin only)
