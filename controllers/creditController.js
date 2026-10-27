@@ -3,6 +3,7 @@ const axios = require("axios");
 const CreditReport = require("../models/CreditReport");
 const Setting = require("../models/Setting");
 const Franchise = require("../models/Franchise");
+const { scopeFilter, ownsFranchise } = require("../utils/franchiseScope");
 const Joi = require("joi");
 const fs = require("fs");
 const path = require("path");
@@ -1575,7 +1576,8 @@ const getAllCreditReports = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const bureau = req.query.bureau?.trim() || "";
     const skip = (page - 1) * limit;
-    const filter = {};
+    // Business Managers only see reports of franchises they own ({} for admins)
+    const filter = { ...(await scopeFilter(req)) };
     if (search) {
       const matchingFranchises = await Franchise.find({
         businessName: { $regex: search, $options: "i" },
@@ -1634,6 +1636,13 @@ const getAllCreditReports = async (req, res) => {
 const getFranchiseReports = async (req, res) => {
   try {
     const { franchiseId } = req.params;
+
+    if (!(await ownsFranchise(req, franchiseId))) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only view reports of your own franchises",
+      });
+    }
 
     const reports = await CreditReport.find({
       franchiseId,
