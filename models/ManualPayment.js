@@ -20,8 +20,6 @@ const manualPaymentSchema = new mongoose.Schema(
     expireBy: { type: Date, required: true },
     paidAt: { type: Date },
     razorpayPaymentId: { type: String },
-    emailSentAt: { type: Date },
-    emailError: { type: String, default: "" },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },

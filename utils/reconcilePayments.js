@@ -1,6 +1,7 @@
 const Razorpay = require("razorpay");
 const BusinessForm = require("../models/BusinessForm");
 const { assignCustomerId } = require("../controllers/businessController");
+const { syncOpenManualPayments } = require("../controllers/manualPaymentController");
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -52,6 +53,10 @@ const startPaymentReconciliation = () => {
     // Run every 30 minutes
     setInterval(reconcilePendingBusinessForms, 30 * 60 * 1000);
     console.log("Payment reconciliation cron started (runs every 30 minutes)");
+
+    // Manual payment links: check open links every 30 seconds so the admin table updates on its own
+    setInterval(syncOpenManualPayments, 30 * 1000);
+    console.log("Manual payment sync started (runs every 30 seconds)");
 };
 
 module.exports = { startPaymentReconciliation };

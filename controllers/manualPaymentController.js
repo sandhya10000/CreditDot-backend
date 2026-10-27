@@ -1,7 +1,8 @@
 const Razorpay = require("razorpay");
 const Joi = require("joi");
 const ManualPayment = require("../models/ManualPayment");
-const { sendManualPaymentLinkEmail } = require("../utils/emailService");
+const User = require("../models/User");
+const { sendManualPaymentConfirmationEmail } = require("../utils/emailService");
 
 const LINK_VALIDITY_SECONDS = 24 * 60 * 60;
 
@@ -62,30 +63,8 @@ const createManualPayment = async (req, res) => {
       createdBy: req.user?.id,
     });
 
-    // Email failure must not hide the link: admin can still share it manually
-    let emailSent = true;
-    try {
-      await sendManualPaymentLinkEmail({
-        to: doc.email,
-        name: doc.name,
-        amount: doc.amount,
-        shortUrl: doc.shortUrl,
-        expireBy: doc.expireBy,
-        remarks: doc.remarks,
-      });
-      doc.emailSentAt = new Date();
-    } catch (mailError) {
-      emailSent = false;
-      doc.emailError = mailError.message;
-      console.error("Manual payment email failed:", mailError.message);
-    }
-    await doc.save();
-
     res.status(201).json({
-      message: emailSent
-        ? "Payment link created and emailed"
-        : "Payment link created, but the email could not be sent",
-      emailSent,
+      message: "Payment link created",
       payment: doc,
     });
   } catch (error) {
@@ -152,13 +131,59 @@ const applyLinkStatus = async (doc, linkStatus, paymentId) => {
 
   if (!mapped || doc.status === mapped) return doc;
 
+  if (mapped === "paid") {
+    // Atomic transition: only the caller that flips the status sends the confirmation,
+    // so a webhook and a manual refresh cannot both email.
+    const updated = await ManualPayment.findOneAndUpdate(
+      { _id: doc._id, status: { $ne: "paid" } },
+      {
+        status: "paid",
+        paidAt: doc.paidAt || new Date(),
+        ...(paymentId && { razorpayPaymentId: paymentId }),
+      },
+      { new: true },
+    );
+    if (!updated) return ManualPayment.findById(doc._id);
+
+    await sendPaymentConfirmations(updated);
+    return updated;
+  }
+
   doc.status = mapped;
-  if (mapped === "paid" || mapped === "partially_paid") {
+  if (mapped === "partially_paid") {
     doc.paidAt = doc.paidAt || new Date();
     if (paymentId) doc.razorpayPaymentId = paymentId;
   }
   await doc.save();
   return doc;
+};
+
+// Confirmation goes to the admin inbox and to the staff member who created the link
+const sendPaymentConfirmations = async (doc) => {
+  const recipients = new Map();
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail) recipients.set(adminEmail.toLowerCase(), "Admin");
+
+  if (doc.createdBy) {
+    const creator = await User.findById(doc.createdBy).select("name email").lean();
+    if (creator?.email) {
+      recipients.set(creator.email.toLowerCase(), creator.name || "Team member");
+    }
+  }
+
+  const results = await Promise.allSettled(
+    [...recipients.entries()].map(([to, recipientName]) =>
+      sendManualPaymentConfirmationEmail({ to, recipientName, payment: doc }),
+    ),
+  );
+  results.forEach((result, i) => {
+    if (result.status === "rejected") {
+      console.error(
+        `Manual payment confirmation to ${[...recipients.keys()][i]} failed:`,
+        result.reason?.message,
+      );
+    }
+  });
 };
 
 // POST /api/admin/manual-payments/:id/refresh
@@ -199,10 +224,38 @@ const cancelManualPayment = async (req, res) => {
   }
 };
 
+// Background sync: checks open links with Razorpay so status updates even if a webhook is missed.
+// Same logic as the manual Refresh button, applied to every open link.
+let syncRunning = false;
+const syncOpenManualPayments = async () => {
+  if (syncRunning) return; // skip overlapping runs
+  syncRunning = true;
+  try {
+    const open = await ManualPayment.find({ status: "created" })
+      .sort({ createdAt: 1 })
+      .limit(50);
+
+    for (const doc of open) {
+      try {
+        const link = await razorpay.paymentLink.fetch(doc.razorpayLinkId);
+        const paymentId = link.payments?.[0]?.payment_id;
+        await applyLinkStatus(doc, link.status, paymentId);
+      } catch (error) {
+        console.error(`Manual payment sync failed for ${doc.razorpayLinkId}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error("Manual payment sync error:", error.message);
+  } finally {
+    syncRunning = false;
+  }
+};
+
 module.exports = {
   createManualPayment,
   listManualPayments,
   refreshManualPayment,
   cancelManualPayment,
   applyLinkStatus,
+  syncOpenManualPayments,
 };

@@ -10,7 +10,7 @@ const {
 
 const router = express.Router();
 
-// All routes are admin-only; staff need the "finance" permission (see config/permissions.js)
+// All routes are admin-only; staff need the "manual_payments" permission (see config/permissions.js)
 router.use(auth, rbac("admin"));
 
 // @route   GET /api/admin/manual-payments

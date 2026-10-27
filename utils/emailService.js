@@ -1081,15 +1081,12 @@ const sendStaffCredentialsEmail = async (user, tempPassword, roleName) => {
 };
 
 // ---- Manual payments ----
-const sendManualPaymentLinkEmail = async ({
+const sendManualPaymentConfirmationEmail = async ({
   to,
-  name,
-  amount,
-  shortUrl,
-  expireBy,
-  remarks,
+  recipientName,
+  payment,
 }) => {
-  const expiry = new Date(expireBy).toLocaleString("en-IN", {
+  const paidAt = new Date(payment.paidAt || Date.now()).toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
     dateStyle: "medium",
     timeStyle: "short",
@@ -1098,15 +1095,19 @@ const sendManualPaymentLinkEmail = async ({
   const mailOptions = {
     from: '"Credit Dost Support" <support@creditdost.co.in> ',
     to,
-    subject: "Payment Link - Credit Dost",
+    subject: `Payment Received - ₹${payment.amount} from ${payment.name}`,
     html: `
-      <h2>Complete your payment</h2>
-      <p>Hello ${escapeHtml(name)},</p>
-      <p>Please use the secure link below to pay <strong>₹${escapeHtml(String(amount))}</strong> to Credit Dost.</p>
-      ${remarks ? `<p><strong>Purpose:</strong> ${escapeHtml(remarks)}</p>` : ""}
-      <p><a href="${escapeHtml(shortUrl)}" style="display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Pay Now</a></p>
-      <p>Or open this link: ${escapeHtml(shortUrl)}</p>
-      <p>This link expires on <strong>${escapeHtml(expiry)} IST</strong>.</p>
+      <h2>Payment received</h2>
+      <p>Hello ${escapeHtml(recipientName)},</p>
+      <p>A manual payment link has been paid.</p>
+      <p><strong>Customer:</strong> ${escapeHtml(payment.name)}</p>
+      <p><strong>Mobile:</strong> ${escapeHtml(payment.mobile)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(payment.email)}</p>
+      <p><strong>City:</strong> ${escapeHtml(payment.city || "-")}</p>
+      <p><strong>Amount:</strong> ₹${escapeHtml(String(payment.amount))}</p>
+      <p><strong>Remarks:</strong> ${escapeHtml(payment.remarks || "-")}</p>
+      <p><strong>Razorpay Payment ID:</strong> ${escapeHtml(payment.razorpayPaymentId || "-")}</p>
+      <p><strong>Paid at:</strong> ${escapeHtml(paidAt)} IST</p>
       <p>Best regards,<br>The Credit Dost Team</p>
     `,
   };
@@ -1115,7 +1116,7 @@ const sendManualPaymentLinkEmail = async ({
 };
 
 module.exports = {
-  sendManualPaymentLinkEmail,
+  sendManualPaymentConfirmationEmail,
   sendStaffCredentialsEmail,
   sendSupportTicketCreatedEmail,
   sendSupportTicketReplyEmail,
