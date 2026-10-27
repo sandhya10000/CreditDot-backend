@@ -117,7 +117,15 @@ const app = express();
 // // );
 
 // Middleware
-app.use(express.json({ limit: "10mb" }));
+// rawBody is kept so the Razorpay webhook signature can be checked against the exact bytes sent
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
@@ -220,6 +228,7 @@ app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/business", require("./routes/business"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/admin", require("./routes/staff"));
+app.use("/api/admin/manual-payments", require("./routes/manualPayments"));
 app.use("/api/blogs", require("./routes/blogs"));
 app.use("/api/relationship-managers", require("./routes/relationshipManagers"));
 app.use("/api/emi", require("./routes/emi"));

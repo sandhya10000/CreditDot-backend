@@ -47,7 +47,7 @@ const ROUTE_RULES = [
   [/^\/api\/admin\/users/, "users"],
   [/^\/api\/admin\/(leads|franchise-leads|credit-repair)/, "leads"],
   [/^\/api\/leads/, "leads"],
-  [/^\/api\/admin\/(transactions|payouts|credits)/, "finance"],
+  [/^\/api\/admin\/(transactions|payouts|credits|manual-payments)/, "finance"],
   [/^\/api\/admin\/credit-reports/, "credit"],
   [/^\/api\/credit\/(reports\/all|credit-check-v2)/, "credit"],
   [/^\/api\/credit\/settings/, "settings"],

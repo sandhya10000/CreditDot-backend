@@ -1080,7 +1080,42 @@ const sendStaffCredentialsEmail = async (user, tempPassword, roleName) => {
   return transporter.sendMail(mailOptions);
 };
 
+// ---- Manual payments ----
+const sendManualPaymentLinkEmail = async ({
+  to,
+  name,
+  amount,
+  shortUrl,
+  expireBy,
+  remarks,
+}) => {
+  const expiry = new Date(expireBy).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to,
+    subject: "Payment Link - Credit Dost",
+    html: `
+      <h2>Complete your payment</h2>
+      <p>Hello ${escapeHtml(name)},</p>
+      <p>Please use the secure link below to pay <strong>₹${escapeHtml(String(amount))}</strong> to Credit Dost.</p>
+      ${remarks ? `<p><strong>Purpose:</strong> ${escapeHtml(remarks)}</p>` : ""}
+      <p><a href="${escapeHtml(shortUrl)}" style="display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Pay Now</a></p>
+      <p>Or open this link: ${escapeHtml(shortUrl)}</p>
+      <p>This link expires on <strong>${escapeHtml(expiry)} IST</strong>.</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+
+  return transporter.sendMail(mailOptions);
+};
+
 module.exports = {
+  sendManualPaymentLinkEmail,
   sendStaffCredentialsEmail,
   sendSupportTicketCreatedEmail,
   sendSupportTicketReplyEmail,
