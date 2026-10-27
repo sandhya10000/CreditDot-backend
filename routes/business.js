@@ -15,6 +15,9 @@ const {
   deleteBusinessForm,
 } = require("../controllers/businessController");
 const {
+  uploadAdminBusinessDocuments,
+} = require("../controllers/businessDocumentController");
+const {
   getBusinessFollowUps,
   setBusinessFollowUp,
   clearBusinessFollowUp,
@@ -102,6 +105,24 @@ router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route   PUT /api/business/admin/business-forms/:id/documents
+// @desc    Admin uploads or replaces one or more customer documents
+// @access  Private/Admin
+router.put(
+  "/admin/business-forms/:id/documents",
+  auth,
+  rbac("admin"),
+  upload.fields([
+    { name: "panCard", maxCount: 1 },
+    { name: "aadharFront", maxCount: 1 },
+    { name: "aadharBack", maxCount: 1 },
+    { name: "cancelCheque", maxCount: 1 },
+    { name: "bankProof", maxCount: 1 },
+    { name: "extraBankDoc", maxCount: 1 },
+  ]),
+  uploadAdminBusinessDocuments,
+);
 
 // @route   GET /api/business/follow-ups
 // @desc    Customers with a scheduled follow-up (search, date range, pagination)
