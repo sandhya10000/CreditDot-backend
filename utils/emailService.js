@@ -2,6 +2,9 @@ const nodemailer = require("nodemailer");
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") }); // Load environment variables
 
+// Franchise applicant webinar (replaces the WhatsApp group link for new registrants)
+const WEBINAR_LINK = process.env.WEBINAR_LINK || "https://www.creditdost.co.in/webinar";
+
 // Create transporter
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
@@ -33,7 +36,7 @@ const sendRegistrationEmail = async (user) => {
       <p>Hello ${user.name},</p>
       <p>Thank you for registering as a franchise partner with Credit Dost.</p>
       <p>Your registration is currently pending approval. Our team will review your application and get back to you soon.</p>
-      <p>Join our WhatsApp group for updates and support: <a href="${process.env.WHATSAPP_GROUP_LINK || "#"}">Click here to join</a></p>
+      <p>Join our free webinar to learn more about the franchise program: <a href="${WEBINAR_LINK}">Click here to join the webinar</a></p>
       <p>Best regards,<br>The Credit Dost Team</p>
     `,
   };
@@ -79,7 +82,7 @@ const sendSelfRegistrationEmail = async (user, franchise) => {
       <p>Hello ${user.name},</p>
       <p>Thank you for registering as a franchise partner with Credit Dost.</p>
       <p>Your registration is currently pending admin approval. You will receive login credentials via email once your registration is approved.</p>
-      <p>In the meantime, join our WhatsApp group for updates and support: <a href="${process.env.WHATSAPP_GROUP_LINK || "#"}">Click here to join</a></p>
+      <p>In the meantime, join our free webinar to learn more about the franchise program: <a href="${WEBINAR_LINK}">Click here to join the webinar</a></p>
       <p>Best regards,<br>The Credit Dost Team</p>
     `,
   };

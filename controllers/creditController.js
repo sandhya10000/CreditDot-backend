@@ -1,5 +1,6 @@
 const { isValidPdf } = require("../utils/pdfValidation");
 const axios = require("axios");
+const mongoose = require("mongoose");
 const CreditReport = require("../models/CreditReport");
 const Setting = require("../models/Setting");
 const Franchise = require("../models/Franchise");
@@ -1569,6 +1570,66 @@ const getCreditReports = async (req, res) => {
 };
 
 // Get all credit reports (admin only)
+// Roots a stored localPath may resolve under: backend/ (serves /reports) and repo root (serves /uploads)
+const REPORT_FILE_ROOTS = [
+  path.resolve(__dirname, ".."),
+  path.resolve(__dirname, "../.."),
+];
+
+// GET /api/credit/reports/:id/download (admin / staff with credit permission)
+// Same scope as the report list, so Business Managers only get their own franchises' reports
+const getCreditReportDownload = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "Invalid report id" });
+    }
+
+    const report = await CreditReport.findOne({
+      _id: req.params.id,
+      ...(await scopeFilter(req)),
+    })
+      .select("name bureau localPath reportUrl pdfStatus")
+      .lean();
+    if (!report) return res.status(404).json({ message: "Report not found" });
+
+    if (report.pdfStatus === "pending") {
+      return res
+        .status(409)
+        .json({ message: "PDF is still being generated. Try again in a minute." });
+    }
+
+    const safeBase = `${(report.name || "Report").replace(/[^a-z0-9]+/gi, "_")}_${(report.bureau || "credit").toUpperCase()}_Report`;
+    const downloadName = `${safeBase}.pdf`;
+
+    if (report.localPath) {
+      const relative = report.localPath.replace(/^\/+/, "");
+      for (const root of REPORT_FILE_ROOTS) {
+        const filePath = path.resolve(root, relative);
+        // Never serve anything outside the allowed roots
+        if (!filePath.startsWith(root + path.sep)) continue;
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          return res.download(filePath, downloadName);
+        }
+      }
+    }
+
+    if (report.reportUrl) {
+      const upstream = await axios.get(report.reportUrl, {
+        responseType: "stream",
+        timeout: 30000,
+      });
+      res.setHeader("Content-Type", upstream.headers["content-type"] || "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${downloadName}"`);
+      return upstream.data.pipe(res);
+    }
+
+    return res.status(404).json({ message: "No report file available" });
+  } catch (error) {
+    console.error("Credit report download error:", error.message);
+    res.status(500).json({ message: "Failed to download report", error: error.message });
+  }
+};
+
 const getAllCreditReports = async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
@@ -1600,7 +1661,7 @@ const getAllCreditReports = async (req, res) => {
     }
     const reports = await CreditReport.find(filter)
       .select(
-        "name mobile score bureau reportUrl localPath franchiseName city state createdAt userId franchiseId pan",
+        "name mobile score bureau reportUrl localPath pdfStatus franchiseName city state createdAt userId franchiseId pan",
       )
       .populate({
         path: "userId",
@@ -2884,6 +2945,7 @@ module.exports = {
   checkCreditScorePublic, // Add the new public function
   getCreditReports,
   getAllCreditReports,
+  getCreditReportDownload,
   getCreditReportById,
   getSurepassApiKey,
   updateSurepassApiKey,

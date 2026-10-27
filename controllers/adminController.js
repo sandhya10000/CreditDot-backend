@@ -55,8 +55,35 @@ const csvUpload = multer({
 });
 
 // Get dashboard statistics
+// IST (UTC+5:30) helpers so month/year boundaries match what the admin sees in India
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const istStart = (year, monthIndex, day = 1) =>
+  new Date(Date.UTC(year, monthIndex, day) - IST_OFFSET_MS);
+
+const currentIstYearMonth = () => {
+  const ist = new Date(Date.now() + IST_OFFSET_MS);
+  return { year: ist.getUTCFullYear(), month: ist.getUTCMonth() + 1 };
+};
+
+// Optional period filter for the package revenue cards: all (default) | month | year
+const getRevenuePeriodRange = (query) => {
+  const period = query.period;
+  if (period !== "month" && period !== "year") return null;
+
+  const current = currentIstYearMonth();
+  const year = Number(query.year) || current.year;
+  if (period === "year") {
+    return { $gte: istStart(year, 0), $lt: istStart(year + 1, 0) };
+  }
+  const month = Number(query.month) || current.month;
+  return { $gte: istStart(year, month - 1), $lt: istStart(year, month) };
+};
+
 const getDashboardStats = async (req, res) => {
   try {
+    const periodRange = getRevenuePeriodRange(req.query);
+    const periodMatch = periodRange ? { createdAt: periodRange } : {};
+
     const totalFranchises = await Franchise.countDocuments();
     const activeFranchises = await Franchise.countDocuments({ isActive: true });
     const pendingKycFranchises = await Franchise.countDocuments({
@@ -79,11 +106,10 @@ const getDashboardStats = async (req, res) => {
     // Current date and time
     const now = new Date();
 
-    // Start of current month
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    // Start of current year
-    const currentYearStart = new Date(now.getFullYear(), 0, 1);
+    // Start of current month and year, in IST
+    const istNow = currentIstYearMonth();
+    const currentMonthStart = istStart(istNow.year, istNow.month - 1);
+    const currentYearStart = istStart(istNow.year, 0);
 
     // Current month revenue
     const currentMonthRevenueResult = await Transaction.aggregate([
@@ -191,6 +217,7 @@ const getDashboardStats = async (req, res) => {
     const franchisePackageRevenueResult = await Transaction.aggregate([
       {
         $match: {
+          ...periodMatch,
           $or: [
             {
               status: "paid",
@@ -225,6 +252,7 @@ const getDashboardStats = async (req, res) => {
     const paidBusinessForms = await BusinessForm.aggregate([
       {
         $match: {
+          ...periodMatch,
           $or: [
             { paymentStatus: "paid" },
             { manualAmount: { $gt: 0 } }, //admin manual entries

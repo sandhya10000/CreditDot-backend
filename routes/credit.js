@@ -4,6 +4,7 @@ const {
   checkCreditScorePublic, // Add the new public function
   getCreditReports,
   getAllCreditReports,
+  getCreditReportDownload,
   getCreditReportById,
   getSurepassApiKey,
   updateSurepassApiKey,
@@ -49,6 +50,11 @@ router.get(
   rbac("admin"),
   getFranchiseReports,
 );
+
+// @route   GET /api/credit/reports/:id/download
+// @desc    Download a credit report PDF (scoped like the report list)
+// @access  Private/Admin
+router.get("/reports/:id/download", auth, rbac("admin"), getCreditReportDownload);
 
 // @route   GET /api/credit/reports/:id
 // @desc    Get credit report by ID

@@ -97,6 +97,26 @@ const validateBusinessForm = (data) => {
 
 // Submit business form and initiate payment
 //need to be check here after all points clear
+// Business login submission emails go only to the partner's RM and full admins
+// (admins without a staffRole). Staff accounts and the partner are not included.
+const getBusinessLoginRecipients = async (franchise) => {
+  const recipients = new Map();
+
+  if (franchise?.businessManager) {
+    const rm = await User.findById(franchise.businessManager).select("name email").lean();
+    if (rm?.email) recipients.set(rm.email.toLowerCase(), rm);
+  }
+
+  const fullAdmins = await User.find({ role: "admin", staffRole: null })
+    .select("name email")
+    .lean();
+  for (const admin of fullAdmins) {
+    if (admin.email) recipients.set(admin.email.toLowerCase(), admin);
+  }
+
+  return [...recipients.values()];
+};
+
 const submitBusinessForm = async (req, res) => {
   try {
     const {
@@ -334,23 +354,10 @@ const verifyPayment = async (req, res) => {
 
     // Send email notifications
     try {
-      // Get franchise user details
       const franchise = await Franchise.findById(businessForm.franchiseId);
-      const franchiseUser = await User.findById(franchise.userId);
-
-      // Get admin users
-      const adminUsers = await User.find({ role: "admin" });
-
-      // Send email to franchise user and all admins
-      const recipients = [franchiseUser, ...adminUsers];
+      const recipients = await getBusinessLoginRecipients(franchise);
       for (const recipient of recipients) {
-        if (recipient && recipient.email) {
-          await sendBusinessFormSubmissionEmail(
-            recipient,
-            businessForm,
-            franchise,
-          );
-        }
+        await sendBusinessFormSubmissionEmail(recipient, businessForm, franchise);
       }
     } catch (emailError) {
       console.error(
