@@ -107,7 +107,7 @@ const sendRegistrationApprovalEmail = async (
 
     const mailOptions = {
       from: '"Credit Dost Support" <support@creditdost.co.in> ',
-      to: user.email,
+      to: options.to || user.email,
       subject: options.isResend
         ? "Your Login Credentials - Credit Dost Franchise Platform"
         : "Registration Approved - Credit Dost Franchise Platform",
