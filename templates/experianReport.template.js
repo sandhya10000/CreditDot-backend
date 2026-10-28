@@ -1,8 +1,8 @@
 // templates/experianReport.template.js
 
 const escapeHtml = (value) => {
-  if (value === null || value === undefined) {
-    return "";
+  if (value === null || value === undefined || value === "") {
+    return "-";
   }
 
   return String(value)
@@ -18,15 +18,10 @@ const formatDate = (value) => {
 
   const str = String(value);
 
-  // YYYYMMDD
   if (/^\d{8}$/.test(str)) {
-    return `${str.substring(6, 8)}-${str.substring(
-      4,
-      6,
-    )}-${str.substring(0, 4)}`;
+    return `${str.slice(6, 8)}-${str.slice(4, 6)}-${str.slice(0, 4)}`;
   }
 
-  // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
     const [year, month, day] = str.split("-");
     return `${day}-${month}-${year}`;
@@ -42,28 +37,15 @@ const formatAmount = (value) => {
 
   const number = Number(value);
 
-  if (Number.isNaN(number)) {
-    return escapeHtml(value);
-  }
-
-  return `₹ ${number.toLocaleString("en-IN")}`;
-};
-
-const getScoreClass = (score) => {
-  const num = Number(score);
-
-  if (Number.isNaN(num)) return "score-neutral";
-  if (num >= 750) return "score-excellent";
-  if (num >= 700) return "score-good";
-  if (num >= 650) return "score-average";
-
-  return "score-low";
+  return Number.isFinite(number)
+    ? `₹ ${number.toLocaleString("en-IN")}`
+    : escapeHtml(value);
 };
 
 const getScoreLabel = (score) => {
   const num = Number(score);
 
-  if (Number.isNaN(num)) return "Not Available";
+  if (!Number.isFinite(num)) return "Not Available";
   if (num >= 750) return "Excellent";
   if (num >= 700) return "Good";
   if (num >= 650) return "Fair";
@@ -93,7 +75,6 @@ const getStatusClass = (status) => {
     value.includes("overdue") ||
     value.includes("written") ||
     value.includes("settled") ||
-    value.includes("sub-standard") ||
     value.includes("doubtful") ||
     value.includes("loss")
   ) {
@@ -103,17 +84,12 @@ const getStatusClass = (status) => {
   return "status-warning";
 };
 
-/**
- * Convert month value into 1-12
- */
 const getMonthNumber = (value) => {
-  if (value === null || value === undefined) {
-    return null;
-  }
+  if (value === null || value === undefined) return null;
 
   const str = String(value).trim().toLowerCase();
 
-  const monthMap = {
+  const months = {
     jan: 1,
     january: 1,
     feb: 2,
@@ -140,21 +116,15 @@ const getMonthNumber = (value) => {
     december: 12,
   };
 
-  if (monthMap[str]) {
-    return monthMap[str];
-  }
+  if (months[str]) return months[str];
 
   const number = Number(str);
 
-  if (number >= 1 && number <= 12) {
-    return number;
-  }
-
-  return null;
+  return number >= 1 && number <= 12 ? number : null;
 };
 
-const getMonthShortName = (month) => {
-  const months = [
+const getMonthShortName = (month) =>
+  [
     "Jan",
     "Feb",
     "Mar",
@@ -167,181 +137,90 @@ const getMonthShortName = (month) => {
     "Oct",
     "Nov",
     "Dec",
-  ];
+  ][month - 1] || "-";
 
-  return months[month - 1] || "-";
-};
-
-/**
- * Create horizontal payment history
- *
- * Output:
- *
- * Year | Jan | Feb | Mar | Apr | ... | Dec
- * 2025 | 0   | 0   | 30  | 0   | ... | 0
- */
 const renderHorizontalPaymentHistory = (history = []) => {
   if (!Array.isArray(history) || history.length === 0) {
     return "";
   }
 
-  // Group history by year
-  const groupedByYear = {};
+  const grouped = {};
 
   history.forEach((item) => {
     const year = item?.Year || item?.year || item?.YEAR || "-";
 
-    const monthValue = item?.Month ?? item?.month ?? item?.MONTH;
+    const month = getMonthNumber(item?.Month ?? item?.month ?? item?.MONTH);
 
-    const monthNumber = getMonthNumber(monthValue);
+    if (!grouped[year]) grouped[year] = {};
 
-    if (!groupedByYear[year]) {
-      groupedByYear[year] = {};
-    }
-
-    if (monthNumber) {
-      groupedByYear[year][monthNumber] = item;
-    }
+    if (month) grouped[year][month] = item;
   });
 
-  // Latest year first
-  const years = Object.keys(groupedByYear).sort((a, b) => {
-    const yearA = Number(a);
-    const yearB = Number(b);
-
-    if (!Number.isNaN(yearA) && !Number.isNaN(yearB)) {
-      return yearB - yearA;
-    }
-
-    return String(b).localeCompare(String(a));
-  });
-
-  if (!years.length) {
-    return `
-      <div class="empty">
-        Payment history data is not available.
-      </div>
-    `;
-  }
+  const years = Object.keys(grouped).sort((a, b) => Number(b) - Number(a));
 
   return `
-    <div class="sub-heading">
-      Payment History
-    </div>
+    <div class="sub-heading">Payment History</div>
 
-    <div class="history-wrapper">
-
+    <div class="table-wrapper">
       <table class="history-table">
-
         <thead>
           <tr>
-
-            <th class="history-year-column">
-              Year
-            </th>
-
-            ${Array.from({ length: 12 }, (_, index) => {
-              const month = index + 1;
-
-              return `
-                <th class="history-month-column">
-                  ${getMonthShortName(month)}
-                </th>
-              `;
-            }).join("")}
-
+            <th>Year</th>
+            ${Array.from(
+              { length: 12 },
+              (_, i) => `<th>${getMonthShortName(i + 1)}</th>`,
+            ).join("")}
           </tr>
         </thead>
 
         <tbody>
-
           ${years
-            .map((year) => {
-              const yearData = groupedByYear[year];
+            .map(
+              (year) => `
+            <tr>
+              <td>${escapeHtml(year)}</td>
 
-              return `
-                <tr>
+              ${Array.from({ length: 12 }, (_, i) => {
+                const item = grouped[year][i + 1];
 
-                  <td class="history-year">
-                    ${escapeHtml(year)}
+                if (!item) return "<td>-</td>";
+
+                let dpd =
+                  item?.Days_Past_Due ??
+                  item?.daysPastDue ??
+                  item?.DaysPastDue ??
+                  "-";
+
+                if (
+                  dpd === "?" ||
+                  dpd === "" ||
+                  dpd === null ||
+                  dpd === undefined
+                ) {
+                  dpd = "-";
+                }
+
+                const overdue =
+                  dpd !== "-" &&
+                  Number.isFinite(Number(dpd)) &&
+                  Number(dpd) > 0;
+
+                return `
+                  <td class="${overdue ? "overdue" : ""}">
+                    ${escapeHtml(dpd)}
                   </td>
-
-                  ${Array.from({ length: 12 }, (_, index) => {
-                    const month = index + 1;
-                    const item = yearData[month];
-
-                    // No data for this month
-                    if (!item) {
-                      return `
-                        <td class="history-cell history-empty">
-                          -
-                        </td>
-                      `;
-                    }
-
-                    let dpd =
-                      item?.Days_Past_Due ??
-                      item?.daysPastDue ??
-                      item?.DaysPastDue ??
-                      "-";
-
-                    // Convert ?, empty value, null etc. to "-"
-                    if (
-                      dpd === "?" ||
-                      dpd === "" ||
-                      dpd === null ||
-                      dpd === undefined
-                    ) {
-                      dpd = "-";
-                    }
-
-                    const hasDpd =
-                      dpd !== "-" &&
-                      !Number.isNaN(Number(dpd)) &&
-                      Number(dpd) > 0;
-
-                    return `
-                      <td
-                        class="
-                          history-cell
-                          ${hasDpd ? "history-overdue" : ""}
-                        "
-                      >
-
-                        <div
-                          class="
-                            history-dpd
-                            ${
-                              hasDpd
-                                ? "history-dpd-danger"
-                                : "history-dpd-normal"
-                            }
-                          "
-                        >
-                          ${escapeHtml(dpd)}
-                        </div>
-
-                      </td>
-                    `;
-                  }).join("")}
-
-                </tr>
-              `;
-            })
+                `;
+              }).join("")}
+            </tr>
+          `,
+            )
             .join("")}
-
         </tbody>
-
       </table>
-
     </div>
 
     <div class="history-legend">
-
-      <span>
-        <strong>DPD</strong> = Days Past Due
-      </span>
-
+      DPD = Days Past Due
     </div>
   `;
 };
@@ -349,11 +228,13 @@ const renderHorizontalPaymentHistory = (history = []) => {
 const experianReportTemplate = (result) => {
   const score = result?.SCORE?.FCIREXScore ?? "-";
 
-  const scoreConfidence = result?.SCORE?.FCIREXScoreConfidLevel ?? "-";
-
-  const exactMatch = result?.Match_result?.Exact_match ?? "-";
-
   const profile = result?.CreditProfileHeader || {};
+
+  const currentApplication = result?.Current_Application || {};
+
+  const applicant =
+    currentApplication?.Current_Application_Details
+      ?.Current_Applicant_Details || {};
 
   const cais = result?.CAIS_Account || {};
 
@@ -367,6 +248,14 @@ const experianReportTemplate = (result) => {
     ? cais.CAIS_Account_DETAILS
     : [];
 
+  const caps = result?.CAPS || {};
+
+  const capsSummary = caps?.CAPS_Summary || {};
+
+  const capsApplications = Array.isArray(caps?.CAPS_Application_Details)
+    ? caps.CAPS_Application_Details
+    : [];
+
   const holderAddresses = Array.from(
     new Map(
       accounts
@@ -376,14 +265,10 @@ const experianReportTemplate = (result) => {
             : [],
         )
         .map((address) => {
-          const addressParts = [
-            address?.First_Line_Of_Address_non_normalized,
-            address?.Second_Line_Of_Address_non_normalized,
-            address?.Third_Line_Of_Address_non_normalized,
+          const parts = [
             address?.City_non_normalized,
             address?.State_non_normalized,
             address?.ZIP_Postal_Code_non_normalized,
-            address?.CountryCode_non_normalized,
           ]
             .filter(
               (value) =>
@@ -393,2155 +278,871 @@ const experianReportTemplate = (result) => {
             )
             .map((value) => String(value).trim());
 
-          const fullAddress = addressParts.join(", ");
+          const key = parts.join(", ");
 
-          return [
-            fullAddress.toLowerCase(),
-            {
-              ...address,
-              fullAddress,
-            },
-          ];
+          return [key, { ...address, fullAddress: key }];
         })
         .filter(([key]) => key),
     ).values(),
   );
 
-  const caps = result?.CAPS || {};
-
-  const capsSummary = caps?.CAPS_Summary || {};
-
-  const capsApplications = Array.isArray(caps?.CAPS_Application_Details)
-    ? caps.CAPS_Application_Details
-    : [];
-
-  const currentApplication = result?.Current_Application || {};
-
-  const scoreClass = getScoreClass(score);
-
-  const scoreLabel = getScoreLabel(score);
-
   const totalAccounts = creditAccount.CreditAccountTotal ?? 0;
-
   const activeAccounts = creditAccount.CreditAccountActive ?? 0;
-
   const closedAccounts = creditAccount.CreditAccountClosed ?? 0;
-
   const defaultAccounts = creditAccount.CreditAccountDefault ?? 0;
+
+  const fullName = [applicant?.First_Name, applicant?.Last_Name]
+    .filter(Boolean)
+    .join(" ");
+
+  const scoreFactors = [
+    ["Recency", "Recent Credit Account Defaults"],
+    ["Leverage", "Credit Accounts with on-time re-payment history"],
+    ["Coverage", "Non-delinquent and delinquent Credit Accounts"],
+    ["Delinquency Status", "Defaults on Credit Accounts"],
+    ["Credit Applications", "Credit Account Applications over last 30 days"],
+  ];
 
   return `
 <!DOCTYPE html>
-
-<html>
-
+<html lang="en">
 <head>
-
-<meta charset="UTF-8" />
-
-<title>
-  Experian Credit Report
-</title>
+<meta charset="UTF-8">
+<title>Experian Credit Report</title>
 
 <style>
-
-/* =========================================================
-   PAGE
-========================================================= */
-
 @page {
   size: A4;
-  margin: 12mm 10mm 16mm 10mm;
+  margin: 8mm;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
 }
 
 body {
-  font-family:
-    Arial,
-    Helvetica,
-    sans-serif;
-
-  color: #172033;
-
-  background: #ffffff;
-
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 10px;
-
-  line-height: 1.45;
+  line-height: 1.4;
+  color: #111;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
 .page {
   width: 100%;
 }
 
-
-/* =========================================================
-   HEADER
-========================================================= */
+/* HEADER */
 
 .header {
-  background:
-    linear-gradient(
-      135deg,
-      #0B2947 0%,
-      #123B66 55%,
-      #1976D2 100%
-    );
-
-  color: white;
-
-  padding: 20px 22px;
-
-  border-radius: 12px;
-
-  margin-bottom: 18px;
-
-  position: relative;
-
-  overflow: hidden;
-}
-
-.header::after {
-  content: "";
-
-  position: absolute;
-
-  width: 180px;
-  height: 180px;
-
-  border-radius: 50%;
-
-  right: -70px;
-  top: -80px;
-
-  background:
-    rgba(255,255,255,0.08);
+  margin-bottom: 15px;
+  padding: 5px 0 12px;
+  background: #fff;
+  color: #222;
 }
 
 .header-top {
   display: flex;
-
   justify-content: space-between;
-
-  align-items: flex-start;
+  align-items: center;
+  gap: 12px;
 }
 
 .brand {
-  font-size: 23px;
-
-  font-weight: 800;
-
-  letter-spacing: 0.3px;
-}
-
-.brand span {
-  color: #8FD3FF;
-}
-
-.report-type {
-  margin-top: 5px;
-
-  font-size: 10px;
-
-  color: #D7E9F8;
-
-  letter-spacing: 0.6px;
-
-  text-transform: uppercase;
-}
-
-.header-badge {
-  background:
-    rgba(255,255,255,0.13);
-
-  border:
-    1px solid
-    rgba(255,255,255,0.25);
-
-  padding: 7px 11px;
-
-  border-radius: 20px;
-
-  font-size: 9px;
-
-  font-weight: bold;
-
-  text-transform: uppercase;
-
-  letter-spacing: 0.5px;
-}
-
-.header-bottom {
-  margin-top: 18px;
-
-  padding-top: 12px;
-
-  border-top:
-    1px solid
-    rgba(255,255,255,0.18);
-
-  display: flex;
-
-  justify-content: space-between;
-}
-
-.header-meta {
-  font-size: 9px;
-
-  color: #D7E9F8;
-}
-
-.header-meta strong {
-  color: white;
-}
-
-
-/* =========================================================
-   SCORE CARD
-========================================================= */
-
-.score-card {
-  border-radius: 14px;
-
-  padding: 18px;
-
-  margin-bottom: 18px;
-
-  background:
-    linear-gradient(
-      135deg,
-      #F8FBFF,
-      #EDF6FF
-    );
-
-  border:
-    1px solid
-    #D6E9FA;
-
-  position: relative;
-
-  overflow: hidden;
-}
-
-.score-card::before {
-  content: "";
-
-  position: absolute;
-
-  width: 130px;
-  height: 130px;
-
-  right: -35px;
-  top: -35px;
-
-  border-radius: 50%;
-
-  background:
-    rgba(25,118,210,0.06);
-}
-
-.score-layout {
-  display: flex;
-
-  align-items: center;
-
-  justify-content: space-between;
-}
-
-.score-left {
-  width: 35%;
-
-  text-align: center;
-}
-
-.score-circle {
-  width: 108px;
-  height: 108px;
-
-  border-radius: 50%;
-
-  margin: 0 auto;
-
-  display: flex;
-
-  flex-direction: column;
-
-  justify-content: center;
-
-  align-items: center;
-
-  background: white;
-
-  border:
-    7px solid
-    #1976D2;
-
-  box-shadow:
-    0 5px 18px
-    rgba(18,59,102,0.12);
-}
-
-.score-number {
-  font-size: 30px;
-
-  line-height: 1;
-
-  font-weight: 800;
-
-  color: #123B66;
-}
-
-.score-small {
-  font-size: 8px;
-
-  color: #64748B;
-
-  margin-top: 5px;
-
-  text-transform: uppercase;
-
-  letter-spacing: 0.4px;
-}
-
-.score-right {
-  width: 60%;
-}
-
-.score-title {
-  font-size: 10px;
-
-  color: #64748B;
-
-  text-transform: uppercase;
-
-  letter-spacing: 0.8px;
-
-  font-weight: bold;
-}
-
-.score-status {
-  font-size: 21px;
-
-  font-weight: 800;
-
-  color: #123B66;
-
-  margin: 4px 0 7px;
-}
-
-.score-description {
-  color: #64748B;
-
-  font-size: 9px;
-
-  line-height: 1.6;
-
-  margin-bottom: 10px;
-}
-
-.score-info {
-  display: flex;
-
-  gap: 8px;
-}
-
-.score-info-item {
-  background: white;
-
-  border:
-    1px solid
-    #E0EAF4;
-
-  border-radius: 7px;
-
-  padding: 7px 9px;
-
-  flex: 1;
-}
-
-.score-info-label {
-  color: #94A3B8;
-  font-size: 7px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.score-info-value {
-  color: #172033;
-  font-size: 9px;
-  font-weight: 800;
-  margin-top: 3px;
-  line-height: 1.4;
-}
-
-
-/* =========================================================
-   SCORE COLORS
-========================================================= */
-
-.score-excellent .score-circle {
-  border-color: #16A34A;
-}
-
-.score-excellent .score-number {
-  color: #15803D;
-}
-
-.score-good .score-circle {
-  border-color: #1976D2;
-}
-
-.score-good .score-number {
-  color: #1976D2;
-}
-
-.score-average .score-circle {
-  border-color: #F59E0B;
-}
-
-.score-average .score-number {
-  color: #D97706;
-}
-
-.score-low .score-circle {
-  border-color: #DC2626;
-}
-
-.score-low .score-number {
-  color: #DC2626;
-}
-
-.score-neutral .score-circle {
-  border-color: #94A3B8;
-}
-
-.score-neutral .score-number {
-  color: #64748B;
-}
-
-
-/* =========================================================
-   SECTION
-========================================================= */
-
-.section {
-  margin-top: 18px;
-
-  page-break-inside: avoid;
-}
-
-.section-title {
-  display: flex;
-
-  align-items: center;
-
-  gap: 8px;
-
-  font-size: 13px;
-
-  font-weight: 800;
-
-  color: #123B66;
-
-  padding-bottom: 7px;
-
-  margin-bottom: 10px;
-
-  border-bottom:
-    2px solid
-    #E8EEF5;
-}
-
-.section-title::before {
-  content: "";
-
-  width: 4px;
-
-  height: 17px;
-
-  border-radius: 4px;
-
-  background: #1976D2;
-}
-
-
-/* =========================================================
-   GRID
-========================================================= */
-
-.grid {
-  display: grid;
-
-  grid-template-columns:
-    1fr 1fr;
-
-  gap: 8px;
-}
-
-.grid-4 {
-  display: grid;
-
-  grid-template-columns:
-    repeat(4, 1fr);
-
-  gap: 8px;
-}
-
-.card {
-  background: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  padding: 11px 12px;
-  box-shadow: none;
-}
-
- .label {
-  color: #94A3B8;
-  font-size: 7.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 700;
-  line-height: 1.3;
-}
-
-.value {
-  color: #172033;
-  font-size: 10px;
-  font-weight: 800;
-  margin-top: 4px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-
-/* =========================================================
-   METRIC CARDS
-========================================================= */
-
-.metric-card {
-  background: white;
-
-  border:
-    1px solid
-    #E2E8F0;
-
-  border-radius: 10px;
-
-  padding: 11px;
-
-  position: relative;
-
-  overflow: hidden;
-}
-
-.metric-card::after {
-  content: "";
-
-  position: absolute;
-
-  right: -15px;
-  bottom: -15px;
-
-  width: 55px;
-  height: 55px;
-
-  border-radius: 50%;
-
-  background: #F1F5F9;
-}
-
-.metric-label {
-  font-size: 7.5px;
-  color: #94A3B8;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  font-weight: 700;
-  line-height: 1.3;
-}
-
-.metric-number {
-  font-size: 20px;
-  font-weight: 800;
-  color: #172033;
-  margin-top: 5px;
-  line-height: 1.2;
-}
-
-
-/* =========================================================
-   STATUS BADGES
-========================================================= */
-
-.badge {
-  display: inline-block;
-
-  padding: 3px 7px;
-
-  border-radius: 20px;
-
-  font-size: 7.5px;
-
-  font-weight: bold;
-
+  color: #244c91;
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -1.5px;
   white-space: nowrap;
 }
 
-.status-success {
-  color: #15803D;
-
-  background: #ECFDF3;
+.header-right {
+  flex: 1;
+  text-align: right;
 }
 
-.status-warning {
-  color: #B45309;
-
-  background: #FFF7E6;
+.report-heading {
+  color: #2876d2;
+  font-size: 28px;
+  font-weight: bold;
+  line-height: 1.15;
+  margin-bottom: 2px;
 }
 
-.status-danger {
-  color: #B91C1C;
-
-  background: #FEF2F2;
+.header-meta {
+  font-size: 12px;
+  line-height: 1.3;
+  color: #2876d2;
 }
 
-.status-neutral {
-  color: #475569;
+.header-meta strong {
+  color: #333;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
 
-  background: #F1F5F9;
+/* SECTION TITLES */
+
+.section {
+  margin-top: 14px;
+}
+
+.section-title {
+  position: relative;
+  background: #ebebeb;
+  color: #000;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  font-weight: bold;
+  padding: 5px 8px 7px 29px;
+  margin-bottom: 10px;
+  border: 0;
+  border-bottom: 4px solid #d7d7d7;
+}
+
+.section-title::before {
+  content: "✓";
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  color: #16a34a;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+}
+
+/* APPLICATION DETAILS */
+
+.application-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px;
+  padding: 8px 10px;
+}
+
+.application-field {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.application-label {
+  color: #2876d2;
+  font-size: 10px;
+}
+
+.application-value {
+  color: #111;
+  font-size: 10px;
+}
+
+/* SCORE */
+
+
+.score-intro {
+  color: #f28c00;
+  font-size: 10px;
+  margin: 14px 10px;
+}
+
+.score-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 42fr) minmax(0, 58fr);
+  column-gap: 25px;
+  row-gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.score-left {
+  min-width: 0;
+  padding-top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.score-right {
+  border: 1px solid #ddd;
+  padding: 12px 18px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.gauge-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding-top: 12px;
+  padding-right: 45px;
+}
+
+.score-gauge {
+  position: relative;
+  width: 100%;
+  max-width: 205px;
+  height: 100px;
+  flex-shrink: 0;
+  border-radius: 205px 205px 0 0;
+  background: conic-gradient(
+    from 270deg at 50% 100%,
+    #ff0000 0deg 54deg,
+    #ffa500 54deg 90deg,
+    #ffff00 90deg 123deg,
+    #90ee90 123deg 180deg,
+    transparent 180deg 360deg
+  );
+}
+
+.score-gauge::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #fff;
+}
+
+.gauge-value {
+  position: absolute;
+  left: calc(100% + 12px);
+  bottom: 30px;
+  color: #000;
+  font-size: 28px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.gauge-range {
+  width: 100%;
+  max-width: 205px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  box-sizing: border-box;
+}
+
+.score-factors-title {
+  color: #2876d2;
+  font-size: 15px;
+  font-weight: bold;
+  margin: 0 0 5px;
+}
+
+.factor {
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* Responsive layout */
+@media (max-width: 600px) {
+  .score-layout {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 20px;
+  }
+
+  .score-left {
+    padding-bottom: 5px;
+  }
+
+  .score-right {
+    width: 100%;
+  }
+
+  .gauge-row {
+    padding-right: 45px;
+  }
 }
 
 
-/* =========================================================
-   NORMAL TABLES
-========================================================= */
+/* SUMMARY */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 8px 10px;
+}
+
+.summary-heading {
+  color: #2876d2;
+  font-size: 13px;
+  font-weight: bold;
+  margin-bottom: 7px;
+  overflow-wrap: anywhere;
+}
+
+.summary-item {
+  margin: 2px 0;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.summary-item span {
+  color: #2876d2;
+}
+
+/* COMMON TABLES */
 
 .table-wrapper {
-  border:
-    1px solid
-    #E2E8F0;
-
-  border-radius: 9px;
-
+  width: 100%;
   overflow: hidden;
-
   margin-top: 8px;
 }
 
 table {
   width: 100%;
-
   border-collapse: collapse;
-
-  margin: 0;
+  table-layout: auto;
 }
-
-thead {
-  background: #F1F6FB;
-}
-
- 
 
 th {
-  color: #94A3B8;
-  font-size: 7.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  padding: 8px;
-  border-bottom: 1px solid #DCE5EF;
+  background: #ebebeb;
+  color: #2876d2;
+  font-weight: bold;
   text-align: left;
+  padding: 6px 5px;
+  border: 1px solid #ddd;
 }
 
 td {
-  color: #172033;
-  font-size: 8.5px;
-  font-weight: 700;
-  padding: 7px 8px;
-  border-bottom: 1px solid #EEF2F7;
+  padding: 5px;
+  border: 1px solid #ddd;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
-tbody tr:nth-child(even) {
-  background: #FAFCFE;
+tr {
+  page-break-inside: avoid;
 }
 
-tbody tr:last-child td {
-  border-bottom: none;
+.history-table {
+  font-size: 7px;
+  table-layout: fixed;
 }
 
+.history-table th,
+.history-table td {
+  text-align: center;
+  padding: 3px 1px;
+}
 
-/* =========================================================
-   ACCOUNT
-========================================================= */
+.history-table th:first-child,
+.history-table td:first-child {
+  width: 34px;
+  font-weight: bold;
+}
+
+.overdue {
+  color: #dc2626;
+  font-weight: bold;
+  background: #fff0f0;
+}
+
+.history-legend {
+  text-align: right;
+  color: #64748b;
+  font-size: 8px;
+  margin-top: 4px;
+}
+
+.sub-heading {
+  font-weight: bold;
+  color: #2876d2;
+  margin: 10px 0 5px;
+}
+
+/* ACCOUNT CARDS */
 
 .account {
-  margin-bottom: 15px;
-
+  margin: 10px 0;
+  border: 1px solid #ddd;
   page-break-inside: avoid;
-
-  border:
-    1px solid
-    #DDE6EF;
-
-  border-radius: 10px;
-
-  overflow: hidden;
-
-  background: white;
 }
 
 .account-header {
-  background:
-    linear-gradient(
-      90deg,
-      #F1F7FD,
-      #FAFCFF
-    );
-
-  padding: 10px 12px;
-
   display: flex;
-
   justify-content: space-between;
-
-  align-items: center;
-
-  border-bottom:
-    1px solid
-    #E1EAF2;
+  gap: 8px;
+  align-items: flex-start;
+  background: #eee;
+  padding: 8px;
 }
 
 .account-title {
-  color: #123B66;
-
-  font-size: 10.5px;
-
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: bold;
+  overflow-wrap: anywhere;
 }
 
 .account-number {
-  color: #475569;
-  font-size: 8px;
-  font-weight: 700;
+  font-size: 9px;
   margin-top: 3px;
 }
 
+.badge {
+  display: inline-block;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-weight: bold;
+  border-radius: 2px;
+}
+
+.status-success {
+  color: #15803d;
+  background: #ecfdf3;
+}
+
+.status-neutral {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.status-danger {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.status-warning {
+  color: #b45309;
+  background: #fffbeb;
+}
+
 .account-body {
-  padding: 10px;
+  padding: 8px;
 }
 
 .account-grid {
   display: grid;
-
-  grid-template-columns:
-    repeat(4, 1fr);
-
-  gap: 7px;
-
-  margin-bottom: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
- 
+
 .account-field {
-  padding: 7px 8px;
-  background: #FFFFFF;
-  border-radius: 6px;
-  border: 1px solid #E8EDF3;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .account-field-label {
-  color: #94A3B8;
-  font-size: 7px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  font-weight: 700;
-  line-height: 1.3;
+  color: #2876d2;
+  font-size: 9px;
 }
 
 .account-field-value {
-  color: #172033;
-  font-size: 9px;
-  font-weight: 800;
-  margin-top: 4px;
-  line-height: 1.4;
-  word-break: break-word;
+  font-size: 10px;
+  font-weight: 600;
 }
 
+/* ADDRESSES */
 
-/* =========================================================
-   SUB HEADING
-========================================================= */
-
-.sub-heading {
-  color: #334155;
-
-  font-size: 9px;
-
-  font-weight: 800;
-
-  margin: 11px 0 6px;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 5px;
+.address-row {
+  display: grid;
+  grid-template-columns: 30px 1fr 75px 90px;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #ddd;
+  overflow-wrap: anywhere;
 }
 
-.sub-heading::before {
-  content: "";
-
-  width: 5px;
-  height: 5px;
-
-  border-radius: 50%;
-
-  background: #1976D2;
+.address-label {
+  color: #2876d2;
+  font-size: 8px;
+  font-weight: bold;
+  text-transform: uppercase;
 }
 
-
-/* =========================================================
-   HORIZONTAL PAYMENT HISTORY
-========================================================= */
-
-.history-wrapper {
-  width: 100%;
-
-  overflow: hidden;
-
-  border:
-    1px solid
-    #DDE6EF;
-
-  border-radius: 8px;
-
-  margin-top: 7px;
+.address-value {
+  font-size: 10px;
 }
 
-.history-table {
-  width: 100%;
-
-  table-layout: fixed;
-
-  border-collapse: collapse;
-}
-
-.history-table th {
-  text-align: center;
-
-  font-size: 7px;
-
-  padding: 6px 2px;
-
-  color: #475569;
-
-  background: #EDF4FA;
-
-  border-right:
-    1px solid
-    #DCE5EF;
-}
-
-.history-table td {
-  text-align: center;
-
-  padding: 5px 2px;
-
-  font-size: 7px;
-
-  border-right:
-    1px solid
-    #EEF2F7;
-
-  border-bottom:
-    1px solid
-    #EEF2F7;
-
-  vertical-align: middle;
-}
-
-.history-table th:last-child,
-.history-table td:last-child {
-  border-right: none;
-}
-
-.history-year-column {
-  width: 8%;
-}
-
-.history-month-column {
-  width: 7.66%;
-}
-
-.history-year {
-  font-weight: 800;
-
-  color: #123B66;
-
-  background: #F5F9FD;
-
-  font-size: 7.5px !important;
-}
-
-.history-cell {
-  min-height: 30px;
-
-  background: white;
-}
-
-.history-empty {
-  color: #CBD5E1;
-
-  background: #FAFCFE;
-}
-
-.history-overdue {
-  background: #FFF8F8;
-}
-
-.history-dpd {
-  font-size: 7.5px;
-
-  font-weight: 800;
-
-  line-height: 1.1;
-}
-
-.history-dpd-normal {
-  color: #15803D;
-}
-
-.history-dpd-danger {
-  color: #DC2626;
-}
-
-.history-status {
-  display: inline-block;
-
-  margin-top: 2px;
-
-  padding: 1px 3px;
-
-  border-radius: 3px;
-
-  font-size: 5.5px;
-
-  line-height: 1.2;
-
-  max-width: 100%;
-
-  overflow: hidden;
-
-  text-overflow: ellipsis;
-
-  white-space: nowrap;
-}
-
-.history-legend {
-  display: flex;
-
-  justify-content: flex-end;
-
-  gap: 12px;
-
-  color: #94A3B8;
-
-  font-size: 6.5px;
-
-  margin-top: 4px;
-}
-
-
-/* =========================================================
-   EMPTY STATE
-========================================================= */
+/* EMPTY STATE AND FOOTER */
 
 .empty {
-  padding: 14px;
-
+  padding: 12px;
   text-align: center;
-
-  color: #94A3B8;
-
-  background: #F8FAFC;
-
-  border:
-    1px dashed
-    #CBD5E1;
-
-  border-radius: 8px;
-
-  font-size: 9px;
+  color: #64748b;
+  border: 1px dashed #cbd5e1;
+  margin-top: 6px;
 }
-
-
-/* =========================================================
-   FOOTER
-========================================================= */
 
 .footer {
-  margin-top: 22px;
-
-  padding: 12px 0 0;
-
-  border-top:
-    1px solid
-    #E2E8F0;
-
-  display: flex;
-
-  justify-content: space-between;
-
-  color: #94A3B8;
-
-  font-size: 7.5px;
-
-  line-height: 1.5;
-}
-
-.footer-left {
-  width: 75%;
-}
-
-.footer-right {
-  text-align: right;
-
-  font-weight: bold;
-
-  color: #64748B;
-}
-
-
-/* =========================================================
-   GENERATED FROM Experian
-========================================================= */
-
-.generated-from {
-  color: #123B66;
-
+  margin-top: 20px;
+  padding-top: 8px;
+  border-top: 1px solid #ddd;
+  color: #64748b;
   font-size: 8px;
-
-  font-weight: 700;
-
-  margin-bottom: 4px;
+  page-break-inside: avoid;
 }
-
-.generated-from strong {
-  color: #1976D2;
-}
-
-.footer-description {
-  color: #94A3B8;
-
-  font-size: 7.5px;
-
-  line-height: 1.5;
-}
-
-
-/* =========================================================
-   PAGE BREAK
-========================================================= */
 
 .no-break {
   page-break-inside: avoid;
 }
 
-.page-break {
-  page-break-before: always;
-}
-
-
-/* Compact holder addresses */
-
-.holder-address-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.holder-address-card {
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid #dfe7f1;
-  border-radius: 8px;
-  background: #fff;
-  page-break-inside: avoid;
-  break-inside: avoid;
-}
-
-.address-card-header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
-}
-
-.address-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  background: #edf5ff;
-  color: #123b66;
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.address-city {
-  color: #123b66;
-  font-size: 10px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.address-full {
-  padding: 7px 8px;
-  margin-bottom: 7px;
-  background: #f6f9fd;
-  border-radius: 5px;
-}
-
-.address-label {
-  display: block;
-  color: #8796aa;
-  font-size: 7px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 3px;
-}
-
-.address-full-value {
-  color: #172033;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.address-card-details {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-}
-
-.address-detail {
-  min-width: 0;
-}
-
-.address-value {
-  display: block;
-  color: #172033;
-  font-size: 8.5px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
 @media print {
-  .holder-address-card {
-    page-break-inside: avoid;
-    break-inside: avoid;
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
-
 </style>
-
 </head>
 
-
 <body>
-
 <div class="page">
 
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <div class="brand">experian</div>
 
-<!-- ======================================================
-     HEADER
-====================================================== -->
+      <div class="header-right">
+        <div class="report-heading">Experian Credit Report</div>
 
-<div class="header">
-
-  <div class="header-top">
-
-    <div>
-
-      <div class="brand">
-        <span>Experian</span>
-      </div>
-
-      <div class="report-type">
-        Experian Credit Information Report
-      </div>
-
-    </div>
-
-    <div class="header-badge">
-      EXPERIAN
-    </div>
-
-  </div>
-
-
-  <div class="header-bottom">
-
-    <div class="header-meta">
-      Report No:
-      <strong>
-        ${escapeHtml(profile.ReportNumber || "-")}
-      </strong>
-    </div>
-
-    <div class="header-meta">
-      Report Date:
-      <strong>
-        ${formatDate(profile.ReportDate)}
-      </strong>
-    </div>
-
-    <div class="header-meta">
-      Version:
-      <strong>
-        ${escapeHtml(profile.Version || "-")}
-      </strong>
-    </div>
-
-  </div>
-
-</div>
-
-
-<!-- ======================================================
-     SCORE
-====================================================== -->
-
-<div class="score-card ${scoreClass}">
-
-  <div class="score-layout">
-
-    <div class="score-left">
-
-      <div class="score-circle">
-
-        <div class="score-number">
-          ${escapeHtml(score)}
+        <div class="header-meta">
+          Report Date:
+          <strong>${escapeHtml(profile.ReportDate || "-")}</strong>
         </div>
 
-        <div class="score-small">
-          Credit Score
+        <div class="header-meta">
+          Report Time:
+          <strong>${escapeHtml(profile.ReportTime || "-")}</strong>
         </div>
 
+        <div class="header-meta">
+          Report Number:
+          <strong>${escapeHtml(profile.ReportNumber || "-")}</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CURRENT APPLICATION -->
+  <div class="section">
+    <div class="section-title">CURRENT APPLICATION INFORMATION</div>
+
+    <div class="application-grid">
+      <div class="application-field">
+        <span class="application-label">Name - </span>
+        <span class="application-value">${escapeHtml(fullName)}</span>
       </div>
 
+      <div class="application-field">
+        <span class="application-label">Date of Birth - </span>
+        <span class="application-value">${escapeHtml(applicant?.DateOfBirth || applicant?.Date_of_Birth || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Ration Card - </span>
+        <span class="application-value">${escapeHtml(applicant?.RationCard || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Mobile Phone - </span>
+        <span class="application-value">${escapeHtml(applicant?.MobilePhoneNumber || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">PAN - </span>
+        <span class="application-value">${escapeHtml(applicant?.IncomeTaxPan || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Driving License - </span>
+        <span class="application-value">${escapeHtml(applicant?.DriverLicenseNumber || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Passport Number - </span>
+        <span class="application-value">${escapeHtml(applicant?.PassportNumber || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Voter ID - </span>
+        <span class="application-value">${escapeHtml(applicant?.VoterID || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Aadhaar Number - </span>
+        <span class="application-value">${escapeHtml(applicant?.AadhaarNumber || "-")}</span>
+      </div>
+
+      <div class="application-field">
+        <span class="application-label">Email - </span>
+        <span class="application-value">${escapeHtml(applicant?.EmailAddress || "-")}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CREDIT SCORE -->
+  <div class="section">
+    <div class="section-title">EXPERIAN CREDIT SCORE</div>
+
+    <div class="score-intro">
+      Your Experian Credit Report is summarized in the form of
+      Experian Credit Score which ranges from 300 - 900.
     </div>
 
-
-    <div class="score-right">
-
-      <div class="score-title">
-        Experian Credit Score
-      </div>
-
-      <div class="score-status">
-        ${escapeHtml(scoreLabel)}
-      </div>
-
-      <div class="score-description">
-        Your Experian credit score represents your
-        creditworthiness based on the information
-        available in your credit profile.
-      </div>
-
-
-      <div class="score-info">
-
-        <div class="score-info-item">
-
-          <div class="score-info-label">
-            Confidence Level
+    <div class="score-layout">
+      <div class="score-left">
+        <div class="gauge-row">
+          <div class="score-gauge">
+            <div class="gauge-value">${escapeHtml(score)}</div>
           </div>
-
-          <div class="score-info-value">
-            ${escapeHtml(scoreConfidence)}
-          </div>
-
         </div>
 
-
-        <div class="score-info-item">
-
-          <div class="score-info-label">
-            Exact Match
-          </div>
-
-          <div class="score-info-value">
-            ${escapeHtml(exactMatch)}
-          </div>
-
+        <div class="gauge-range">
+          <span>300</span>
+          <span>900</span>
         </div>
-
       </div>
 
-    </div>
+      <div class="score-right">
+        <div class="score-factors-title">Score Factors</div>
 
+        ${scoreFactors
+          .map(
+            ([title, description], index) => `
+          <div class="factor">
+            <strong>${index + 1}. ${escapeHtml(title)}:</strong>
+            ${escapeHtml(description)}
+          </div>
+        `,
+          )
+          .join("")}
+      </div>
+    </div>
   </div>
 
-</div>
-<!-- ======================================================
-     CURRENT APPLICATION
-====================================================== -->
+  <!-- REPORT SUMMARY -->
+  <div class="section">
+    <div class="section-title">REPORT SUMMARY</div>
 
-<div class="section">
+    <div class="summary-grid">
+      <div>
+        <div class="summary-heading">Credit Account Summary</div>
+        <div class="summary-item"><span>Total number of Accounts - </span>${totalAccounts}</div>
+        <div class="summary-item"><span>Active Accounts - </span>${activeAccounts}</div>
+        <div class="summary-item"><span>Closed Accounts - </span>${closedAccounts}</div>
+        <div class="summary-item"><span>Default Accounts - </span>${defaultAccounts}</div>
+      </div>
 
-  <div class="section-title">
-    Current Application
+      <div>
+        <div class="summary-heading">Current Balance Amount Summary</div>
+        <div class="summary-item"><span>Total Current Balance - </span>${formatAmount(outstanding.Outstanding_Balance_All)}</div>
+        <div class="summary-item"><span>Secured Balance - </span>${formatAmount(outstanding.Outstanding_Balance_Secured)}</div>
+        <div class="summary-item"><span>Unsecured Balance - </span>${formatAmount(outstanding.Outstanding_Balance_UnSecured)}</div>
+      </div>
+
+      <div>
+        <div class="summary-heading">Credit Enquiry Summary</div>
+        <div class="summary-item"><span>Last 7 days - </span>${capsSummary.CAPSLast7Days ?? 0}</div>
+        <div class="summary-item"><span>Last 30 days - </span>${capsSummary.CAPSLast30Days ?? 0}</div>
+        <div class="summary-item"><span>Last 90 days - </span>${capsSummary.CAPSLast90Days ?? 0}</div>
+        <div class="summary-item"><span>Last 180 days - </span>${capsSummary.CAPSLast180Days ?? 0}</div>
+      </div>
+
+      <div>
+        <div class="summary-heading">Non-Credit Enquiry Summary</div>
+        <div class="summary-item"><span>Last 7 days - </span>${capsSummary.NonCreditCAPSLast7Days ?? 0}</div>
+        <div class="summary-item"><span>Last 30 days - </span>${capsSummary.NonCreditCAPSLast30Days ?? 0}</div>
+        <div class="summary-item"><span>Last 90 days - </span>${capsSummary.NonCreditCAPSLast90Days ?? 0}</div>
+      </div>
+    </div>
   </div>
 
+  <!-- CREDIT ACCOUNTS -->
+  <div class="section">
+    <div class="section-title">CREDIT ACCOUNTS</div>
 
-  <div class="grid">
+    ${
+      accounts.length
+        ? accounts
+            .map((account, index) => {
+              const status = account.accountStatusDescription || "-";
 
-
-    <div class="card">
-
-      <div class="label">
-        Applicant Name
-      </div>
-
-      <div class="value">
-
-        ${escapeHtml(
-          currentApplication?.Current_Application_Details
-            ?.Current_Applicant_Details?.First_Name || "",
-        )}
-
-        ${escapeHtml(
-          currentApplication?.Current_Application_Details
-            ?.Current_Applicant_Details?.Last_Name || "",
-        )}
-
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        PAN
-      </div>
-
-      <div class="value">
-
-        ${escapeHtml(
-          currentApplication?.Current_Application_Details
-            ?.Current_Applicant_Details?.IncomeTaxPan || "-",
-        )}
-
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Mobile
-      </div>
-
-      <div class="value">
-
-        ${escapeHtml(
-          currentApplication?.Current_Application_Details
-            ?.Current_Applicant_Details?.MobilePhoneNumber || "-",
-        )}
-
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Enquiry Reason
-      </div>
-
-      <div class="value">
-
-        ${escapeHtml(
-          currentApplication?.Current_Application_Details
-            ?.enquiryReasonDescription || "-",
-        )}
-
-      </div>
-
-    </div>
-
-  </div>
-
-</div>
-
-<!-- ======================================================
-     HOLDER ADDRESSES - COMPACT GRID WITH FULL ADDRESS
-====================================================== -->
-
-<div class="section holder-address-section">
-
-  <div class="section-title">
-    Holder Addresses
-    <span class="address-count">
-      ${holderAddresses.length}
-    </span>
-  </div>
-
-  ${
-    holderAddresses.length
-      ? `
-        <div class="holder-address-grid">
-
-          ${holderAddresses
-            .map((address, index) => {
-              const fullAddress = [
-                address?.First_Line_Of_Address_non_normalized,
-                address?.Second_Line_Of_Address_non_normalized,
-                address?.Third_Line_Of_Address_non_normalized,
-                address?.City_non_normalized,
-                address?.State_non_normalized,
-                address?.ZIP_Postal_Code_non_normalized,
-                address?.CountryCode_non_normalized,
-              ]
-                .filter(
-                  (value) =>
-                    value !== null &&
-                    value !== undefined &&
-                    String(value).trim() !== "",
-                )
-                .map((value) => String(value).trim())
-                .join(", ");
+              const history = Array.isArray(account.CAIS_Account_History)
+                ? account.CAIS_Account_History
+                : [];
 
               return `
-                <div class="holder-address-card">
+              <div class="account">
+                <div class="account-header">
+                  <div>
+                    <div class="account-title">
+                      Account ${index + 1} -
+                      ${escapeHtml(account.Subscriber_Name || "Unknown Institution")}
+                    </div>
 
-                  <div class="address-card-header">
-                    <span class="address-index">
-                      ${index + 1}
-                    </span>
-
-                    <span class="address-city">
-                      ${escapeHtml(address?.City_non_normalized || "Address")}
-                    </span>
-                  </div>
-
-                  <!-- Full Address -->
-                  <div class="address-full">
-                    <span class="address-label">
-                      Full Address
-                    </span>
-
-                    <div class="address-full-value">
-                      ${escapeHtml(fullAddress || "-")}
+                    <div class="account-number">
+                      Account No: ${escapeHtml(account.Account_Number || "-")}
                     </div>
                   </div>
 
-                  <div class="address-card-details">
-
-                    <div class="address-detail">
-                      <span class="address-label">PIN</span>
-                      <span class="address-value">
-                        ${escapeHtml(
-                          address?.ZIP_Postal_Code_non_normalized ?? "-",
-                        )}
-                      </span>
-                    </div>
-
-                    <div class="address-detail">
-                      <span class="address-label">State Code</span>
-                      <span class="address-value">
-                        ${escapeHtml(address?.State_non_normalized ?? "-")}
-                      </span>
-                    </div>
-
-                    <div class="address-detail">
-                      <span class="address-label">Country Code</span>
-                      <span class="address-value">
-                        ${escapeHtml(
-                          address?.CountryCode_non_normalized || "-",
-                        )}
-                      </span>
-                    </div>
-
-                    <div class="address-detail">
-                      <span class="address-label">Indicator</span>
-                      <span class="address-value">
-                        ${escapeHtml(
-                          address?.Address_indicator_non_normalized ?? "-",
-                        )}
-                      </span>
-                    </div>
-
-                  </div>
-
+                  <span class="badge ${getStatusClass(status)}">
+                    ${escapeHtml(status)}
+                  </span>
                 </div>
-              `;
+
+                <div class="account-body">
+                  <div class="account-grid">
+                    <div class="account-field">
+                      <div class="account-field-label">Account Type</div>
+                      <div class="account-field-value">${escapeHtml(account.accountTypeDescription || "-")}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Portfolio Type</div>
+                      <div class="account-field-value">${escapeHtml(account.portfolioTypeDescription || "-")}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Open Date</div>
+                      <div class="account-field-value">${formatDate(account.Open_Date)}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Closed Date</div>
+                      <div class="account-field-value">${formatDate(account.Date_Closed)}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Original Loan Amount</div>
+                      <div class="account-field-value">${formatAmount(account.Highest_Credit_or_Original_Loan_Amount)}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Current Balance</div>
+                      <div class="account-field-value">${formatAmount(account.Current_Balance)}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Amount Past Due</div>
+                      <div class="account-field-value">${formatAmount(account.Amount_Past_Due)}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Rate of Interest</div>
+                      <div class="account-field-value">${escapeHtml(account.Rate_of_Interest || "-")}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Repayment Tenure</div>
+                      <div class="account-field-value">${escapeHtml(account.Repayment_Tenure || "-")}</div>
+                    </div>
+
+                    <div class="account-field">
+                      <div class="account-field-label">Currency</div>
+                      <div class="account-field-value">${escapeHtml(account.CurrencyCode || "-")}</div>
+                    </div>
+                  </div>
+
+                  ${renderHorizontalPaymentHistory(history)}
+                </div>
+              </div>
+            `;
             })
-            .join("")}
-
-        </div>
-      `
-      : `
-        <div class="empty">
-          No address details found.
-        </div>
-      `
-  }
-
-</div>
-
-<!-- ======================================================
-     REPORT DETAILS
-====================================================== -->
-
-<div class="section">
-
-  <div class="section-title">
-    Report Details
+            .join("")
+        : '<div class="empty">No credit accounts found.</div>'
+    }
   </div>
 
-  <div class="grid">
+  <!-- CREDIT ENQUIRIES -->
+  <div class="section">
+    <div class="section-title">CREDIT ENQUIRIES</div>
 
-    <div class="card">
+    ${
+      capsApplications.length
+        ? `
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Subscriber</th>
+                  <th>Date</th>
+                  <th>Reason</th>
+                  <th>Amount Financed</th>
+                </tr>
+              </thead>
 
-      <div class="label">
-        Report Number
-      </div>
-
-      <div class="value">
-        ${escapeHtml(profile.ReportNumber || "-")}
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Report Date
-      </div>
-
-      <div class="value">
-        ${formatDate(profile.ReportDate)}
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Report Time
-      </div>
-
-      <div class="value">
-        ${escapeHtml(profile.ReportTime || "-")}
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Report Version
-      </div>
-
-      <div class="value">
-        ${escapeHtml(profile.Version || "-")}
-      </div>
-
-    </div>
-
- 
-
+              <tbody>
+                ${capsApplications
+                  .map(
+                    (item) => `
+                  <tr>
+                    <td>${escapeHtml(item.Subscriber_Name || "-")}</td>
+                    <td>${formatDate(item.Date_of_Request)}</td>
+                    <td>${escapeHtml(item.enquiryReasonDescription || "-")}</td>
+                    <td>${formatAmount(item.Amount_Financed)}</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        `
+        : '<div class="empty">No credit enquiries found.</div>'
+    }
   </div>
 
-</div>
+  <!-- HOLDER ADDRESSES -->
+  <div class="section">
+    <div class="section-title">HOLDER ADDRESSES</div>
 
+    ${
+      holderAddresses.length
+        ? `
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sr. No.</th>
+                  <th>City</th>
+                  <th>State</th>
+                  <th>PIN Code</th>
+                </tr>
+              </thead>
 
-<!-- ======================================================
-     CREDIT ACCOUNT SUMMARY
-====================================================== -->
-
-<div class="section">
-
-  <div class="section-title">
-    Credit Account Summary
+              <tbody>
+                ${holderAddresses
+                  .map(
+                    (address, index) => `
+                  <tr>
+                    <td>${index + 1}</td>
+                    <td>${escapeHtml(address.City_non_normalized || "-")}</td>
+                    <td>${escapeHtml(address.State_non_normalized || "-")}</td>
+                    <td>${escapeHtml(address.ZIP_Postal_Code_non_normalized || "-")}</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        `
+        : '<div class="empty">No address details found.</div>'
+    }
   </div>
 
-  <div class="grid-4">
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Total Accounts
-      </div>
-
-      <div class="metric-number">
-        ${totalAccounts}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Active Accounts
-      </div>
-
-      <div class="metric-number">
-        ${activeAccounts}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Closed Accounts
-      </div>
-
-      <div class="metric-number">
-        ${closedAccounts}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Default Accounts
-      </div>
-
-      <div
-        class="metric-number"
-        style="${
-          Number(defaultAccounts) > 0 ? "color:#DC2626;" : "color:#16A34A;"
-        }"
-      >
-        ${defaultAccounts}
-      </div>
-
-    </div>
-
+  <!-- FOOTER -->
+  <div class="footer">
+    Generated from Experian credit information response.
+    This document contains confidential financial information.
+    Handle and store it securely.
   </div>
 
 </div>
-
-
-<!-- ======================================================
-     OUTSTANDING BALANCE
-====================================================== -->
-
-<div class="section">
-
-  <div class="section-title">
-    Outstanding Balance
-  </div>
-
-
-  <div class="grid">
-
-    <div class="card">
-
-      <div class="label">
-        Secured Outstanding
-      </div>
-
-      <div class="value">
-        ${formatAmount(outstanding.Outstanding_Balance_Secured)}
-      </div>
-
-    </div>
-
-
-    <div class="card">
-
-      <div class="label">
-        Unsecured Outstanding
-      </div>
-
-      <div class="value">
-        ${formatAmount(outstanding.Outstanding_Balance_UnSecured)}
-      </div>
-
-    </div>
-
-
-    <div
-      class="card"
-      style="
-        grid-column: 1 / -1;
-        background:#F1F7FD;
-        border-color:#D7E8F7;
-      "
-    >
-
-      <div class="label">
-        Total Outstanding Balance
-      </div>
-
-      <div
-        class="value"
-        style="
-          font-size:16px;
-          color:#123B66;
-        "
-      >
-        ${formatAmount(outstanding.Outstanding_Balance_All)}
-      </div>
-
-    </div>
-
-  </div>
-
-</div>
-
-
-<!-- ======================================================
-     CREDIT ACCOUNTS
-====================================================== -->
-
-<div class="section">
-
-  <div class="section-title">
-    Credit Accounts
-  </div>
-
-
-  ${
-    accounts.length
-      ? accounts
-          .map((account, index) => {
-            const status = account.accountStatusDescription || "-";
-
-            const statusClass = getStatusClass(status);
-
-            const history = Array.isArray(account.CAIS_Account_History)
-              ? account.CAIS_Account_History
-              : [];
-
-            return `
-
-<div class="account">
-
-
-  <!-- ACCOUNT HEADER -->
-
-  <div class="account-header">
-
-    <div>
-
-      <div class="account-title">
-        Account ${index + 1} -
-        ${escapeHtml(account.Subscriber_Name || "Unknown Institution")}
-      </div>
-
-      <div class="account-number">
-        Account No:
-        ${escapeHtml(account.Account_Number || "-")}
-      </div>
-
-    </div>
-
-
-    <div>
-
-      <span class="badge ${statusClass}">
-        ${escapeHtml(status)}
-      </span>
-
-    </div>
-
-  </div>
-
-
-  <!-- ACCOUNT BODY -->
-
-  <div class="account-body">
-
-
-    <!-- ACCOUNT INFORMATION -->
-
-    <div class="account-grid">
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Account Type
-        </div>
-
-        <div class="account-field-value">
-          ${escapeHtml(account.accountTypeDescription || "-")}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Portfolio Type
-        </div>
-
-        <div class="account-field-value">
-          ${escapeHtml(account.portfolioTypeDescription || "-")}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Open Date
-        </div>
-
-        <div class="account-field-value">
-          ${formatDate(account.Open_Date)}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Closed Date
-        </div>
-
-        <div class="account-field-value">
-          ${formatDate(account.Date_Closed)}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Original Loan Amount
-        </div>
-
-        <div class="account-field-value">
-          ${formatAmount(account.Highest_Credit_or_Original_Loan_Amount)}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Current Balance
-        </div>
-
-        <div class="account-field-value">
-          ${formatAmount(account.Current_Balance)}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Amount Past Due
-        </div>
-
-        <div
-          class="account-field-value"
-          style="${
-            Number(account.Amount_Past_Due) > 0
-              ? "color:#DC2626;"
-              : "color:#16A34A;"
-          }"
-        >
-          ${formatAmount(account.Amount_Past_Due)}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Rate of Interest
-        </div>
-
-        <div class="account-field-value">
-          ${escapeHtml(account.Rate_of_Interest || "-")}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Repayment Tenure
-        </div>
-
-        <div class="account-field-value">
-          ${escapeHtml(account.Repayment_Tenure || "-")}
-        </div>
-
-      </div>
-
-
-      <div class="account-field">
-
-        <div class="account-field-label">
-          Currency
-        </div>
-
-        <div class="account-field-value">
-          ${escapeHtml(account.CurrencyCode || "-")}
-        </div>
-
-      </div>
-
-    </div>
-
-
-    <!-- =================================================
-         HORIZONTAL PAYMENT HISTORY
-    ================================================== -->
-
-    ${history.length ? renderHorizontalPaymentHistory(history) : ""}
-
-  </div>
-
-</div>
-
-`;
-          })
-          .join("")
-      : `
-<div class="empty">
-  No credit accounts found.
-</div>
-`
-  }
-
-</div>
-
-
-<!-- ======================================================
-     CREDIT ENQUIRIES
-====================================================== -->
-
-<div class="section">
-
-  <div class="section-title">
-    Credit Enquiries
-  </div>
-
-
-  <div class="grid-4">
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Last 7 Days
-      </div>
-
-      <div class="metric-number">
-        ${capsSummary.CAPSLast7Days ?? 0}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Last 30 Days
-      </div>
-
-      <div class="metric-number">
-        ${capsSummary.CAPSLast30Days ?? 0}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Last 90 Days
-      </div>
-
-      <div class="metric-number">
-        ${capsSummary.CAPSLast90Days ?? 0}
-      </div>
-
-    </div>
-
-
-    <div class="metric-card">
-
-      <div class="metric-label">
-        Last 180 Days
-      </div>
-
-      <div class="metric-number">
-        ${capsSummary.CAPSLast180Days ?? 0}
-      </div>
-
-    </div>
-
-  </div>
-
-
-  ${
-    capsApplications.length
-      ? `
-
-<div class="table-wrapper">
-
-<table>
-
-<thead>
-
-<tr>
-
-<th>
-  Subscriber
-</th>
-
-<th>
-  Date
-</th>
-
-<th>
-  Reason
-</th>
-
-<th>
-  Amount Financed
-</th>
-
-</tr>
-
-</thead>
-
-
-<tbody>
-
-${capsApplications
-  .map(
-    (item) => `
-
-<tr>
-
-<td>
-  ${escapeHtml(item.Subscriber_Name || "-")}
-</td>
-
-<td>
-  ${formatDate(item.Date_of_Request)}
-</td>
-
-<td>
-  ${escapeHtml(item.enquiryReasonDescription || "-")}
-</td>
-
-<td>
-  ${formatAmount(item.Amount_Financed)}
-</td>
-
-</tr>
-
-`,
-  )
-  .join("")}
-
-</tbody>
-
-</table>
-
-</div>
-
-`
-      : `
-
-<div class="empty">
-  No credit enquiries found.
-</div>
-
-`
-  }
-
-</div>
-
-
-
-
-
-
-
-<!-- ======================================================
-     FOOTER
-====================================================== -->
-
-<div class="footer">
-
-  <div class="footer-left">
-
-    <div class="generated-from">
-      Generated from <strong>Experian</strong>
-    </div>
-
-    <div class="footer-description">
-      This report has been generated from the Experian
-      credit information response received through an
-      authorized API. This document is intended for
-      informational purposes and should be handled
-      securely.
-    </div>
-
-  </div>
-
-
-  <div class="footer-right">
-
-    <strong>Experian</strong><br />
-
-    Experian Credit Report
-
-  </div>
-
-</div>
-
-
-</div>
-
 </body>
-
 </html>
 `;
 };
