@@ -1471,8 +1471,7 @@ const checkCreditScorePublic = async (req, res) => {
     // Send the report PDF to the user on WhatsApp (non-blocking for the request)
     if (creditReport.localPath) {
       try {
-        // WhatsApp must fetch the PDF from a public URL, so prefer the tunnel over localhost
-        const backendUrl = (process.env.TUNNEL_URL || process.env.BACKEND_URL || "").replace(/\/$/, "");
+        const backendUrl = (process.env.BACKEND_URL || "").replace(/\/$/, "");
         const waResponse = await whatsappService.sendReportDocument({
           mobile,
           fileUrl: `${backendUrl}${creditReport.localPath}`,
