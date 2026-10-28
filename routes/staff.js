@@ -14,6 +14,7 @@ const {
   getStaffProfile,
   assignStaff,
   changeStaffRole,
+  updateStaffDetails,
   setStaffStatus,
   resendCredentials,
 } = require("../controllers/staffController");
@@ -39,7 +40,8 @@ router.post("/staff", ...fullAdmin, assignStaff);
 //@route GET /api/admin/staff/:id (profile + owned franchises)
 router.get("/staff/:id", ...fullAdmin, getStaffProfile);
 
-//@route PATCH /api/admin/staff/:id/role | /status
+//@route PATCH /api/admin/staff/:id (name, email, phone) | /role | /status
+router.patch("/staff/:id", ...fullAdmin, updateStaffDetails);
 router.patch("/staff/:id/role", ...fullAdmin, changeStaffRole);
 router.patch("/staff/:id/status", ...fullAdmin, setStaffStatus);
 

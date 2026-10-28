@@ -374,6 +374,58 @@ const changeStaffRole = async (req, res) => {
   }
 };
 
+// Edits basic details (name, email, phone). Only the fields sent are changed.
+// Role, status and password have their own endpoints.
+const updateStaffDetails = async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) return fail(res, 400, "Invalid staff id");
+
+    const { name, email, phone } = req.body;
+    if (name === undefined && email === undefined && phone === undefined) {
+      return fail(res, 400, "Send at least one of: name, email, phone");
+    }
+
+    const staff = await findStaff(req.params.id);
+    if (!staff) return fail(res, 404, "Staff member not found");
+
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) return fail(res, 400, "Name cannot be empty");
+      staff.name = trimmed;
+    }
+
+    if (phone !== undefined) {
+      const digits = String(phone).trim();
+      if (!/^\d{10}$/.test(digits)) return fail(res, 400, "Enter a valid 10-digit phone number");
+      staff.phone = digits;
+    }
+
+    if (email !== undefined) {
+      const normalized = String(email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+        return fail(res, 400, "Enter a valid email address");
+      }
+      // Email is the login, so it must not belong to another active account
+      const taken = await User.findOne({
+        email: normalized,
+        isDeleted: { $ne: true },
+        _id: { $ne: staff._id },
+      });
+      if (taken) return fail(res, 409, "This email is already used by another account");
+      staff.email = normalized;
+    }
+
+    await staff.save();
+
+    const data = await User.findById(staff._id)
+      .select("-password")
+      .populate("staffRole", "name");
+    res.json({ success: true, message: "Staff details updated", data });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
 // Deactivating takes effect on the next request, since auth re-checks isActive
 const setStaffStatus = async (req, res) => {
   try {
@@ -445,6 +497,7 @@ module.exports = {
   getStaffProfile,
   assignStaff,
   changeStaffRole,
+  updateStaffDetails,
   setStaffStatus,
   resendCredentials,
 };
