@@ -463,7 +463,7 @@ const checkCreditScore = async (req, res) => {
         }).sort({ createdAt: -1 });
 
         // Enable this block if the 15-day restriction is required.
-        /*
+
         if (lastReport?.createdAt) {
           const diffDays =
             (Date.now() - new Date(lastReport.createdAt).getTime()) /
@@ -477,7 +477,6 @@ const checkCreditScore = async (req, res) => {
             });
           }
         }
-        */
       }
 
       franchise = await Franchise.findById(req.user.franchiseId);
@@ -2800,16 +2799,16 @@ const generateExperianReport = async (req, res) => {
         pan,
         bureau: "experian",
       }).sort({ createdAt: -1 });
-      // if (lastReport) {
-      //   const diffDays =
-      //     (new Date() - new Date(lastReport.createdAt)) / (1000 * 60 * 60 * 24);
-      //   if (diffDays < 15) {
-      //     const remainingDays = Math.ceil(15 - diffDays);
-      //     return res.status(400).json({
-      //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-      //     });
-      //   }
-      // }
+      if (lastReport) {
+        const diffDays =
+          (new Date() - new Date(lastReport.createdAt)) / (1000 * 60 * 60 * 24);
+        if (diffDays < 15) {
+          const remainingDays = Math.ceil(15 - diffDays);
+          return res.status(400).json({
+            message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+          });
+        }
+      }
       franchise = await Franchise.findById(req.user.franchiseId);
       if (!franchise) {
         return res.status(404).json({ message: "Franchise not found" });
