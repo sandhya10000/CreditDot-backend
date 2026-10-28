@@ -12,6 +12,11 @@ const normalizeMobile = (mobile) => {
   return digits.length === 10 ? `91${digits}` : digits;
 };
 
+// TEST MODE: when WHATSAPP_TEST_RECIPIENT is set, every outgoing message goes to that number.
+// Remove the variable from .env to send to real recipients again.
+const withRecipient = (to) =>
+  process.env.WHATSAPP_TEST_RECIPIENT ? normalizeMobile(process.env.WHATSAPP_TEST_RECIPIENT) : to;
+
 const sendTemplateMessage = async (payload) => {
   const baseUrl = (process.env.WHATSAPP_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
   const apiKey = process.env.WHATSAPP_API_KEY;
@@ -25,7 +30,7 @@ const sendTemplateMessage = async (payload) => {
     headers["x-phone-id"] = process.env.WHATSAPP_PHONE_ID;
   }
 
-  const response = await axios.post(`${baseUrl}/api/v1/whatsapp/sendMessage`, payload, {
+  const response = await axios.post(`${baseUrl}/api/v1/whatsapp/sendMessage`, { ...payload, to: withRecipient(payload.to) }, {
     headers,
     timeout: 30000,
   });
