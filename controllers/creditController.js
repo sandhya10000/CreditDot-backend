@@ -16,7 +16,7 @@ const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
 const digiCibilPdf = require("../utils/digiCibilPdf");
 const { generateCibilPdf } = require("../utils/cibilPdfService");
-const crifStyledPdf = require("../utils/crifStyledPdf");
+const crifStyledPdf = require("../templates/crifReport.template");
 const experianCirPdf = require("../utils/experianCirPdf");
 const generateExperianPdf = require("../utils/generateExperianPdf");
 
@@ -1134,52 +1134,82 @@ const checkCreditScore = async (req, res) => {
     }
 
     // 11. CRIF styled PDF fallback
+
     if (indiconnectBureau === "crif" && !creditReport.localPath) {
       try {
-        const rawCrif = response.__indiconnect?.bureauData?.credit_report;
+        const parsed = response.__indiconnect;
 
-        if (!rawCrif) {
-          throw new Error("CRIF report data missing from bureau response");
+        const rawCrif = parsed?.bureauData?.credit_report;
+
+        if (!rawCrif || typeof rawCrif !== "object") {
+          throw new Error(
+            "CRIF credit_report data missing from bureau response",
+          );
         }
 
-        const gen = await crifStyledPdf.generateCrifPdf(rawCrif, {
-          name,
-          mobile,
-          pan,
-          txnId: response.__indiconnect?.txn_id,
-        });
-
-        if (!gen?.buffer || !Buffer.isBuffer(gen.buffer)) {
-          throw new Error("CRIF PDF generator did not return a valid buffer");
+        if (typeof crifStyledPdf?.generateCrifPdf !== "function") {
+          throw new Error(
+            "crifStyledPdf.generateCrifPdf is not a function. Check the import/export.",
+          );
         }
 
-        const reportsDir = path.join(__dirname, "../reports");
+        // This template returns a file path, not { buffer }.
+        const generatedPath = await crifStyledPdf.generateCrifPdf(
+          rawCrif,
+          String(creditReport._id),
+        );
 
-        fs.mkdirSync(reportsDir, { recursive: true });
-
-        const filename = `credit_report_${creditReport._id}_${Date.now()}.pdf`;
-
-        const absolutePath = path.join(reportsDir, filename);
-
-        fs.writeFileSync(absolutePath, gen.buffer);
-
-        const header = gen.buffer.subarray(0, 5).toString("ascii");
-
-        if (header !== "%PDF-") {
-          fs.unlinkSync(absolutePath);
-
-          throw new Error("CRIF PDF generator returned an invalid PDF");
+        if (
+          typeof generatedPath !== "string" ||
+          !fs.existsSync(generatedPath)
+        ) {
+          throw new Error(
+            `CRIF PDF generator did not return an existing file path: ${generatedPath}`,
+          );
         }
 
-        creditReport.localPath = `/reports/${filename}`;
+        const stats = fs.statSync(generatedPath);
+
+        if (!stats.isFile() || stats.size === 0) {
+          throw new Error("Generated CRIF PDF is empty or is not a file");
+        }
+
+        const fd = fs.openSync(generatedPath, "r");
+        const headerBuffer = Buffer.alloc(5);
+
+        try {
+          fs.readSync(fd, headerBuffer, 0, 5, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+
+        if (headerBuffer.toString("ascii") !== "%PDF-") {
+          throw new Error("CRIF generator output is not a valid PDF");
+        }
+
+        // Store the relative URL expected by the report-serving route.
+        const reportsRoot = path.resolve(process.cwd(), "uploads");
+        const relativeToUploads = path.relative(reportsRoot, generatedPath);
+
+        if (
+          relativeToUploads.startsWith("..") ||
+          path.isAbsolute(relativeToUploads)
+        ) {
+          throw new Error(
+            "Generated CRIF PDF is outside the uploads directory",
+          );
+        }
+
+        creditReport.localPath = `/uploads/${relativeToUploads.split(path.sep).join("/")}`;
+
         creditReport.pdfStatus = "ready";
-
         await creditReport.save();
 
         console.log("[CRIF PDF] Generated successfully:", {
           creditReportId: String(creditReport._id),
-          filename,
-          size: gen.buffer.length,
+          filePath: generatedPath,
+          localPath: creditReport.localPath,
+          size: stats.size,
         });
       } catch (crifPdfErr) {
         console.error("[CRIF PDF] Generation failed:", {
@@ -1189,7 +1219,6 @@ const checkCreditScore = async (req, res) => {
         });
 
         creditReport.pdfStatus = "failed";
-
         await creditReport.save().catch(() => {});
       }
     }
