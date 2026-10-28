@@ -59,8 +59,14 @@ exports.handleWasimpleWebhook = async (req, res) => {
       lowScorePromptSentAt: { $ne: null },
     }).sort({ createdAt: -1 });
 
-    if (!report) return;
-    if (report.supportLeadId) return; // already created for this report (dedupe)
+    if (!report) {
+      console.warn("WaSimple webhook: no low-score report found for mobile", mobile);
+      return;
+    }
+    if (report.supportLeadId) {
+      console.log("WaSimple webhook: lead already exists for report", report._id);
+      return;
+    }
 
     const lead = await CreditRepair.create({
       fullName: report.name,
