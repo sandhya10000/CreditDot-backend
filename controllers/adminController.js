@@ -1025,7 +1025,7 @@ const sendFranchiseCopiesToManagerAndAdmin = async (req, user, franchise, tempPa
 
 const createFranchiseUser = async (req, res) => {
   try {
-    const { name, email, assignedPackages, role, subRole } = req.body;
+    const { name, email, phone, assignedPackages, role, subRole } = req.body;
 
     // Admin staff must be created from the Staff page so they get a role's permissions
     if (role === "admin") {
@@ -1034,8 +1034,12 @@ const createFranchiseUser = async (req, res) => {
       });
     }
 
+    // Phone is required: partner WhatsApp messages are sent to this number
+    if (!/^\d{10}$/.test(String(phone || ""))) {
+      return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
+    }
+
     // Default values
-    const phone = "0000000000";
     const state = "Not Provided";
     const pincode = "000000";
     const language = "en";

@@ -11,7 +11,8 @@ const notifyPartnerRmDetails = async (franchiseId) => {
 
     if (franchise.kycStatus !== "approved") return;
     if (!franchise.businessManager) return;
-    if (!franchise.phone) {
+    // Skip missing numbers and the old "0000000000" placeholder
+    if (!franchise.phone || franchise.phone === "0000000000") {
       console.log("RM details WhatsApp skipped: partner has no phone number", franchiseId);
       return;
     }

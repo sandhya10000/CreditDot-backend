@@ -237,11 +237,15 @@ const assignStaff = async (req, res) => {
   try {
     const name = (req.body.name || "").trim();
     const email = (req.body.email || "").trim().toLowerCase();
-    const { roleId } = req.body;
+    const { roleId, phone } = req.body;
 
     if (!name) return fail(res, 400, "Name is required");
     if (!email) return fail(res, 400, "Email is required");
     if (!isValidId(roleId)) return fail(res, 400, "Choose a role");
+    // Phone is needed: RM details are sent to partners on WhatsApp
+    if (!/^\d{10}$/.test(String(phone || ""))) {
+      return fail(res, 400, "Enter a valid 10-digit phone number");
+    }
 
     const role = await Role.findById(roleId);
     if (!role || !role.isActive) return fail(res, 400, "Role not found or inactive");
@@ -259,6 +263,7 @@ const assignStaff = async (req, res) => {
       }
 
       existing.staffRole = role._id;
+      existing.phone = phone;
       existing.subRole = "staff";
       if (role.limitToOwnFranchises && !existing.staffCode) {
         existing.staffCode = await generateBusinessManagerCode();
@@ -288,7 +293,7 @@ const assignStaff = async (req, res) => {
     const user = new User({
       name,
       email,
-      phone: "0000000000",
+      phone,
       state: "Not Provided",
       pincode: "000000",
       language: "en",
