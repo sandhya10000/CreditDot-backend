@@ -1470,17 +1470,31 @@ const checkCreditScorePublic = async (req, res) => {
 
     // Send the report PDF to the user on WhatsApp (non-blocking for the request)
     if (creditReport.localPath) {
+      const fileName = path.basename(creditReport.localPath);
       try {
-        const backendUrl = (process.env.BACKEND_URL || "").replace(/\/$/, "");
-        const waResponse = await whatsappService.sendReportDocument({
+        // Preferred: text message with a "View Report" button
+        const waResponse = await whatsappService.sendReportLink({
           mobile,
-          fileUrl: `${backendUrl}${creditReport.localPath}`,
           name,
           score: creditReport.score,
+          fileName,
         });
-        console.log("WhatsApp report sent:", waResponse);
-      } catch (waError) {
-        console.error("Error sending report on WhatsApp:", waError.response?.data || waError.message);
+        console.log("WhatsApp report link sent:", waResponse);
+      } catch (linkError) {
+        console.error("Report link on WhatsApp failed, sending PDF instead:", linkError.response?.data || linkError.message);
+        try {
+          // Fallback: PDF attachment
+          const backendUrl = (process.env.BACKEND_URL || "").replace(/\/$/, "");
+          const waResponse = await whatsappService.sendReportDocument({
+            mobile,
+            fileUrl: `${backendUrl}${creditReport.localPath}`,
+            name,
+            score: creditReport.score,
+          });
+          console.log("WhatsApp report document sent:", waResponse);
+        } catch (waError) {
+          console.error("Error sending report on WhatsApp:", waError.response?.data || waError.message);
+        }
       }
     } else {
       console.log("No local PDF available, skipping WhatsApp report delivery");

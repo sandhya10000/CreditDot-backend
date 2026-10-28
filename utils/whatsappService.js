@@ -54,6 +54,17 @@ exports.sendReportDocument = async ({ mobile, fileUrl, name, score }) => {
   });
 };
 
+// Sends the report as a text message with a "View Report" button.
+// Body: {{1}} = name, {{2}} = score. Button URL: .../reports/{{1}} -> fileName.
+exports.sendReportLink = async ({ mobile, name, score, fileName }) => {
+  return sendTemplateMessage({
+    templateName: process.env.WHATSAPP_REPORT_LINK_TEMPLATE || "credit_report_link",
+    language: "en",
+    to: normalizeMobile(mobile),
+    templateVariables: [String(name), String(score ?? "N/A"), String(fileName)],
+  });
+};
+
 // Sends the assigned RM's details to an approved partner (text-only template, no header).
 exports.sendRmDetails = async ({ mobile, partnerName, rmName, rmMobile, rmEmail }) => {
   return sendTemplateMessage({
