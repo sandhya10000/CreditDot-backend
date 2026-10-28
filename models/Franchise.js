@@ -20,6 +20,16 @@ const franchiseSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // RM whose details were last sent to the partner on WhatsApp (prevents duplicate sends)
+    rmDetailsSentFor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    rmDetailsSentAt: {
+      type: Date,
+      default: null,
+    },
     //franchise code/id
     franchiseCode: {
       type: String,

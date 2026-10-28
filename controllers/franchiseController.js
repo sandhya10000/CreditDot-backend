@@ -6,6 +6,7 @@ const Package = require("../models/Package");
 const Joi = require("joi");
 const { sendFranchiseApprovalEmail } = require("../utils/emailService");
 const generateFranchiseCode = require("../utils/generateFranchiseCode");
+const { notifyPartnerRmDetails } = require("../utils/notifyRmDetails");
 const {
   franchiseScope,
   ownsFranchise,
@@ -256,6 +257,9 @@ const updateFranchiseProfile = async (req, res) => {
       } catch (emailError) {
         console.error("Franchise approval email failed:", emailError.message);
       }
+
+      // Send the assigned RM's details on WhatsApp (never blocks the response)
+      notifyPartnerRmDetails(franchise._id);
     }
 
     return res.status(200).json({
@@ -963,6 +967,9 @@ const reassignFranchiseManager = async (req, res) => {
     if (!franchise) {
       return res.status(404).json({ success: false, message: "Franchise not found" });
     }
+
+    // Send the new RM's details to an already-approved partner (no-op if unassigned or already sent)
+    notifyPartnerRmDetails(franchise._id);
 
     res.json({
       success: true,

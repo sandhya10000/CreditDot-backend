@@ -7,6 +7,7 @@ const axios = require('axios');
 const { sendKycApprovalEmail, sendKycRejectionEmail, sendRegistrationApprovalEmail } = require('../utils/emailService');
 // Import the helper function from creditController
 const { getSurepassApiKeyValue } = require('./creditController');
+const { notifyPartnerRmDetails } = require('../utils/notifyRmDetails');
 
 // Validation schema for KYC submission
 const kycSchema = Joi.object({
@@ -279,6 +280,9 @@ const approveKyc = async (req, res) => {
           console.error('Failed to send KYC approval email:', emailError);
         }
       }
+
+      // Send the assigned RM's details on WhatsApp (never blocks the response)
+      notifyPartnerRmDetails(franchise._id);
     }
     
     res.json({

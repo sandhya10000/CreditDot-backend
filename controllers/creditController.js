@@ -9,6 +9,7 @@ const Joi = require("joi");
 const fs = require("fs");
 const path = require("path");
 const { sendCreditReportEmail } = require("../utils/emailService");
+const whatsappService = require("../utils/whatsappService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
 const indiconnectClient = require("../utils/indiconnectApiClient");
@@ -1465,6 +1466,25 @@ const checkCreditScorePublic = async (req, res) => {
       }
     } else {
       console.log("No report URL found, skipping PDF download");
+    }
+
+    // Send the report PDF to the user on WhatsApp (non-blocking for the request)
+    if (creditReport.localPath) {
+      try {
+        // WhatsApp must fetch the PDF from a public URL, so prefer the tunnel over localhost
+        const backendUrl = (process.env.TUNNEL_URL || process.env.BACKEND_URL || "").replace(/\/$/, "");
+        const waResponse = await whatsappService.sendReportDocument({
+          mobile,
+          fileUrl: `${backendUrl}${creditReport.localPath}`,
+          name,
+          score: creditReport.score,
+        });
+        console.log("WhatsApp report sent:", waResponse);
+      } catch (waError) {
+        console.error("Error sending report on WhatsApp:", waError.response?.data || waError.message);
+      }
+    } else {
+      console.log("No local PDF available, skipping WhatsApp report delivery");
     }
 
     console.log("Attempting to send emails to user and admin...");
