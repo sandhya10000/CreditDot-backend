@@ -1627,6 +1627,22 @@ const checkCreditScorePublic = async (req, res) => {
       console.log("No local PDF available, skipping WhatsApp report delivery");
     }
 
+    // Low-score follow-up: offer support via a "Contact Support" button
+    const lowScoreThreshold = Number(process.env.LOW_SCORE_THRESHOLD || 700);
+    if (creditReport.score != null && Number(creditReport.score) < lowScoreThreshold) {
+      try {
+        await whatsappService.sendLowScorePrompt({
+          mobile,
+          name,
+          score: creditReport.score,
+        });
+        creditReport.lowScorePromptSentAt = new Date();
+        await creditReport.save();
+      } catch (lowScoreError) {
+        console.error("Low-score WhatsApp prompt failed:", lowScoreError.response?.data || lowScoreError.message);
+      }
+    }
+
     console.log("Attempting to send emails to user and admin...");
     // Send email to user and admin
     try {

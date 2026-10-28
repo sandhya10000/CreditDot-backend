@@ -234,6 +234,7 @@ app.use("/api/relationship-managers", require("./routes/relationshipManagers"));
 app.use("/api/emi", require("./routes/emi"));
 app.use("/api/google-sheets", require("./routes/googleSheets"));
 app.use("/api/forms", require("./routes/forms"));
+app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/digital-agreements", require("./routes/digitalAgreements"));
 app.use("/api/careers", require("./routes/careers"));
 app.use("/api/ai-analysis", require("./routes/aiAnalysis"));

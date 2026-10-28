@@ -65,6 +65,31 @@ exports.sendReportLink = async ({ mobile, name, score, fileName }) => {
   });
 };
 
+// Low-score follow-up with a "Contact Support" quick-reply button.
+// Body: {{1}} = name, {{2}} = score.
+exports.sendLowScorePrompt = async ({ mobile, name, score }) => {
+  return sendTemplateMessage({
+    templateName: process.env.WHATSAPP_LOW_SCORE_TEMPLATE || "low_score_support",
+    language: "en",
+    to: normalizeMobile(mobile),
+    templateVariables: [String(name), String(score)],
+  });
+};
+
+// Plain-text reply inside the 24h customer service window (no template needed).
+exports.sendText = async ({ mobile, text }) => {
+  const baseUrl = (process.env.WHATSAPP_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const headers = { "x-api-key": process.env.WHATSAPP_API_KEY, "Content-Type": "application/json" };
+  if (process.env.WHATSAPP_PHONE_ID) headers["x-phone-id"] = process.env.WHATSAPP_PHONE_ID;
+
+  const response = await axios.post(
+    `${baseUrl}/api/v1/whatsapp/sendMessage`,
+    { to: normalizeMobile(mobile), text },
+    { headers, timeout: 30000 },
+  );
+  return response.data;
+};
+
 // Sends the assigned RM's details to an approved partner (text-only template, no header).
 exports.sendRmDetails = async ({ mobile, partnerName, rmName, rmMobile, rmEmail }) => {
   return sendTemplateMessage({
