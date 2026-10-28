@@ -89,7 +89,7 @@ exports.sendText = async ({ mobile, text }) => {
 
   const response = await axios.post(
     `${baseUrl}/api/v1/whatsapp/sendMessage`,
-    { to: normalizeMobile(mobile), text },
+    { to: withRecipient(normalizeMobile(mobile)), text },
     { headers, timeout: 30000 },
   );
   return response.data;

@@ -37,6 +37,9 @@ exports.handleWasimpleWebhook = async (req, res) => {
   // Always reply 200 quickly so the provider doesn't retry; errors are logged.
   res.status(200).json({ received: true });
 
+  // Temporary debug log: shows the raw payload WaSimple sends (secret values are not logged)
+  console.log("WaSimple webhook hit:", JSON.stringify({ query: Object.keys(req.query), body: req.body }));
+
   try {
     const secret = process.env.WHATSAPP_WEBHOOK_SECRET;
     if (!secret || (req.headers["x-webhook-secret"] || req.query.secret) !== secret) {
