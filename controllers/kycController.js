@@ -8,6 +8,7 @@ const { sendKycApprovalEmail, sendKycRejectionEmail, sendRegistrationApprovalEma
 // Import the helper function from creditController
 const { getSurepassApiKeyValue } = require('./creditController');
 const { notifyPartnerRmDetails } = require('../utils/notifyRmDetails');
+const generateFranchiseCode = require('../utils/generateFranchiseCode');
 
 // Validation schema for KYC submission
 const kycSchema = Joi.object({
@@ -265,6 +266,10 @@ const approveKyc = async (req, res) => {
     if (franchise) {
       franchise.kycStatus = 'approved';
       franchise.kycApprovedAt = new Date();
+      // Franchise ID is issued on approval if not already assigned
+      if (!franchise.franchiseCode) {
+        franchise.franchiseCode = await generateFranchiseCode();
+      }
       await franchise.save();
       
       // Activate the user account

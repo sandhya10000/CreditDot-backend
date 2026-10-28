@@ -51,6 +51,12 @@ const franchiseSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    // Optional second mobile number
+    alternatePhone: {
+      type: String,
+      required: false,
+      trim: true,
+    },
     address: {
       street: String,
       city: String,

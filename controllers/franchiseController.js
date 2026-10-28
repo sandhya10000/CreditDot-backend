@@ -5,13 +5,16 @@ const FranchiseCounter = require("../models/FranchiseCounter");
 const Package = require("../models/Package");
 const Joi = require("joi");
 const { sendFranchiseApprovalEmail } = require("../utils/emailService");
+const mongoose = require("mongoose");
 const generateFranchiseCode = require("../utils/generateFranchiseCode");
+const { resolveFranchiseAiLimit } = require("../utils/aiLimitService");
 const { notifyPartnerRmDetails } = require("../utils/notifyRmDetails");
 const {
   franchiseScope,
   ownsFranchise,
   resolveBusinessManagerId,
 } = require("../utils/franchiseScope");
+const { assignUnassignedFranchises } = require("../utils/assignBusinessManager");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -101,9 +104,14 @@ const getSingleFranchise = async (req, res) => {
   try {
     const { franchiseCode } = req.params;
 
-    const franchise = await Franchise.findOne({ franchiseCode: franchiseCode })
-      .populate("userId", "name email phone")
-      .populate("assignedPackages", "name price creditsIncluded");
+    // Franchises without an ID are opened by their database _id
+    const lookup = mongoose.isValidObjectId(franchiseCode)
+      ? { $or: [{ franchiseCode }, { _id: franchiseCode }] }
+      : { franchiseCode };
+
+    const franchise = await Franchise.findOne(lookup)
+      .populate("userId", "name email phone lastLoginAt")
+      .populate("assignedPackages", "name price creditsIncluded isActive");
 
     if (!franchise) {
       return res.status(404).json({
@@ -123,10 +131,21 @@ const getSingleFranchise = async (req, res) => {
     //   franchiseId: franchise._id,
     // });
 
+    // AI usage comes from the purchased package, not the stored aiTotal field
+    const plain = franchise.toObject();
+    const aiInfo = resolveFranchiseAiLimit(plain);
+    const aiUsage = {
+      hasActivePackage: aiInfo.hasActivePackage,
+      packageName: aiInfo.packageName,
+      used: aiInfo.used,
+      total: aiInfo.hasActivePackage ? (aiInfo.isUnlimited ? "Unlimited" : aiInfo.limit) : null,
+    };
+
     return res.status(200).json({
       success: true,
       data: {
-        ...franchise.toObject(),
+        ...plain,
+        aiUsage,
         // businessHistory: businesses,
       },
     });
@@ -947,6 +966,23 @@ const fetchBankVerification = async (req, res) => {
     });
   }
 };
+// Admin-only: give every partner without a Business Manager a turn in the rotation
+const assignUnassignedBusinessManagers = async (req, res) => {
+  try {
+    const result = await assignUnassignedFranchises();
+    if (result.error) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
+    res.json({
+      success: true,
+      message: `Assigned ${result.assigned} partner(s)`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Admin-only: move a franchise to another Business Manager (null = unassign)
 const reassignFranchiseManager = async (req, res) => {
   try {
@@ -1162,4 +1198,5 @@ module.exports = {
   getSingleFranchise,
   exportFranchisesCSV,
   reassignFranchiseManager,
+  assignUnassignedBusinessManagers,
 };

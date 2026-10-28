@@ -1,6 +1,7 @@
 const Joi = require("joi");
 const googleSheetsService = require("../utils/googleSheetsService");
 const CreditRepair = require("../models/CreditRepair");
+const CreditReport = require("../models/CreditReport");
 const ContactForm = require("../models/ContactForm");
 const FranchiseOpportunity = require("../models/FranchiseOpportunity");
 const BusinessForm = require("../models/BusinessForm");
@@ -497,6 +498,30 @@ const submitSuvidhaCentreApplicationForm = async (req, res) => {
   }
 };
 
+// Problem type written by the WhatsApp "Contact Support" webhook. Older leads have no
+// `source` value, so this is also used as a fallback to identify them.
+const WHATSAPP_PROBLEM_TYPE = "Low credit score (WhatsApp)";
+
+const escapeRegex = (value) => value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD on createdAt (IST, both inclusive)
+const buildDateClause = ({ from, to }) => {
+  if (!from && !to) return null;
+  const range = {};
+  if (from) range.$gte = new Date(`${from}T00:00:00+05:30`);
+  if (to) range.$lte = new Date(`${to}T23:59:59.999+05:30`);
+  return { createdAt: range };
+};
+
+// Filter on the numeric value of the stored creditScore string (non-numeric -> 0)
+const buildScoreClause = ({ minScore, maxScore }) => {
+  const score = { $convert: { input: "$creditScore", to: "int", onError: 0, onNull: 0 } };
+  const conditions = [];
+  if (minScore) conditions.push({ $gte: [score, parseInt(minScore, 10)] });
+  if (maxScore) conditions.push({ $lte: [score, parseInt(maxScore, 10)] });
+  return conditions.length ? { $expr: { $and: conditions } } : null;
+};
+
 // Admin endpoints for credit repair forms
 const getAllCreditRepairEnquiries = async (req, res) => {
   try {
@@ -504,28 +529,46 @@ const getAllCreditRepairEnquiries = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const query = {};
+    const clauses = [];
 
     if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, "i");
-      query.$or = [
-        { fullName: searchRegex },
-        { mobileNumber: searchRegex },
-        { email: searchRegex },
-      ];
+      const searchRegex = new RegExp(escapeRegex(req.query.search), "i");
+      clauses.push({
+        $or: [
+          { fullName: searchRegex },
+          { mobileNumber: searchRegex },
+          { email: searchRegex },
+        ],
+      });
     }
 
-    if (req.query.problemType) {
-      query.problemType = req.query.problemType;
+    if (req.query.source === "whatsapp") {
+      clauses.push({ $or: [{ source: "whatsapp" }, { problemType: WHATSAPP_PROBLEM_TYPE }] });
+    } else if (req.query.source === "website") {
+      clauses.push({ source: { $ne: "whatsapp" } }, { problemType: { $ne: WHATSAPP_PROBLEM_TYPE } });
     }
 
-    if (req.query.status) {
-      query.status = req.query.status;
+    if (req.query.problemType) clauses.push({ problemType: req.query.problemType });
+    if (req.query.status) clauses.push({ status: req.query.status });
+    if (req.query.state) clauses.push({ state: req.query.state });
+    if (req.query.language) clauses.push({ language: req.query.language });
+
+    const dateClause = buildDateClause(req.query);
+    if (dateClause) clauses.push(dateClause);
+
+    const scoreClause = buildScoreClause(req.query);
+    if (scoreClause) clauses.push(scoreClause);
+
+    // Bureau lives on the linked CreditReport, so resolve matching leads through it
+    if (req.query.bureau) {
+      const leadIds = await CreditReport.distinct("supportLeadId", {
+        bureau: req.query.bureau,
+        supportLeadId: { $ne: null },
+      });
+      clauses.push({ _id: { $in: leadIds } });
     }
 
-    if (req.query.state) {
-      query.state = req.query.state;
-    }
+    const query = clauses.length ? { $and: clauses } : {};
 
     const enquiries = await CreditRepair.find(query)
       .sort({ createdAt: -1 })
@@ -534,8 +577,32 @@ const getAllCreditRepairEnquiries = async (req, res) => {
 
     const total = await CreditRepair.countDocuments(query);
 
+    // Attach the linked credit report (bureau, PAN, score, prompt time) for WhatsApp leads
+    const reports = await CreditReport.find({
+      supportLeadId: { $in: enquiries.map((e) => e._id) },
+    })
+      .select("supportLeadId bureau pan score lowScorePromptSentAt")
+      .lean();
+    const reportByLead = new Map(reports.map((r) => [String(r.supportLeadId), r]));
+
+    const data = enquiries.map((enquiry) => {
+      const report = reportByLead.get(String(enquiry._id));
+      return {
+        ...enquiry.toObject(),
+        source: enquiry.source || (enquiry.problemType === WHATSAPP_PROBLEM_TYPE ? "whatsapp" : "website"),
+        creditReport: report
+          ? {
+              bureau: report.bureau,
+              pan: report.pan,
+              score: report.score,
+              lowScorePromptSentAt: report.lowScorePromptSentAt,
+            }
+          : null,
+      };
+    });
+
     res.json({
-      enquiries,
+      enquiries: data,
       total,
       totalPages: Math.ceil(total / limit),
       currentPage: page,
@@ -588,24 +655,47 @@ const deleteCreditRepairEnquiry = async (req, res) => {
 // Admin endpoints for website franchise leads
 const getAllFranchiseLeads = async (req, res) => {
   try {
-    const query = {};
+    const clauses = [];
 
     if (req.query.search) {
-      const searchRegex = new RegExp(
-        req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        "i",
-      );
-      query.$or = [
-        { fullName: searchRegex },
-        { mobileNumber: searchRegex },
-        { email: searchRegex },
-        { city: searchRegex },
-        { state: searchRegex },
-      ];
+      const searchRegex = new RegExp(escapeRegex(req.query.search), "i");
+      clauses.push({
+        $or: [
+          { fullName: searchRegex },
+          { mobileNumber: searchRegex },
+          { email: searchRegex },
+          { city: searchRegex },
+          { state: searchRegex },
+        ],
+      });
     }
 
-    if (req.query.status) {
-      query.status = req.query.status;
+    if (req.query.status) clauses.push({ status: req.query.status });
+    if (req.query.state) clauses.push({ state: req.query.state });
+    if (req.query.profession) clauses.push({ profession: req.query.profession });
+
+    const dateClause = buildDateClause(req.query);
+    if (dateClause) clauses.push(dateClause);
+
+    const query = clauses.length ? { $and: clauses } : {};
+
+    // Paginated mode when ?page is sent; otherwise the full list (existing callers)
+    if (req.query.page) {
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 10;
+      const [leads, total] = await Promise.all([
+        FranchiseOpportunity.find(query)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit),
+        FranchiseOpportunity.countDocuments(query),
+      ]);
+      return res.json({
+        leads,
+        total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      });
     }
 
     const leads = await FranchiseOpportunity.find(query).sort({ createdAt: -1 });

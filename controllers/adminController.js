@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Franchise = require("../models/Franchise");
+const generateFranchiseCode = require("../utils/generateFranchiseCode");
 const Package = require("../models/Package");
 const Lead = require("../models/Lead");
 const Transaction = require("../models/Transaction");
@@ -935,6 +936,7 @@ const getAllFranchisesWithCredits = async (req, res) => {
 // =========================
 
 const { resolveBusinessManagerId } = require("../utils/franchiseScope");
+const { assignNextManager } = require("../utils/assignBusinessManager");
 
 const RESEND_COOLDOWN_MS = 60 * 1000;
 
@@ -1025,7 +1027,7 @@ const sendFranchiseCopiesToManagerAndAdmin = async (req, user, franchise, tempPa
 
 const createFranchiseUser = async (req, res) => {
   try {
-    const { name, email, phone, assignedPackages, role, subRole } = req.body;
+    const { name, email, phone, alternatePhone, assignedPackages, role, subRole } = req.body;
 
     // Admin staff must be created from the Staff page so they get a role's permissions
     if (role === "admin") {
@@ -1037,6 +1039,11 @@ const createFranchiseUser = async (req, res) => {
     // Phone is required: partner WhatsApp messages are sent to this number
     if (!/^\d{10}$/.test(String(phone || ""))) {
       return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
+    }
+
+    // Optional alternate mobile: validated only when given
+    if (alternatePhone && !/^\d{10}$/.test(String(alternatePhone))) {
+      return res.status(400).json({ message: "Enter a valid 10-digit alternate mobile number" });
     }
 
     // Default values
@@ -1092,9 +1099,13 @@ const createFranchiseUser = async (req, res) => {
         email: normalizedEmail,
 
         phone,
+        alternatePhone: alternatePhone || undefined,
         franchiseCode: null, // <-- add this
         // Business Manager who owns this partner (creator, or admin's pick)
-        businessManager: await resolveBusinessManagerId(req, req.body.businessManagerId),
+        // Explicit pick (or a BM creating their own partner) wins; otherwise next in rotation
+        businessManager:
+          (await resolveBusinessManagerId(req, req.body.businessManagerId)) ||
+          (await assignNextManager()),
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
@@ -1563,6 +1574,10 @@ const approveRegistration = async (req, res) => {
     user.isActive = true;
     user.isVerified = true; // Mark as verified since admin approved this registration
     franchise.isActive = true;
+    // Franchise ID is issued on approval if not already assigned
+    if (!franchise.franchiseCode) {
+      franchise.franchiseCode = await generateFranchiseCode();
+    }
 
     // Assign packages and add credits if provided
     if (

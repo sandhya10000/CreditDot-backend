@@ -53,17 +53,25 @@ const getStaffProfile = async (req, res) => {
       staffRole: { $ne: null },
     })
       .select("-password")
-      .populate("staffRole", "name limitToOwnFranchises");
+      .populate("staffRole", "name description permissions limitToOwnFranchises isActive");
     if (!staff) return fail(res, 404, "Staff member not found");
 
     const franchises = await Franchise.find({
       businessManager: staff._id,
       isDeleted: { $ne: true },
     })
-      .select("businessName ownerName franchiseCode kycStatus isActive email phone")
+      .select("businessName ownerName franchiseCode city state kycStatus isActive email phone createdAt")
+      .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ success: true, data: { staff, franchises } });
+    const summary = {
+      totalFranchises: franchises.length,
+      activeFranchises: franchises.filter((f) => f.isActive).length,
+      permissionCount: staff.staffRole?.permissions?.length || 0,
+      isBusinessManager: !!staff.staffRole?.limitToOwnFranchises,
+    };
+
+    res.json({ success: true, data: { staff, franchises, summary } });
   } catch (err) {
     handleError(res, err);
   }

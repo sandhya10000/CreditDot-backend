@@ -4,6 +4,7 @@ const CustomerPackage = require("../models/CustomerPackage");
 const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
+const { validateAmcTerm } = require("./amcController");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const {
@@ -150,6 +151,8 @@ const submitBusinessForm = async (req, res) => {
       //Admin
       manualAmount,
       franchiseId,
+      amc,
+      workStatus,
     } = req.body;
 
     const isBusinessCustomer = customerType === "business";
@@ -179,8 +182,24 @@ const submitBusinessForm = async (req, res) => {
       }
     }
 
+    // Admin can enroll the customer in AMC while creating the form (AMC tab)
+    let amcTerm = null;
+    if (amc && req.user.role === "admin") {
+      const { error, term } = validateAmcTerm(amc);
+      if (error) return res.status(400).json({ message: error });
+      amcTerm = {
+        ...term,
+        isEnrolled: true,
+        enrolledAt: new Date(),
+        updatedBy: req.user._id,
+        paidAt: term.paymentStatus === "paid" ? new Date() : undefined,
+      };
+    }
+
     // Create business form entry
     const businessForm = new BusinessForm({
+      ...(amcTerm && { amc: amcTerm }),
+      ...(["in_progress", "closed", "pending"].includes(workStatus) && { workStatus }),
       // customerId: null,
       //Admin case franchiseId from body
       //Franchise login case req.user.franchiseId
@@ -493,7 +512,7 @@ const getAllBusinessForms = async (req, res) => {
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
-      .populate("franchiseId", "businessName")
+      .populate("franchiseId", "businessName franchiseCode")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -556,7 +575,7 @@ const getSingleBusinessForm = async (req, res) => {
         "selectedPackage",
         "name price gstPercentage businessPayoutPercentage businessPayoutType businessPayoutFixedAmount totalPrice",
       )
-      .populate("franchiseId", "businessName phone")
+      .populate("franchiseId", "businessName phone franchiseCode")
       .sort({ createdAt: -1 });
 
     console.log(businessForms, "businessForms---------");

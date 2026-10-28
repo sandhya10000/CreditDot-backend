@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Franchise = require("../models/Franchise");
+const { assignNextManager } = require("../utils/assignBusinessManager");
 const Referral = require("../models/Referral");
 const Transaction = require("../models/Transaction");
 const Role = require("../models/Role");
@@ -137,6 +138,7 @@ const register = async (req, res) => {
       ownerName: name,
       email,
       phone,
+      businessManager: await assignNextManager(), // next Business Manager in rotation (null if none)
     });
 
     await franchise.save();

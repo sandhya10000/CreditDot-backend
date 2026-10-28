@@ -80,6 +80,7 @@ exports.handleWasimpleWebhook = async (req, res) => {
       problemType: "Low credit score (WhatsApp)",
       message: "Auto-created from free credit report; user tapped Contact Support on WhatsApp",
       status: "New",
+      source: "whatsapp",
     });
 
     report.supportLeadId = lead._id;

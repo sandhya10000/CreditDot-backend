@@ -80,7 +80,6 @@ router.get("/franchise/:_id", auth, rbac("admin"), getBusinessFormsByFranchise);
 // @desc    Get all AMC customers (admin only)
 // @access  Private/Admin
 router.get("/amc", auth, rbac("admin"), getAmcCustomers);
-
 // @route   PUT /api/admin/business-forms/:id/amc
 // @desc    Enroll customer in AMC or edit the current AMC term
 // @access  Private/Admin

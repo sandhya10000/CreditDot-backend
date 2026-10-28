@@ -20,6 +20,7 @@ const {
   getAllFranchisesList,
   exportFranchisesCSV,
   reassignFranchiseManager,
+  assignUnassignedBusinessManagers,
 } = require("../controllers/franchiseController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -159,6 +160,17 @@ router.put("/:id/deactivate", auth, rbac("admin"), deactivateFranchise);
 // @desc    Activate franchise
 // @access  Private/Admin
 router.put("/:id/activate", auth, rbac("admin"), activateFranchise);
+
+// @route   POST /api/franchises/assign-business-managers
+// @desc    Give every partner without a Business Manager a turn in the rotation
+// @access  Private/Full Admin only
+router.post(
+  "/assign-business-managers",
+  auth,
+  rbac("admin"),
+  requireFullAdmin,
+  assignUnassignedBusinessManagers,
+);
 
 // @route   PUT /api/franchises/:id/business-manager
 // @desc    Reassign a franchise to another Business Manager (null = unassign)
