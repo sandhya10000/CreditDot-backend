@@ -11,6 +11,10 @@ const isScoped = (req) => Boolean(req.user?.scopedToOwnFranchises);
 const ownedFranchiseIds = async (req) =>
   Franchise.find({ businessManager: req.user._id }).distinct("_id");
 
+// User accounts that own the caller's franchises (franchise partners' login users)
+const ownedFranchiseUserIds = async (req) =>
+  Franchise.find({ businessManager: req.user._id }).distinct("userId");
+
 // Filter for models that reference a franchise (franchiseId, franchise, ...).
 // Returns {} for unscoped callers, so it is safe to spread into any query.
 const scopeFilter = async (req, field = "franchiseId") => {
@@ -22,6 +26,21 @@ const scopeFilter = async (req, field = "franchiseId") => {
 const franchiseScope = (req) => {
   if (!isScoped(req)) return {};
   return { businessManager: req.user._id };
+};
+
+// Transactions may be linked by franchiseId or only by userId (payment flow leaves franchiseId empty),
+// so match either the owned franchise or its owner user.
+const scopeTransactions = async (req) => {
+  if (!isScoped(req)) return {};
+  const franchises = await Franchise.find({ businessManager: req.user._id })
+    .select("_id userId")
+    .lean();
+  return {
+    $or: [
+      { franchiseId: { $in: franchises.map((f) => f._id) } },
+      { userId: { $in: franchises.map((f) => f.userId) } },
+    ],
+  };
 };
 
 // True when the caller may act on this franchise id (unscoped callers always may)
@@ -55,8 +74,10 @@ const resolveBusinessManagerId = async (req, requestedId) => {
 module.exports = {
   isScoped,
   ownedFranchiseIds,
+  ownedFranchiseUserIds,
   scopeFilter,
   franchiseScope,
+  scopeTransactions,
   ownsFranchise,
   resolveBusinessManagerId,
 };

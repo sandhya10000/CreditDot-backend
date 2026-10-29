@@ -50,6 +50,9 @@ const {
   updateFranchiseLeadStatus,
   updateCreditRepairStatus,
   deleteCreditRepairEnquiry,
+  getLeadUnreadCounts,
+  markCreditRepairRead,
+  markFranchiseLeadRead,
 } = require("../controllers/formController");
 
 const router = express.Router();
@@ -276,6 +279,21 @@ router.get("/download-stats", auth, rbac("admin"), getDownloadStats);
 // @desc    Get all credit repair enquiries
 // @access  Private/Admin
 router.get("/credit-repair", auth, rbac("admin"), getAllCreditRepairEnquiries);
+
+// @route   GET /api/admin/leads/unread-counts
+// @desc    New, unread lead counts for the Credit Report Leads badge and tabs
+// @access  Private/Admin
+router.get("/leads/unread-counts", auth, rbac("admin"), getLeadUnreadCounts);
+
+// @route   PUT /api/admin/credit-repair/:id/read
+// @desc    Mark a credit repair enquiry as read
+// @access  Private/Admin
+router.put("/credit-repair/:id/read", auth, rbac("admin"), markCreditRepairRead);
+
+// @route   PUT /api/admin/franchise-leads/:id/read
+// @desc    Mark a franchise lead as read
+// @access  Private/Admin
+router.put("/franchise-leads/:id/read", auth, rbac("admin"), markFranchiseLeadRead);
 
 // @route   GET /api/admin/franchise-leads
 // @desc    Get website franchise leads (optional search, status)

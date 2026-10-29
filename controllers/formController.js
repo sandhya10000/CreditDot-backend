@@ -729,6 +729,70 @@ const updateFranchiseLeadStatus = async (req, res) => {
   }
 };
 
+// Unread = still "New" and not yet opened by an admin
+const UNREAD_NEW = { status: "New", isRead: false };
+const WHATSAPP_LEAD = { $or: [{ source: "whatsapp" }, { problemType: WHATSAPP_PROBLEM_TYPE }] };
+const WEBSITE_LEAD = { source: { $ne: "whatsapp" }, problemType: { $ne: WHATSAPP_PROBLEM_TYPE } };
+
+// Sidebar badge + per-tab counts for new, unread leads
+const getLeadUnreadCounts = async (req, res) => {
+  try {
+    const [creditRepair, whatsapp, franchise] = await Promise.all([
+      CreditRepair.countDocuments({ $and: [UNREAD_NEW, WEBSITE_LEAD] }),
+      CreditRepair.countDocuments({ $and: [UNREAD_NEW, WHATSAPP_LEAD] }),
+      FranchiseOpportunity.countDocuments(UNREAD_NEW),
+    ]);
+
+    res.json({
+      creditRepair,
+      whatsapp,
+      franchise,
+      total: creditRepair + whatsapp + franchise,
+    });
+  } catch (error) {
+    console.error("Get lead unread counts error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const markCreditRepairRead = async (req, res) => {
+  try {
+    const enquiry = await CreditRepair.findByIdAndUpdate(
+      req.params.id,
+      { isRead: true },
+      { new: true }
+    );
+
+    if (!enquiry) {
+      return res.status(404).json({ message: "Enquiry not found" });
+    }
+
+    res.json({ message: "Marked as read", enquiry });
+  } catch (error) {
+    console.error("Mark credit repair read error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+const markFranchiseLeadRead = async (req, res) => {
+  try {
+    const lead = await FranchiseOpportunity.findByIdAndUpdate(
+      req.params.id,
+      { isRead: true },
+      { new: true }
+    );
+
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    res.json({ message: "Marked as read", lead });
+  } catch (error) {
+    console.error("Mark franchise lead read error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
   submitCreditRepairForm,
   submitContactForm,
@@ -740,4 +804,7 @@ module.exports = {
   deleteCreditRepairEnquiry,
   getAllFranchiseLeads,
   updateFranchiseLeadStatus,
+  getLeadUnreadCounts,
+  markCreditRepairRead,
+  markFranchiseLeadRead,
 };

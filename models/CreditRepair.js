@@ -51,6 +51,12 @@ const creditRepairSchema = new mongoose.Schema({
     default: "website",
     index: true,
   },
+  // Set when an admin opens the lead; drives the unread counts
+  isRead: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
 }, {
   timestamps: true
 });

@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const BusinessForm = require("../models/BusinessForm");
+const { scopeFilter } = require("../utils/franchiseScope");
 
 // Document slots a customer can have (must match the upload field names)
 const DOCUMENT_KEYS = [
@@ -33,8 +34,8 @@ const uploadAdminBusinessDocuments = async (req, res) => {
       return res.status(400).json({ message: "Choose a file to upload" });
     }
 
-    const updated = await BusinessForm.findByIdAndUpdate(
-      id,
+    const updated = await BusinessForm.findOneAndUpdate(
+      { _id: id, ...(await scopeFilter(req)) },
       { $set: updates },
       { new: true },
     );

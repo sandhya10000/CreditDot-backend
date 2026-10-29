@@ -8,6 +8,13 @@ const reportDownloadSchema = new mongoose.Schema(
     },
     userName: String,
 
+    // Franchise the report belongs to, so Business Managers see their own downloads
+    franchiseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Franchise",
+      index: true,
+    },
+
     reportType: String, // credit report, franchise report etc
 
     fileName: String,

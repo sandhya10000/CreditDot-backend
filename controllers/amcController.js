@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const BusinessForm = require("../models/BusinessForm");
 const Franchise = require("../models/Franchise");
+const { scopeFilter } = require("../utils/franchiseScope");
 const {
   DAY_MS,
   AMC_STATUSES,
@@ -91,7 +92,7 @@ const listAmcCustomers = async (req, res, scopeFilter, options = {}) => {
 // GET /api/business/amc (admin)
 const getAmcCustomers = async (req, res) => {
   try {
-    await listAmcCustomers(req, res, {});
+    await listAmcCustomers(req, res, await scopeFilter(req));
   } catch (error) {
     console.error("Get AMC customers error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -152,11 +153,13 @@ const validateAmcTerm = (body) => {
 };
 
 // Loads a business form that is allowed to hold an AMC
-const loadEligibleCustomer = async (id) => {
+const loadEligibleCustomer = async (id, scope = {}) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return { status: 404, message: "Customer not found" };
   }
-  const form = await BusinessForm.findById(id).select("paymentStatus customerId amc").lean();
+  const form = await BusinessForm.findOne({ _id: id, ...scope })
+    .select("paymentStatus customerId amc")
+    .lean();
   if (!form) return { status: 404, message: "Customer not found" };
   if (form.paymentStatus !== "paid" || !form.customerId) {
     return {
@@ -201,7 +204,7 @@ const withStatus = (record) => ({
 // PUT /api/admin/business-forms/:id/amc — enroll, or edit the current term
 const upsertAmc = async (req, res) => {
   try {
-    const loaded = await loadEligibleCustomer(req.params.id);
+    const loaded = await loadEligibleCustomer(req.params.id, await scopeFilter(req));
     if (loaded.status) return res.status(loaded.status).json({ message: loaded.message });
     const current = loaded.form.amc;
 
@@ -248,7 +251,7 @@ const upsertAmc = async (req, res) => {
 // POST /api/admin/business-forms/:id/amc/renew — archive current term, start a new one
 const renewAmc = async (req, res) => {
   try {
-    const loaded = await loadEligibleCustomer(req.params.id);
+    const loaded = await loadEligibleCustomer(req.params.id, await scopeFilter(req));
     if (loaded.status) return res.status(loaded.status).json({ message: loaded.message });
     const current = loaded.form.amc;
 
@@ -291,7 +294,12 @@ const cancelAmc = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(404).json({ message: "Customer not found" });
     }
-    const form = await BusinessForm.findById(req.params.id).select("amc").lean();
+    const form = await BusinessForm.findOne({
+      _id: req.params.id,
+      ...(await scopeFilter(req)),
+    })
+      .select("amc")
+      .lean();
     if (!form) return res.status(404).json({ message: "Customer not found" });
     if (!form.amc?.isEnrolled) {
       return res.status(400).json({ message: "Customer is not enrolled in AMC" });

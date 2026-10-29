@@ -11,6 +11,12 @@ const Setting = require("../models/Setting");
 const BusinessForm = require("../models/BusinessForm");
 const KycRequest = require("../models/KycRequest");
 const {
+  scopeFilter,
+  franchiseScope,
+  scopeTransactions,
+  isScoped,
+} = require("../utils/franchiseScope");
+const {
   sendLeadAssignmentEmail,
   sendAccountCredentialsEmail,
   sendAdminNotificationEmail,
@@ -85,20 +91,31 @@ const getDashboardStats = async (req, res) => {
     const periodRange = getRevenuePeriodRange(req.query);
     const periodMatch = periodRange ? { createdAt: periodRange } : {};
 
-    const totalFranchises = await Franchise.countDocuments();
-    const activeFranchises = await Franchise.countDocuments({ isActive: true });
+    // Business Managers see only their own franchises' figures (no-op for admins)
+    const franchiseFilter = franchiseScope(req);
+    const leadFilter = await scopeFilter(req);
+    const txScope = await scopeTransactions(req);
+    const bizFormFilter = await scopeFilter(req);
+
+    const totalFranchises = await Franchise.countDocuments(franchiseFilter);
+    const activeFranchises = await Franchise.countDocuments({
+      ...franchiseFilter,
+      isActive: true,
+    });
     const pendingKycFranchises = await Franchise.countDocuments({
+      ...franchiseFilter,
       kycStatus: "pending",
     });
     const totalPackages = await Package.countDocuments({ isActive: true });
-    const totalLeads = await Lead.countDocuments();
+    const totalLeads = await Lead.countDocuments(leadFilter);
     const totalTransactions = await Transaction.countDocuments({
+      ...txScope,
       status: "paid",
     });
 
     // Calculate total revenue
     const revenueResult = await Transaction.aggregate([
-      { $match: { status: "paid" } },
+      { $match: { ...txScope, status: "paid" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
 
@@ -116,6 +133,7 @@ const getDashboardStats = async (req, res) => {
     const currentMonthRevenueResult = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: {
             $gte: currentMonthStart,
@@ -137,6 +155,7 @@ const getDashboardStats = async (req, res) => {
     const currentYearRevenueResult = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: {
             $gte: currentYearStart,
@@ -158,6 +177,7 @@ const getDashboardStats = async (req, res) => {
     const monthlyRevenue = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: { $lte: now },
         },
@@ -193,6 +213,7 @@ const getDashboardStats = async (req, res) => {
     const yearlyRevenue = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: { $lte: now },
         },
@@ -219,6 +240,7 @@ const getDashboardStats = async (req, res) => {
       {
         $match: {
           ...periodMatch,
+          $and: [txScope],
           $or: [
             {
               status: "paid",
@@ -254,6 +276,7 @@ const getDashboardStats = async (req, res) => {
       {
         $match: {
           ...periodMatch,
+          ...bizFormFilter,
           $or: [
             { paymentStatus: "paid" },
             { manualAmount: { $gt: 0 } }, //admin manual entries
@@ -337,13 +360,19 @@ const getDashboardStats = async (req, res) => {
 // Get recent activities for admin dashboard
 const getRecentActivities = async (req, res) => {
   try {
+    // Business Managers only see activity from their own franchises
+    const scopedUserFilter = isScoped(req)
+      ? { _id: { $in: (await Franchise.find(franchiseScope(req)).select("userId").lean()).map((f) => f.userId) } }
+      : {};
+    const txScope = await scopeTransactions(req);
+
     // Get recent user registrations
-    const recentUsers = await User.find({}, "name email createdAt")
+    const recentUsers = await User.find({ ...scopedUserFilter }, "name email createdAt")
       .sort({ createdAt: -1 })
       .limit(5);
 
     // Get recent transactions
-    const recentTransactions = await Transaction.find({ status: "paid" })
+    const recentTransactions = await Transaction.find({ ...txScope, status: "paid" })
       .populate("userId", "name")
       .populate("packageId", "name")
       .sort({ createdAt: -1 })
@@ -351,6 +380,7 @@ const getRecentActivities = async (req, res) => {
 
     // Get recent KYC submissions
     const recentKyc = await Franchise.find({
+      ...franchiseScope(req),
       kycStatus: { $in: ["submitted", "approved", "rejected"] },
     })
       .populate("userId", "name")
@@ -1923,10 +1953,16 @@ const getPerformanceOverview = async (req, res) => {
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
 
+    // Business Managers only see their own franchises' figures (no-op for admins)
+    const txScope = await scopeTransactions(req);
+    const leadScope = await scopeFilter(req);
+    const franchiseScopeFilter = franchiseScope(req);
+
     // Get daily transaction data for revenue chart
     const revenueData = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: { $gte: start, $lte: end },
         },
@@ -1949,6 +1985,7 @@ const getPerformanceOverview = async (req, res) => {
     const leadData = await Lead.aggregate([
       {
         $match: {
+          ...leadScope,
           createdAt: { $gte: start, $lte: end },
         },
       },
@@ -1969,6 +2006,7 @@ const getPerformanceOverview = async (req, res) => {
     const franchiseData = await Franchise.aggregate([
       {
         $match: {
+          ...franchiseScopeFilter,
           createdAt: { $gte: start, $lte: end },
         },
       },
@@ -2031,6 +2069,7 @@ const getPerformanceOverview = async (req, res) => {
     const prevRevenueData = await Transaction.aggregate([
       {
         $match: {
+          ...txScope,
           status: "paid",
           createdAt: { $gte: prevStart, $lte: prevEnd },
         },
@@ -2046,6 +2085,7 @@ const getPerformanceOverview = async (req, res) => {
     const prevLeadData = await Lead.aggregate([
       {
         $match: {
+          ...leadScope,
           createdAt: { $gte: prevStart, $lte: prevEnd },
         },
       },
@@ -2105,22 +2145,31 @@ const getDownloadStats = async (req, res) => {
 
     //year
     const startOfYear = new Date(today.getFullYear(), 0, 1);
+    // Business Managers only see downloads by their own franchises' users (no-op for admins)
+    // Business Managers see downloads of their own franchises' reports (no-op for admins)
+    const downloadScope = await scopeFilter(req, "franchiseId");
+
+
     const todayCount = await ReportDownload.countDocuments({
+      ...downloadScope,
       downloadedAt: { $gte: startOfDay },
     });
 
     const weeklyCount = await ReportDownload.countDocuments({
+      ...downloadScope,
       downloadedAt: { $gte: startOfWeek },
     });
     const monthlyCount = await ReportDownload.countDocuments({
+      ...downloadScope,
       downloadedAt: { $gte: startOfMonth },
     });
     const yearlyCount = await ReportDownload.countDocuments({
+      ...downloadScope,
       downloadedAt: { $gte: startOfYear },
     });
 
     //latest downloads
-    const latestDownloads = await ReportDownload.find()
+    const latestDownloads = await ReportDownload.find(downloadScope)
       .sort({ downloadedAt: -1 })
       .limit(10);
     res.json({

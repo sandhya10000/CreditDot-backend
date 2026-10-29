@@ -5,6 +5,7 @@ const CreditReport = require("../models/CreditReport");
 const Setting = require("../models/Setting");
 const Franchise = require("../models/Franchise");
 const { scopeFilter, ownsFranchise } = require("../utils/franchiseScope");
+const ReportDownload = require("../models/ReportDownload");
 const Joi = require("joi");
 const fs = require("fs");
 const path = require("path");
@@ -1793,7 +1794,7 @@ const getCreditReportDownload = async (req, res) => {
       _id: req.params.id,
       ...(await scopeFilter(req)),
     })
-      .select("name bureau localPath reportUrl pdfStatus")
+      .select("name bureau localPath reportUrl pdfStatus franchiseId")
       .lean();
     if (!report) return res.status(404).json({ message: "Report not found" });
 
@@ -1805,6 +1806,15 @@ const getCreditReportDownload = async (req, res) => {
 
     const safeBase = `${(report.name || "Report").replace(/[^a-z0-9]+/gi, "_")}_${(report.bureau || "credit").toUpperCase()}_Report`;
     const downloadName = `${safeBase}.pdf`;
+
+    // Count the download for the Report Section stats (never blocks the file)
+    ReportDownload.create({
+      userId: req.user._id,
+      userName: req.user.name,
+      reportType: "credit report",
+      fileName: downloadName,
+      franchiseId: report.franchiseId,
+    }).catch((err) => console.error("Report download log failed:", err.message));
 
     if (report.localPath) {
       const relative = report.localPath.replace(/^\/+/, "");
@@ -1879,6 +1889,7 @@ const getAllCreditReports = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
+      .allowDiskUse(true)
       .lean();
 
     const total = await CreditReport.countDocuments(filter);
