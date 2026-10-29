@@ -112,7 +112,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-
+    
     // List of allowed origins - easily expandable for additional origins
     const allowedOrigins = [
       process.env.FRONTEND_URL || "http://localhost:5173",
@@ -122,7 +122,7 @@ const corsOptions = {
       "https://www.reactbackend.creditdost.co.in",
       "https://staging.creditdost.co.in",
     ];
-
+    console.log(process.env.FRONTEND_URL, "process.env.FRONTEND_URL");
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
