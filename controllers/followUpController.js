@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const BusinessForm = require("../models/BusinessForm");
+const { scopeFilter } = require("../utils/franchiseScope");
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -29,7 +30,10 @@ const getBusinessFollowUps = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const { fromDate, toDate, paymentStatus, customerType } = req.query;
 
-    const filter = { nextFollowUpDate: { $nin: [null, ""] } };
+    const filter = {
+      nextFollowUpDate: { $nin: [null, ""] },
+      ...(await scopeFilter(req)),
+    };
 
     if (paymentStatus && ["pending", "paid", "failed"].includes(paymentStatus)) {
       filter.paymentStatus = paymentStatus;
@@ -100,8 +104,8 @@ const setBusinessFollowUp = async (req, res) => {
       return res.status(400).json({ message: "Pick a valid follow-up date" });
     }
 
-    const updated = await BusinessForm.findByIdAndUpdate(
-      id,
+    const updated = await BusinessForm.findOneAndUpdate(
+      { _id: id, ...(await scopeFilter(req)) },
       {
         $set: { nextFollowUpDate },
         $push: {
@@ -143,8 +147,8 @@ const clearBusinessFollowUp = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    const updated = await BusinessForm.findByIdAndUpdate(
-      id,
+    const updated = await BusinessForm.findOneAndUpdate(
+      { _id: id, ...(await scopeFilter(req)) },
       { $set: { nextFollowUpDate: null } },
       { new: true },
     );

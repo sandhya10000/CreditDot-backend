@@ -5,6 +5,7 @@ const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const { validateAmcTerm } = require("./amcController");
+const { scopeFilter, franchiseScope } = require("../utils/franchiseScope");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const {
@@ -447,6 +448,7 @@ const getBusinessFormsByFranchise = async (req, res) => {
     const { _id } = req.params;
     const businessForms = await BusinessForm.find({
       franchiseId: _id,
+      ...(await scopeFilter(req)),
     })
       .populate(
         "selectedPackage",
@@ -468,8 +470,8 @@ const getAllBusinessForms = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const paymentStatus = req.query.paymentStatus;
 
-    // Filter
-    const filter = {};
+    // Filter (Business Managers only see forms from their own franchises)
+    const filter = { ...(await scopeFilter(req)) };
 
     if (
       paymentStatus &&
@@ -487,6 +489,7 @@ const getAllBusinessForms = async (req, res) => {
 
     if (search) {
       const matchingFranchises = await Franchise.find({
+        ...franchiseScope(req),
         businessName: { $regex: search, $options: "i" },
       }).select("_id");
       const franchiseIds = matchingFranchises.map((f) => f._id);
@@ -539,8 +542,8 @@ const updateBusinessWorkStatus = async (req, res) => {
     const { id } = req.params;
     const { workStatus } = req.body;
 
-    const form = await BusinessForm.findByIdAndUpdate(
-      id,
+    const form = await BusinessForm.findOneAndUpdate(
+      { _id: id, ...(await scopeFilter(req)) },
       { workStatus },
       { new: true, runValidators: true },
     );
@@ -570,6 +573,7 @@ const getSingleBusinessForm = async (req, res) => {
     // Find customer by customerId
     const businessForms = await BusinessForm.findOne({
       customerId: customerId,
+      ...(await scopeFilter(req)),
     })
       .populate(
         "selectedPackage",
@@ -647,7 +651,7 @@ const updateBusinessForm = async (req, res) => {
     } = req.body;
 
     const updatedCustomer = await BusinessForm.findOneAndUpdate(
-      { customerId },
+      { customerId, ...(await scopeFilter(req)) },
       {
         $set: {
           customerEmail,
@@ -687,7 +691,10 @@ const deleteBusinessForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existing = await BusinessForm.findById(id);
+    const existing = await BusinessForm.findOne({
+      _id: id,
+      ...(await scopeFilter(req)),
+    });
 
     if (!existing) {
       return res.status(404).json({ message: "Business form not found" });
