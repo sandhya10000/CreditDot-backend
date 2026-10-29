@@ -221,6 +221,45 @@ const readHTMLFile = async (htmlPath) => {
 };
 
 /**
+ * Cleans raw model output before validation:
+ * 1. Trims leading/trailing whitespace.
+ * 2. Strips leading ```html or ``` fence and trailing ``` fence (handles whitespace/newlines before fence).
+ * 3. If text contains "<!doctype" or "<html", discards everything before the first match.
+ * 4. If text contains "</html>", discards everything after the LAST occurrence (case-insensitive).
+ * @param {string} raw
+ * @returns {string}
+ */
+const cleanModelOutput = (raw) => {
+  if (!raw || typeof raw !== 'string') return raw;
+
+  let text = raw.trim();
+
+  // Step 1: Strip markdown code fences (even if preceded by whitespace/newlines)
+  text = text.replace(/^[\s\S]*?```(?:html)?\s*\n?([\s\S]*?)```\s*$/i, (match, inner) => inner.trim());
+  // Fallback: strip only opening fence if no closing fence was found above
+  text = text.replace(/^\s*```(?:html)?\s*\n?/i, '');
+  // Strip any trailing isolated closing fence
+  text = text.replace(/\n?\s*```\s*$/i, '').trim();
+
+  // Step 2: Discard preamble text before the HTML document start
+  const doctypeIdx = text.search(/<!doctype/i);
+  const htmlTagIdx = text.search(/<html/i);
+  const htmlStartIdx = [doctypeIdx, htmlTagIdx].filter(i => i !== -1);
+  if (htmlStartIdx.length > 0) {
+    text = text.slice(Math.min(...htmlStartIdx));
+  }
+
+  // Step 3: Discard anything after the LAST </html>
+  const lastHtmlClose = text.search(/(<\/html>)(?![\s\S]*<\/html>)/i);
+  if (lastHtmlClose !== -1) {
+    // include the </html> tag itself (7 chars)
+    text = text.slice(0, lastHtmlClose + 7);
+  }
+
+  return text.trim();
+};
+
+/**
  * Internal single attempt execution with Claude
  */
 const executeClaudeAttempt = async (documentData, basePrompt, documentType, languageCode) => {
@@ -242,11 +281,13 @@ const executeClaudeAttempt = async (documentData, basePrompt, documentType, lang
     console.log('Multi-language directive appended for language:', languageCode);
   }
 
-  // max_tokens calculation: 25,000 for English; 30,000 for non-English Indic scripts
-  // (Indic scripts require additional token expansion due to multi-byte UTF-8 representations)
-  const maxTokens = (isMultiLangEnabled() && languageCode && languageCode !== DEFAULT_LANGUAGE_CODE)
-    ? 30000
-    : 25000;
+  // max_tokens: read from env if set, otherwise use generous defaults.
+  // claude-sonnet-4 supports 64k output; Haiku 4.5 is capped at 8192 by the model itself.
+  // Non-English Indic scripts receive a higher budget due to multi-byte UTF-8 expansion.
+  const isNonEnglish = isMultiLangEnabled() && languageCode && languageCode !== DEFAULT_LANGUAGE_CODE;
+  const maxTokens = process.env.CLAUDE_MAX_TOKENS
+    ? parseInt(process.env.CLAUDE_MAX_TOKENS, 10)
+    : (isNonEnglish ? 48000 : 40000);
 
   // Build the message content based on document type
   let messageContent;
@@ -319,6 +360,9 @@ const executeClaudeAttempt = async (documentData, basePrompt, documentType, lang
   }
 
   console.log('Stream completed');
+  // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+  console.log('[TEMP-DEBUG] stop_reason:', finalMessage.stop_reason, '| output_tokens:', finalMessage.usage?.output_tokens, '| max_tokens_requested:', maxTokens);
+  // ===== TEMP-DEBUG-END =====
   if (finalMessage.usage) {
     console.log(
       'Response tokens - Input:',
@@ -344,15 +388,8 @@ const executeClaudeAttempt = async (documentData, basePrompt, documentType, lang
     throw new Error('No content received from Claude API');
   }
 
-  // Clean markdown wrappers
-  let cleanedAnalysis = analysisContent;
-  if (cleanedAnalysis.startsWith('```html')) {
-    cleanedAnalysis = cleanedAnalysis.replace(/^```html\s*/, '').replace(/\s*```$/, '');
-  } else if (cleanedAnalysis.startsWith('```')) {
-    cleanedAnalysis = cleanedAnalysis.replace(/^```\s*/, '').replace(/\s*```$/, '');
-  }
-
-  cleanedAnalysis = cleanedAnalysis.trim();
+  // Clean model output: strip fences, preamble text before <html>, and postamble after </html>
+  const cleanedAnalysis = cleanModelOutput(analysisContent);
 
   // Validate output completeness and script
   const validation = validateReportOutput(cleanedAnalysis, languageCode);
@@ -459,6 +496,7 @@ const processDocument = async (
 
 module.exports = {
   buildLanguageDirective,
+  cleanModelOutput,
   postProcessReportHtml,
   validateReportOutput,
   readFileAsBase64,
