@@ -184,9 +184,6 @@ const loadAnalysisPrompt = () => {
  */
 const readFileAsBase64 = async (filePath) => {
   try {
-    // ===== TEMP-DEBUG-START (remove after staging debugging) =====
-    console.log('[TEMP-DEBUG] Reading file:', filePath, 'exists:', fs.existsSync(filePath));
-    // ===== TEMP-DEBUG-END =====
     const fileBuffer = await fs.promises.readFile(filePath);
     const base64 = fileBuffer.toString('base64');
     
@@ -332,32 +329,19 @@ const executeClaudeAttempt = async (documentData, basePrompt, documentType, lang
 
   console.log('Sending request to Claude API with max_tokens:', maxTokens);
 
-  let stream;
-  let finalMessage;
-  try {
-    stream = await anthropic.messages.stream({
-      model: model,
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: 'user',
-          content: messageContent,
-        },
-      ],
-    });
+  const stream = await anthropic.messages.stream({
+    model: model,
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: 'user',
+        content: messageContent,
+      },
+    ],
+  });
 
-    console.log('Received response stream from Claude API');
-    finalMessage = await stream.finalMessage();
-  } catch (apiError) {
-    // ===== TEMP-DEBUG-START (remove after staging debugging) =====
-    console.error('[TEMP-DEBUG] Anthropic API call error:', {
-      status: apiError.status,
-      message: apiError.message,
-      errorBody: apiError.error || apiError.response?.data || apiError.body,
-    });
-    // ===== TEMP-DEBUG-END =====
-    throw apiError;
-  }
+  console.log('Received response stream from Claude API');
+  const finalMessage = await stream.finalMessage();
 
   console.log('Stream completed');
   // ===== TEMP-DEBUG-START (remove after staging debugging) =====
@@ -468,9 +452,6 @@ const processDocument = async (
       documentData = await readFileAsBase64(filePath);
       documentType = 'html';
     } else {
-      // ===== TEMP-DEBUG-START (remove after staging debugging) =====
-      console.log('[TEMP-DEBUG] Reading file:', filePath, 'exists:', fs.existsSync(filePath));
-      // ===== TEMP-DEBUG-END =====
       const content = await fs.promises.readFile(filePath, 'utf-8');
       documentData = { text: content };
       documentType = 'text';
