@@ -13,6 +13,23 @@ const franchiseSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    // Business Manager who owns this partner (null = unassigned, admin-only)
+    businessManager: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    // RM whose details were last sent to the partner on WhatsApp (prevents duplicate sends)
+    rmDetailsSentFor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    rmDetailsSentAt: {
+      type: Date,
+      default: null,
+    },
     //franchise code/id
     franchiseCode: {
       type: String,
@@ -33,6 +50,12 @@ const franchiseSchema = new mongoose.Schema(
     phone: {
       type: String,
       required: false,
+    },
+    // Optional second mobile number
+    alternatePhone: {
+      type: String,
+      required: false,
+      trim: true,
     },
     address: {
       street: String,
@@ -86,6 +109,17 @@ const franchiseSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    aiReportsUsed: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Diamond login credit bonus: tracks last grant timestamp for cooldown enforcement
+    lastLoginCreditAt: {
+      type: Date,
+      default: null,
+    },
+
     isActive: {
       type: Boolean,
       default: true,

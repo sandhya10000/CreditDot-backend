@@ -17,6 +17,8 @@ const {
 } = require("./digitalAgreementController");
 
 const BusinessForm = require("../models/BusinessForm");
+const ManualPayment = require("../models/ManualPayment");
+const { applyLinkStatus } = require("./manualPaymentController");
 const { assignCustomerId } = require("./businessController");
 
 // Initialize Razorpay instance
@@ -319,7 +321,8 @@ const handleWebhook = async (req, res) => {
     // Verify webhook signature
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const shasum = crypto.createHmac("sha256", secret);
-    shasum.update(JSON.stringify(req.body));
+    // Razorpay signs the exact bytes it sent; prefer the raw body captured by express.json
+    shasum.update(req.rawBody ?? JSON.stringify(req.body));
     const digest = shasum.digest("hex");
 
     if (digest !== req.headers["x-razorpay-signature"]) {
@@ -360,6 +363,26 @@ const handleWebhook = async (req, res) => {
         // Handle failed payment
         console.log("Payment failed:", payload);
         break;
+
+      case "payment_link.paid":
+      case "payment_link.partially_paid":
+      case "payment_link.expired":
+      case "payment_link.cancelled": {
+        // Manual Payments: status comes from the payment link, not the payment
+        const linkId = payload.payment_link?.entity?.id;
+        const linkPaymentId = payload.payment?.entity?.id;
+        const doc = linkId
+          ? await ManualPayment.findOne({ razorpayLinkId: linkId })
+          : null;
+        if (doc) {
+          const statusFromEvent = event.replace("payment_link.", "");
+          await applyLinkStatus(doc, statusFromEvent, linkPaymentId);
+          console.log(`Webhook: ManualPayment ${doc._id} -> ${doc.status}`);
+        } else {
+          console.log("Webhook: no ManualPayment for link", linkId);
+        }
+        break;
+      }
 
       default:
         console.log("Unhandled event:", event);

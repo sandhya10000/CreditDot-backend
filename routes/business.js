@@ -15,6 +15,14 @@ const {
   deleteBusinessForm,
 } = require("../controllers/businessController");
 const {
+  uploadAdminBusinessDocuments,
+} = require("../controllers/businessDocumentController");
+const {
+  getBusinessFollowUps,
+  setBusinessFollowUp,
+  clearBusinessFollowUp,
+} = require("../controllers/followUpController");
+const {
   getAmcCustomers,
   getFranchiseAmcCustomers,
   upsertAmc,
@@ -72,7 +80,6 @@ router.get("/franchise/:_id", auth, rbac("admin"), getBusinessFormsByFranchise);
 // @desc    Get all AMC customers (admin only)
 // @access  Private/Admin
 router.get("/amc", auth, rbac("admin"), getAmcCustomers);
-
 // @route   PUT /api/admin/business-forms/:id/amc
 // @desc    Enroll customer in AMC or edit the current AMC term
 // @access  Private/Admin
@@ -97,6 +104,49 @@ router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route   PUT /api/business/admin/business-forms/:id/documents
+// @desc    Admin uploads or replaces one or more customer documents
+// @access  Private/Admin
+router.put(
+  "/admin/business-forms/:id/documents",
+  auth,
+  rbac("admin"),
+  upload.fields([
+    { name: "panCard", maxCount: 1 },
+    { name: "aadharFront", maxCount: 1 },
+    { name: "aadharBack", maxCount: 1 },
+    { name: "cancelCheque", maxCount: 1 },
+    { name: "bankProof", maxCount: 1 },
+    { name: "extraBankDoc", maxCount: 1 },
+  ]),
+  uploadAdminBusinessDocuments,
+);
+
+// @route   GET /api/business/follow-ups
+// @desc    Customers with a scheduled follow-up (search, date range, pagination)
+// @access  Private/Admin
+router.get("/follow-ups", auth, rbac("admin"), getBusinessFollowUps);
+
+// @route   PUT /api/business/admin/business-forms/:id/follow-up
+// @desc    Schedule the next follow-up date for a customer
+// @access  Private/Admin
+router.put(
+  "/admin/business-forms/:id/follow-up",
+  auth,
+  rbac("admin"),
+  setBusinessFollowUp,
+);
+
+// @route   DELETE /api/business/admin/business-forms/:id/follow-up
+// @desc    Mark the current follow-up as done (history kept)
+// @access  Private/Admin
+router.delete(
+  "/admin/business-forms/:id/follow-up",
+  auth,
+  rbac("admin"),
+  clearBusinessFollowUp,
+);
 
 // @route PUT /api/admin/business/${id}/close
 //@desc put all business forms(admin only)

@@ -117,7 +117,15 @@ const app = express();
 // // );
 
 // Middleware
-app.use(express.json({ limit: "10mb" }));
+// rawBody is kept so the Razorpay webhook signature can be checked against the exact bytes sent
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
@@ -219,11 +227,14 @@ app.use("/api/leads", require("./routes/leads"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/business", require("./routes/business"));
 app.use("/api/admin", require("./routes/admin"));
+app.use("/api/admin", require("./routes/staff"));
+app.use("/api/admin/manual-payments", require("./routes/manualPayments"));
 app.use("/api/blogs", require("./routes/blogs"));
 app.use("/api/relationship-managers", require("./routes/relationshipManagers"));
 app.use("/api/emi", require("./routes/emi"));
 app.use("/api/google-sheets", require("./routes/googleSheets"));
 app.use("/api/forms", require("./routes/forms"));
+app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/digital-agreements", require("./routes/digitalAgreements"));
 app.use("/api/careers", require("./routes/careers"));
 app.use("/api/ai-analysis", require("./routes/aiAnalysis"));
@@ -238,6 +249,12 @@ app.use(require("./middleware/errorHandler"));
 app.use("/api", require("./routes/prefilledRoute"));
 app.use("/api", require("./routes/business"));
 //post upload api route
+// Admin marketing, case-study and reward routes: admin only; staff need the Marketing section
+app.use(
+  ["/api/admin/marketing", "/api/admin/case-studies", "/api/admin/reward"],
+  require("./middleware/auth"),
+  require("./middleware/rbac")("admin"),
+);
 app.use("/api/admin/marketing", require("./routes/marketingRoutes"));
 app.use("/api/admin/case-studies", require("./routes/CaseStudyRoutes"));
 //get api for case study

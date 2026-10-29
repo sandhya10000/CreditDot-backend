@@ -316,6 +316,7 @@ const cancelAmc = async (req, res) => {
 };
 
 module.exports = {
+  validateAmcTerm,
   getAmcCustomers,
   getFranchiseAmcCustomers,
   upsertAmc,

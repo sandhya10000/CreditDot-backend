@@ -2,6 +2,9 @@ const nodemailer = require("nodemailer");
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") }); // Load environment variables
 
+// Franchise applicant webinar (replaces the WhatsApp group link for new registrants)
+const WEBINAR_LINK = process.env.WEBINAR_LINK || "https://www.creditdost.co.in/webinar";
+
 // Create transporter
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
@@ -33,7 +36,7 @@ const sendRegistrationEmail = async (user) => {
       <p>Hello ${user.name},</p>
       <p>Thank you for registering as a franchise partner with Credit Dost.</p>
       <p>Your registration is currently pending approval. Our team will review your application and get back to you soon.</p>
-      <p>Join our WhatsApp group for updates and support: <a href="${process.env.WHATSAPP_GROUP_LINK || "#"}">Click here to join</a></p>
+      <p>Join our free webinar to learn more about the franchise program: <a href="${WEBINAR_LINK}">Click here to join the webinar</a></p>
       <p>Best regards,<br>The Credit Dost Team</p>
     `,
   };
@@ -79,7 +82,7 @@ const sendSelfRegistrationEmail = async (user, franchise) => {
       <p>Hello ${user.name},</p>
       <p>Thank you for registering as a franchise partner with Credit Dost.</p>
       <p>Your registration is currently pending admin approval. You will receive login credentials via email once your registration is approved.</p>
-      <p>In the meantime, join our WhatsApp group for updates and support: <a href="${process.env.WHATSAPP_GROUP_LINK || "#"}">Click here to join</a></p>
+      <p>In the meantime, join our free webinar to learn more about the franchise program: <a href="${WEBINAR_LINK}">Click here to join the webinar</a></p>
       <p>Best regards,<br>The Credit Dost Team</p>
     `,
   };
@@ -107,7 +110,7 @@ const sendRegistrationApprovalEmail = async (
 
     const mailOptions = {
       from: '"Credit Dost Support" <support@creditdost.co.in> ',
-      to: user.email,
+      to: options.to || user.email,
       subject: options.isResend
         ? "Your Login Credentials - Credit Dost Franchise Platform"
         : "Registration Approved - Credit Dost Franchise Platform",
@@ -1002,7 +1005,125 @@ Credit Dost Support
   });
 };
 
+// ---- Support tickets ----
+const escapeHtml = (value = "") =>
+  String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || "support@creditdost.co.in";
+
+const sendSupportTicketCreatedEmail = async (ticket, franchiseUser) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: SUPPORT_INBOX,
+    subject: `[${ticket.ticketNumber}] New support ticket: ${ticket.subject}`,
+    html: `
+      <h2>New support ticket</h2>
+      <p><strong>Ticket:</strong> ${escapeHtml(ticket.ticketNumber)}</p>
+      <p><strong>From:</strong> ${escapeHtml(franchiseUser?.name)} (${escapeHtml(franchiseUser?.email)})</p>
+      <p><strong>Category:</strong> ${escapeHtml(ticket.category)}</p>
+      <p><strong>Priority:</strong> ${escapeHtml(ticket.priority)}</p>
+      <p><strong>Subject:</strong> ${escapeHtml(ticket.subject)}</p>
+      <p>${escapeHtml(ticket.message).replace(/\n/g, "<br>")}</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+const sendSupportTicketReplyEmail = async (ticket, to, reply, fromRole) => {
+  const isAdminReply = fromRole === "admin";
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to,
+    subject: `[${ticket.ticketNumber}] ${isAdminReply ? "New reply from Credit Dost" : "New reply from franchise"}: ${ticket.subject}`,
+    html: `
+      <h2>New reply on ${escapeHtml(ticket.ticketNumber)}</h2>
+      <p><strong>Subject:</strong> ${escapeHtml(ticket.subject)}</p>
+      <p>${escapeHtml(reply.message).replace(/\n/g, "<br>")}</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+const sendSupportTicketStatusEmail = async (ticket, user, status) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: user.email,
+    subject: `[${ticket.ticketNumber}] Ticket status: ${status}`,
+    html: `
+      <h2>Your ticket has been updated</h2>
+      <p>Hello ${escapeHtml(user.name)},</p>
+      <p><strong>${escapeHtml(ticket.ticketNumber)}</strong> (${escapeHtml(ticket.subject)}) is now <strong>${escapeHtml(status)}</strong>.</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+// ---- Staff accounts ----
+const sendStaffCredentialsEmail = async (user, tempPassword, roleName) => {
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to: user.email,
+    subject: "Your Credit Dost staff account",
+    html: `
+      <h2>Welcome to Credit Dost!</h2>
+      <p>Hello ${escapeHtml(user.name)},</p>
+      <p>You have been added to the Credit Dost team with the role <strong>${escapeHtml(roleName)}</strong>.</p>
+      <p><strong>Login email:</strong> ${escapeHtml(user.email)}<br>
+      <strong>Temporary password:</strong> ${escapeHtml(tempPassword)}</p>
+      <p>Please log in and change your password. Login here: <a href="${process.env.FRONTEND_URL || "#"}/login">${process.env.FRONTEND_URL || ""}/login</a></p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+  return transporter.sendMail(mailOptions);
+};
+
+// ---- Manual payments ----
+const sendManualPaymentConfirmationEmail = async ({
+  to,
+  recipientName,
+  payment,
+}) => {
+  const paidAt = new Date(payment.paidAt || Date.now()).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const mailOptions = {
+    from: '"Credit Dost Support" <support@creditdost.co.in> ',
+    to,
+    subject: `Payment Received - ₹${payment.amount} from ${payment.name}`,
+    html: `
+      <h2>Payment received</h2>
+      <p>Hello ${escapeHtml(recipientName)},</p>
+      <p>A manual payment link has been paid.</p>
+      <p><strong>Customer:</strong> ${escapeHtml(payment.name)}</p>
+      <p><strong>Mobile:</strong> ${escapeHtml(payment.mobile)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(payment.email)}</p>
+      <p><strong>City:</strong> ${escapeHtml(payment.city || "-")}</p>
+      <p><strong>Amount:</strong> ₹${escapeHtml(String(payment.amount))}</p>
+      <p><strong>Remarks:</strong> ${escapeHtml(payment.remarks || "-")}</p>
+      <p><strong>Razorpay Payment ID:</strong> ${escapeHtml(payment.razorpayPaymentId || "-")}</p>
+      <p><strong>Paid at:</strong> ${escapeHtml(paidAt)} IST</p>
+      <p>Best regards,<br>The Credit Dost Team</p>
+    `,
+  };
+
+  return transporter.sendMail(mailOptions);
+};
+
 module.exports = {
+  sendManualPaymentConfirmationEmail,
+  sendStaffCredentialsEmail,
+  sendSupportTicketCreatedEmail,
+  sendSupportTicketReplyEmail,
+  sendSupportTicketStatusEmail,
   sendJobApplicationEmail,
   sendRegistrationEmail,
   sendAdminNotificationEmail,

@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Franchise = require("../models/Franchise");
+const generateFranchiseCode = require("../utils/generateFranchiseCode");
 const Package = require("../models/Package");
 const Lead = require("../models/Lead");
 const Transaction = require("../models/Transaction");
@@ -55,8 +56,35 @@ const csvUpload = multer({
 });
 
 // Get dashboard statistics
+// IST (UTC+5:30) helpers so month/year boundaries match what the admin sees in India
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const istStart = (year, monthIndex, day = 1) =>
+  new Date(Date.UTC(year, monthIndex, day) - IST_OFFSET_MS);
+
+const currentIstYearMonth = () => {
+  const ist = new Date(Date.now() + IST_OFFSET_MS);
+  return { year: ist.getUTCFullYear(), month: ist.getUTCMonth() + 1 };
+};
+
+// Optional period filter for the package revenue cards: all (default) | month | year
+const getRevenuePeriodRange = (query) => {
+  const period = query.period;
+  if (period !== "month" && period !== "year") return null;
+
+  const current = currentIstYearMonth();
+  const year = Number(query.year) || current.year;
+  if (period === "year") {
+    return { $gte: istStart(year, 0), $lt: istStart(year + 1, 0) };
+  }
+  const month = Number(query.month) || current.month;
+  return { $gte: istStart(year, month - 1), $lt: istStart(year, month) };
+};
+
 const getDashboardStats = async (req, res) => {
   try {
+    const periodRange = getRevenuePeriodRange(req.query);
+    const periodMatch = periodRange ? { createdAt: periodRange } : {};
+
     const totalFranchises = await Franchise.countDocuments();
     const activeFranchises = await Franchise.countDocuments({ isActive: true });
     const pendingKycFranchises = await Franchise.countDocuments({
@@ -79,11 +107,10 @@ const getDashboardStats = async (req, res) => {
     // Current date and time
     const now = new Date();
 
-    // Start of current month
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    // Start of current year
-    const currentYearStart = new Date(now.getFullYear(), 0, 1);
+    // Start of current month and year, in IST
+    const istNow = currentIstYearMonth();
+    const currentMonthStart = istStart(istNow.year, istNow.month - 1);
+    const currentYearStart = istStart(istNow.year, 0);
 
     // Current month revenue
     const currentMonthRevenueResult = await Transaction.aggregate([
@@ -191,6 +218,7 @@ const getDashboardStats = async (req, res) => {
     const franchisePackageRevenueResult = await Transaction.aggregate([
       {
         $match: {
+          ...periodMatch,
           $or: [
             {
               status: "paid",
@@ -225,6 +253,7 @@ const getDashboardStats = async (req, res) => {
     const paidBusinessForms = await BusinessForm.aggregate([
       {
         $match: {
+          ...periodMatch,
           $or: [
             { paymentStatus: "paid" },
             { manualAmount: { $gt: 0 } }, //admin manual entries
@@ -906,6 +935,9 @@ const getAllFranchisesWithCredits = async (req, res) => {
 // Credentials / invite helpers
 // =========================
 
+const { resolveBusinessManagerId } = require("../utils/franchiseScope");
+const { assignNextManager } = require("../utils/assignBusinessManager");
+
 const RESEND_COOLDOWN_MS = 60 * 1000;
 
 // 10-char random hex password (always meets the 6-char schema minimum)
@@ -975,12 +1007,46 @@ const loadFranchisePartner = async (franchiseId) => {
   return { franchise, user };
 };
 
+// Copies the franchise credentials email to the creating Business Manager and the admin.
+// Each copy is sent separately so one failing address does not block the other.
+const sendFranchiseCopiesToManagerAndAdmin = async (req, user, franchise, tempPassword) => {
+  if (!req.user?.scopedToOwnFranchises) return;
+
+  const recipients = [req.user.email, process.env.ADMIN_EMAIL]
+    .filter(Boolean)
+    .map((email) => email.trim().toLowerCase());
+
+  for (const to of new Set(recipients)) {
+    try {
+      await sendRegistrationApprovalEmail(user, franchise, tempPassword, { to });
+    } catch (copyError) {
+      console.error(`Franchise copy email to ${to} failed:`, copyError);
+    }
+  }
+};
+
 const createFranchiseUser = async (req, res) => {
   try {
-    const { name, email, assignedPackages, role, subRole } = req.body;
+    const { name, email, phone, alternatePhone, assignedPackages, role, subRole } = req.body;
+
+    // Admin staff must be created from the Staff page so they get a role's permissions
+    if (role === "admin") {
+      return res.status(400).json({
+        message: "Staff accounts are created from the Staff page and assigned a role",
+      });
+    }
+
+    // Phone is required: partner WhatsApp messages are sent to this number
+    if (!/^\d{10}$/.test(String(phone || ""))) {
+      return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
+    }
+
+    // Optional alternate mobile: validated only when given
+    if (alternatePhone && !/^\d{10}$/.test(String(alternatePhone))) {
+      return res.status(400).json({ message: "Enter a valid 10-digit alternate mobile number" });
+    }
 
     // Default values
-    const phone = "0000000000";
     const state = "Not Provided";
     const pincode = "000000";
     const language = "en";
@@ -1033,7 +1099,13 @@ const createFranchiseUser = async (req, res) => {
         email: normalizedEmail,
 
         phone,
+        alternatePhone: alternatePhone || undefined,
         franchiseCode: null, // <-- add this
+        // Business Manager who owns this partner (creator, or admin's pick)
+        // Explicit pick (or a BM creating their own partner) wins; otherwise next in rotation
+        businessManager:
+          (await resolveBusinessManagerId(req, req.body.businessManagerId)) ||
+          (await assignNextManager()),
         kycStatus: "pending",
         agreementSigned: true,
         agreementSignedAt: new Date(),
@@ -1104,6 +1176,9 @@ const createFranchiseUser = async (req, res) => {
         await markCredentialsSent(user._id);
 
         console.log("Franchise mail sent");
+
+        // Business Manager created this franchise: copy the email to the manager and admin
+        await sendFranchiseCopiesToManagerAndAdmin(req, user, franchise, tempPassword);
       }
     } catch (emailError) {
       console.error("Mail sending failed:", emailError);
@@ -1499,6 +1574,10 @@ const approveRegistration = async (req, res) => {
     user.isActive = true;
     user.isVerified = true; // Mark as verified since admin approved this registration
     franchise.isActive = true;
+    // Franchise ID is issued on approval if not already assigned
+    if (!franchise.franchiseCode) {
+      franchise.franchiseCode = await generateFranchiseCode();
+    }
 
     // Assign packages and add credits if provided
     if (

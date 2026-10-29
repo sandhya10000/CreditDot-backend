@@ -4,6 +4,7 @@ const CustomerPackage = require("../models/CustomerPackage");
 const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
+const { validateAmcTerm } = require("./amcController");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const {
@@ -97,6 +98,26 @@ const validateBusinessForm = (data) => {
 
 // Submit business form and initiate payment
 //need to be check here after all points clear
+// Business login submission emails go only to the partner's RM and full admins
+// (admins without a staffRole). Staff accounts and the partner are not included.
+const getBusinessLoginRecipients = async (franchise) => {
+  const recipients = new Map();
+
+  if (franchise?.businessManager) {
+    const rm = await User.findById(franchise.businessManager).select("name email").lean();
+    if (rm?.email) recipients.set(rm.email.toLowerCase(), rm);
+  }
+
+  const fullAdmins = await User.find({ role: "admin", staffRole: null })
+    .select("name email")
+    .lean();
+  for (const admin of fullAdmins) {
+    if (admin.email) recipients.set(admin.email.toLowerCase(), admin);
+  }
+
+  return [...recipients.values()];
+};
+
 const submitBusinessForm = async (req, res) => {
   try {
     const {
@@ -117,17 +138,34 @@ const submitBusinessForm = async (req, res) => {
       loanAmount,
       loanPurpose,
       message,
+      clientIssues,
       selectedPackage,
       dob,
       gender,
       bankAccountNumber,
       ifscCode,
       documents,
+      customerType,
+      businessDetails,
 
       //Admin
       manualAmount,
       franchiseId,
+      amc,
+      workStatus,
     } = req.body;
+
+    const isBusinessCustomer = customerType === "business";
+    if (isBusinessCustomer) {
+      const missing = BusinessForm.BUSINESS_DETAIL_FIELDS.filter(
+        (field) => !businessDetails?.[field]?.toString().trim(),
+      );
+      if (missing.length) {
+        return res.status(400).json({
+          message: `Please fill all business details: ${missing.join(", ")}`,
+        });
+      }
+    }
 
     // Check if selected package exists and is active
 
@@ -144,8 +182,24 @@ const submitBusinessForm = async (req, res) => {
       }
     }
 
+    // Admin can enroll the customer in AMC while creating the form (AMC tab)
+    let amcTerm = null;
+    if (amc && req.user.role === "admin") {
+      const { error, term } = validateAmcTerm(amc);
+      if (error) return res.status(400).json({ message: error });
+      amcTerm = {
+        ...term,
+        isEnrolled: true,
+        enrolledAt: new Date(),
+        updatedBy: req.user._id,
+        paidAt: term.paymentStatus === "paid" ? new Date() : undefined,
+      };
+    }
+
     // Create business form entry
     const businessForm = new BusinessForm({
+      ...(amcTerm && { amc: amcTerm }),
+      ...(["in_progress", "closed", "pending"].includes(workStatus) && { workStatus }),
       // customerId: null,
       //Admin case franchiseId from body
       //Franchise login case req.user.franchiseId
@@ -156,6 +210,16 @@ const submitBusinessForm = async (req, res) => {
       createdByRole: req.user.role,
       entrySource: req.user.role === "franchise" ? "Franchise" : "Direct Login",
       manualAmount: Number(manualAmount) || 0,
+      customerType: isBusinessCustomer ? "business" : "individual",
+      businessDetails: isBusinessCustomer
+        ? {
+            directorName: businessDetails.directorName,
+            gstUsername: businessDetails.gstUsername,
+            gstNumber: businessDetails.gstNumber,
+            companyType: businessDetails.companyType,
+            companyPanNumber: businessDetails.companyPanNumber,
+          }
+        : undefined,
       customerName,
       customerEmail: customerEmail.toLowerCase(),
       customerPhone,
@@ -173,6 +237,7 @@ const submitBusinessForm = async (req, res) => {
       loanAmount,
       loanPurpose,
       message,
+      clientIssues: typeof clientIssues === "string" ? clientIssues.trim().slice(0, 1000) : "",
       selectedPackage: selectedPackage || null,
       dob,
       gender,
@@ -308,23 +373,10 @@ const verifyPayment = async (req, res) => {
 
     // Send email notifications
     try {
-      // Get franchise user details
       const franchise = await Franchise.findById(businessForm.franchiseId);
-      const franchiseUser = await User.findById(franchise.userId);
-
-      // Get admin users
-      const adminUsers = await User.find({ role: "admin" });
-
-      // Send email to franchise user and all admins
-      const recipients = [franchiseUser, ...adminUsers];
+      const recipients = await getBusinessLoginRecipients(franchise);
       for (const recipient of recipients) {
-        if (recipient && recipient.email) {
-          await sendBusinessFormSubmissionEmail(
-            recipient,
-            businessForm,
-            franchise,
-          );
-        }
+        await sendBusinessFormSubmissionEmail(recipient, businessForm, franchise);
       }
     } catch (emailError) {
       console.error(
@@ -426,6 +478,13 @@ const getAllBusinessForms = async (req, res) => {
       filter.paymentStatus = paymentStatus;
     }
 
+    // Records created before customerType existed count as individual
+    if (req.query.customerType === "business") {
+      filter.customerType = "business";
+    } else if (req.query.customerType === "individual") {
+      filter.customerType = { $ne: "business" };
+    }
+
     if (search) {
       const matchingFranchises = await Franchise.find({
         businessName: { $regex: search, $options: "i" },
@@ -453,7 +512,7 @@ const getAllBusinessForms = async (req, res) => {
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
-      .populate("franchiseId", "businessName")
+      .populate("franchiseId", "businessName franchiseCode")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -516,7 +575,7 @@ const getSingleBusinessForm = async (req, res) => {
         "selectedPackage",
         "name price gstPercentage businessPayoutPercentage businessPayoutType businessPayoutFixedAmount totalPrice",
       )
-      .populate("franchiseId", "businessName phone")
+      .populate("franchiseId", "businessName phone franchiseCode")
       .sort({ createdAt: -1 });
 
     console.log(businessForms, "businessForms---------");

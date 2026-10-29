@@ -1,4 +1,4 @@
-const axios = require('axios');
+const whatsappService = require('../utils/whatsappService');
 
 // Generate a random 6-digit OTP
 const generateOTP = () => {
@@ -55,22 +55,10 @@ exports.sendOTP = async (req, res) => {
       timestamp: Date.now()
     };
 
-    // Prepare SMS data for Amaze SMS API
-    const smsData = {
-      key: process.env.AMAZE_SMS_API_KEY,
-      from: process.env.AMAZE_SMS_SENDER_ID,
-      to: mobile,
-      body: `Your OTP for Credit Dost login is ${otp}. Do not share it with anyone.`,
-      templateid: process.env.AMAZE_SMS_DLT_TEMPLATE_ID, // This might not be set in env
-      entityid: process.env.AMAZE_SMS_ENTITY_ID || '1001199386649404058' // Default entity ID
-    };
+    // Send OTP over WhatsApp (WaSimple Authentication template)
+    const response = await whatsappService.sendOtp(mobile, otp);
 
-    // Make API call to Amaze SMS
-    const response = await axios.get('https://api.amazesms.com/api/sms', {
-      params: smsData
-    });
-
-    console.log('SMS API Response:', response.data);
+    console.log('WhatsApp OTP API Response:', response);
 
     res.status(200).json({
       success: true,
@@ -175,22 +163,10 @@ exports.resendOTP = async (req, res) => {
       timestamp: Date.now()
     };
 
-    // Prepare SMS data for Amaze SMS API
-    const smsData = {
-      key: process.env.AMAZE_SMS_API_KEY,
-      from: process.env.AMAZE_SMS_SENDER_ID,
-      to: mobile,
-      body: `Your OTP for Credit Dost ${purpose || 'verification'} is ${otp}. Do not share it with anyone.`,
-      templateid: process.env.AMAZE_SMS_DLT_TEMPLATE_ID, // This might not be set in env
-      entityid: process.env.AMAZE_SMS_ENTITY_ID || '1001199386649404058' // Default entity ID
-    };
+    // Resend OTP over WhatsApp (WaSimple Authentication template)
+    const response = await whatsappService.sendOtp(mobile, otp);
 
-    // Make API call to Amaze SMS
-    const response = await axios.get('https://api.amazesms.com/api/sms', {
-      params: smsData
-    });
-
-    console.log('Resend SMS API Response:', response.data);
+    console.log('Resend WhatsApp OTP API Response:', response);
 
     res.status(200).json({
       success: true,

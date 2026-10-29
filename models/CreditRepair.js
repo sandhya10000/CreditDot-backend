@@ -44,6 +44,13 @@ const creditRepairSchema = new mongoose.Schema({
     enum: ["New", "Contacted", "In Progress", "Resolved"],
     default: "New",
   },
+  // Where the enquiry came from: website form or WhatsApp "Contact Support" button
+  source: {
+    type: String,
+    enum: ["website", "whatsapp"],
+    default: "website",
+    index: true,
+  },
 }, {
   timestamps: true
 });

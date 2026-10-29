@@ -27,6 +27,20 @@ const businessFormSchema = new mongoose.Schema(
       enum: ["Franchise", "Direct Login"],
       default: "Direct Login",
     },
+    customerType: {
+      type: String,
+      enum: ["individual", "business"],
+      default: "individual",
+      index: true,
+    },
+    // Only filled for business customers (required when customerType is "business")
+    businessDetails: {
+      directorName: { type: String, trim: true },
+      gstUsername: { type: String, trim: true },
+      gstNumber: { type: String, trim: true, uppercase: true },
+      companyType: { type: String, trim: true },
+      companyPanNumber: { type: String, trim: true, uppercase: true },
+    },
     //Add customer Id
     customerId: {
       type: String,
@@ -147,8 +161,16 @@ const businessFormSchema = new mongoose.Schema(
     //add new field to know  business status from admin
     workStatus: {
       type: String,
-      enum: ["in_progress", "closed", "on_hold"],
+      enum: ["in_progress", "closed", "pending"],
       default: "in_progress",
+    },
+
+    // Issues the client raised at intake, so the team can work on them
+    clientIssues: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: "",
     },
 
     closedAt: Date,
@@ -222,6 +244,26 @@ const businessFormSchema = new mongoose.Schema(
         closedAt: { type: Date, default: Date.now },
       },
     ],
+
+    // Follow-up: next date to contact the customer (YYYY-MM-DD, local calendar day)
+    nextFollowUpDate: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    // Every follow-up that was scheduled, newest last
+    followUpHistory: [
+      {
+        followUpDate: { type: String, required: true },
+        note: { type: String, trim: true, maxlength: 500, default: "" },
+        createdBy: {
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+          name: String,
+          role: String,
+        },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -229,5 +271,30 @@ const businessFormSchema = new mongoose.Schema(
 );
 
 businessFormSchema.index({ "amc.isEnrolled": 1, "amc.endDate": 1 });
+
+const BUSINESS_DETAIL_FIELDS = [
+  "directorName",
+  "gstUsername",
+  "gstNumber",
+  "companyType",
+  "companyPanNumber",
+];
+
+businessFormSchema.pre("validate", function (next) {
+  if (this.customerType === "business") {
+    const missing = BUSINESS_DETAIL_FIELDS.filter(
+      (field) => !this.businessDetails?.[field],
+    );
+    if (missing.length) {
+      this.invalidate(
+        "businessDetails",
+        `Missing business details: ${missing.join(", ")}`,
+      );
+    }
+  }
+  next();
+});
+
+businessFormSchema.statics.BUSINESS_DETAIL_FIELDS = BUSINESS_DETAIL_FIELDS;
 
 module.exports = mongoose.model("BusinessForm", businessFormSchema);

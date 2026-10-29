@@ -1,7 +1,29 @@
 const User = require("../models/User");
 const Franchise = require("../models/Franchise");
+const { assignNextManager } = require("../utils/assignBusinessManager");
 const Referral = require("../models/Referral");
+const Transaction = require("../models/Transaction");
+const Role = require("../models/Role");
 const { generateToken } = require("../config/jwt");
+
+// permissions is null for full admins (no staffRole); staff get their role's list.
+// disabled means the staff member or their role is inactive.
+const getStaffAccess = async (user) => {
+  if (!user.staffRole) {
+    return { permissions: null, staffRoleName: null, staffCode: null, scopedToOwnFranchises: false, disabled: false };
+  }
+  const staffRole = await Role.findById(user.staffRole).select("name permissions isActive limitToOwnFranchises");
+  if (!user.isActive || !staffRole || !staffRole.isActive) {
+    return { disabled: true };
+  }
+  return {
+    permissions: staffRole.permissions,
+    staffRoleName: staffRole.name,
+    staffCode: user.staffCode || null,
+    scopedToOwnFranchises: Boolean(staffRole.limitToOwnFranchises),
+    disabled: false,
+  };
+};
 const Joi = require("joi");
 const {
   sendRegistrationEmail,
@@ -13,6 +35,16 @@ const {
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const googleSheetsService = require("../utils/googleSheetsService");
+
+// Diamond login credit bonus config (backend-only)
+const DIAMOND_LOGIN_CREDIT_BONUS = parseInt(
+  process.env.DIAMOND_LOGIN_CREDIT_BONUS || "10",
+  10,
+);
+const LOGIN_CREDIT_COOLDOWN_HOURS = parseFloat(
+  process.env.LOGIN_CREDIT_COOLDOWN_HOURS || "0",
+);
+
 
 // Registration validation schema
 const registerSchema = Joi.object({
@@ -106,6 +138,7 @@ const register = async (req, res) => {
       ownerName: name,
       email,
       phone,
+      businessManager: await assignNextManager(), // next Business Manager in rotation (null if none)
     });
 
     await franchise.save();
@@ -249,6 +282,11 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Account is deactivated" });
     }
 
+    const access = await getStaffAccess(user);
+    if (access.disabled) {
+      return res.status(403).json({ message: "Staff access has been disabled. Please contact admin." });
+    }
+
     // Record login time (updateOne avoids re-running the password hash hook)
     try {
       await User.updateOne(
@@ -279,8 +317,90 @@ const login = async (req, res) => {
         email: user.email,
         role: user.role,
         subRole: user.subRole,
+        permissions: access.permissions,
+        staffRoleName: access.staffRoleName,
+        staffCode: access.staffCode,
+        scopedToOwnFranchises: access.scopedToOwnFranchises,
       },
     });
+
+    // --- Diamond login credit bonus (non-blocking, fire-and-forget) ---
+    // Only applies to franchise users; never blocks the login response.
+    if (user.role === "franchise") {
+      (async () => {
+        try {
+          // Load franchise with active Diamond package
+          const franchise = await Franchise.findOne({
+            userId: user._id,
+            isDeleted: { $ne: true },
+          }).populate({
+            path: "assignedPackages",
+            match: { isActive: { $ne: false } },
+          });
+
+          if (!franchise) return;
+
+          // Check for an active Diamond package
+          const hasDiamond =
+            Array.isArray(franchise.assignedPackages) &&
+            franchise.assignedPackages.some(
+              (p) =>
+                p &&
+                (p.name === "Diamond" ||
+                  p.creditsIncluded === "Unlimited" ||
+                  (typeof p.creditsIncluded === "string" &&
+                    p.creditsIncluded.toLowerCase() === "unlimited")),
+            );
+
+          if (!hasDiamond) return;
+
+          // Enforce cooldown (LOGIN_CREDIT_COOLDOWN_HOURS = 0 means every login)
+          if (LOGIN_CREDIT_COOLDOWN_HOURS > 0 && franchise.lastLoginCreditAt) {
+            const cooldownMs = LOGIN_CREDIT_COOLDOWN_HOURS * 60 * 60 * 1000;
+            if (Date.now() - franchise.lastLoginCreditAt.getTime() < cooldownMs) {
+              console.log(
+                `[DiamondLoginBonus] Cooldown active for franchise ${franchise._id}, skipping credit grant.`,
+              );
+              return;
+            }
+          }
+
+          // Atomically add bonus credits and stamp lastLoginCreditAt
+          await Franchise.findOneAndUpdate(
+            { _id: franchise._id },
+            {
+              $inc: { credits: DIAMOND_LOGIN_CREDIT_BONUS },
+              $set: { lastLoginCreditAt: new Date() },
+            },
+          );
+
+          // Audit transaction record
+          await Transaction.create({
+            userId: user._id,
+            franchiseId: franchise._id,
+            orderId: `LOGIN_BONUS_${user._id}_${Date.now()}`,
+            amount: DIAMOND_LOGIN_CREDIT_BONUS,
+            currency: "CREDITS",
+            status: "paid",
+            paymentMethod: "admin_recharge",
+            remarks: `Diamond login credit bonus (+${DIAMOND_LOGIN_CREDIT_BONUS} credits)`,
+            metadata: { reason: "LOGIN_BONUS", packageType: "Diamond" },
+          });
+
+          console.log(
+            `[DiamondLoginBonus] Granted ${DIAMOND_LOGIN_CREDIT_BONUS} credits to franchise ${franchise._id} (user ${user._id}).`,
+          );
+        } catch (bonusError) {
+          // Non-blocking: log but do not surface to user
+          console.error(
+            "[DiamondLoginBonus] Failed to grant login credit bonus:",
+            bonusError,
+          );
+        }
+      })();
+    }
+    // --- end Diamond login credit bonus ---
+
   } catch (error) {
     console.error("Login error:", error); // Debug log
     res.status(500).json({ message: "Server error", error: error.message });
@@ -295,7 +415,20 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({ user });
+    const access = await getStaffAccess(user);
+    if (access.disabled) {
+      return res.status(403).json({ message: "Staff access has been disabled. Please contact admin." });
+    }
+
+    res.json({
+      user: {
+        ...user.toObject(),
+        permissions: access.permissions,
+        staffRoleName: access.staffRoleName,
+        staffCode: access.staffCode,
+        scopedToOwnFranchises: access.scopedToOwnFranchises,
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }

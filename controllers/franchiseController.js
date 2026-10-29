@@ -5,7 +5,16 @@ const FranchiseCounter = require("../models/FranchiseCounter");
 const Package = require("../models/Package");
 const Joi = require("joi");
 const { sendFranchiseApprovalEmail } = require("../utils/emailService");
+const mongoose = require("mongoose");
 const generateFranchiseCode = require("../utils/generateFranchiseCode");
+const { resolveFranchiseAiLimit } = require("../utils/aiLimitService");
+const { notifyPartnerRmDetails } = require("../utils/notifyRmDetails");
+const {
+  franchiseScope,
+  ownsFranchise,
+  resolveBusinessManagerId,
+} = require("../utils/franchiseScope");
+const { assignUnassignedFranchises } = require("../utils/assignBusinessManager");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -95,11 +104,23 @@ const getSingleFranchise = async (req, res) => {
   try {
     const { franchiseCode } = req.params;
 
-    const franchise = await Franchise.findOne({ franchiseCode: franchiseCode })
-      .populate("userId", "name email phone")
-      .populate("assignedPackages", "name price creditsIncluded");
+    // Franchises without an ID are opened by their database _id
+    const lookup = mongoose.isValidObjectId(franchiseCode)
+      ? { $or: [{ franchiseCode }, { _id: franchiseCode }] }
+      : { franchiseCode };
+
+    const franchise = await Franchise.findOne(lookup)
+      .populate("userId", "name email phone lastLoginAt")
+      .populate("assignedPackages", "name price creditsIncluded isActive");
 
     if (!franchise) {
+      return res.status(404).json({
+        success: false,
+        message: "Franchise not found",
+      });
+    }
+
+    if (!(await ownsFranchise(req, franchise._id))) {
       return res.status(404).json({
         success: false,
         message: "Franchise not found",
@@ -110,10 +131,21 @@ const getSingleFranchise = async (req, res) => {
     //   franchiseId: franchise._id,
     // });
 
+    // AI usage comes from the purchased package, not the stored aiTotal field
+    const plain = franchise.toObject();
+    const aiInfo = resolveFranchiseAiLimit(plain);
+    const aiUsage = {
+      hasActivePackage: aiInfo.hasActivePackage,
+      packageName: aiInfo.packageName,
+      used: aiInfo.used,
+      total: aiInfo.hasActivePackage ? (aiInfo.isUnlimited ? "Unlimited" : aiInfo.limit) : null,
+    };
+
     return res.status(200).json({
       success: true,
       data: {
-        ...franchise.toObject(),
+        ...plain,
+        aiUsage,
         // businessHistory: businesses,
       },
     });
@@ -244,6 +276,9 @@ const updateFranchiseProfile = async (req, res) => {
       } catch (emailError) {
         console.error("Franchise approval email failed:", emailError.message);
       }
+
+      // Send the assigned RM's details on WhatsApp (never blocks the response)
+      notifyPartnerRmDetails(franchise._id);
     }
 
     return res.status(200).json({
@@ -270,7 +305,7 @@ const getFranchiseList = async (req, res) => {
     const baseFilter = showDeleted
       ? { isDeleted: true }
       : { isDeleted: { $ne: true } };
-    const franchises = await Franchise.find(baseFilter)
+    const franchises = await Franchise.find({ ...baseFilter, ...franchiseScope(req) })
       .populate(
         "userId",
         "name email phone role subRole isDeleted lastLoginAt credentialsSentAt credentialsSentCount",
@@ -321,7 +356,7 @@ const getAllFranchises = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const kycStatus = req.query.kycStatus?.trim() || "";
     const skip = (page - 1) * limit;
-    const filter = {};
+    const filter = { ...franchiseScope(req) };
     // Deleted handling: ?showDeleted=true → only deleted, ?includeDeleted=true → all, default → exclude deleted
     if (req.query.showDeleted === "true") {
       filter.isDeleted = true;
@@ -346,6 +381,7 @@ const getAllFranchises = async (req, res) => {
         "name email phone role subRole isDeleted lastLoginAt credentialsSentAt credentialsSentCount",
       )
       .populate("assignedPackages", "name price creditsIncluded")
+      .populate("businessManager", "name staffCode")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -405,6 +441,10 @@ const getFranchiseById = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
+    if (!(await ownsFranchise(req, franchise._id))) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+
     // Get purchased packages from transactions
     const Transaction = require("../models/Transaction");
     const Package = require("../models/Package");
@@ -454,6 +494,13 @@ const updateFranchise = async (req, res) => {
     if (!franchise) {
       return res.status(404).json({ message: "Franchise not found" });
     }
+
+    // Managers may only edit their own partners, and the owner is changed
+    // through the reassign endpoint, never through a profile update
+    if (!(await ownsFranchise(req, franchise._id))) {
+      return res.status(404).json({ message: "Franchise not found" });
+    }
+    delete req.body.businessManager;
 
     // Check if assignedPackages are being updated
     if (req.body.assignedPackages && Array.isArray(req.body.assignedPackages)) {
@@ -919,9 +966,63 @@ const fetchBankVerification = async (req, res) => {
     });
   }
 };
+// Admin-only: give every partner without a Business Manager a turn in the rotation
+const assignUnassignedBusinessManagers = async (req, res) => {
+  try {
+    const result = await assignUnassignedFranchises();
+    if (result.error) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
+    res.json({
+      success: true,
+      message: `Assigned ${result.assigned} partner(s)`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin-only: move a franchise to another Business Manager (null = unassign)
+const reassignFranchiseManager = async (req, res) => {
+  try {
+    const managerId = req.body.businessManagerId || null;
+    const businessManager = await resolveBusinessManagerId(req, managerId);
+    if (managerId && !businessManager) {
+      return res.status(400).json({
+        success: false,
+        message: "Choose an active Business Manager",
+      });
+    }
+
+    const franchise = await Franchise.findByIdAndUpdate(
+      req.params.id,
+      { $set: { businessManager } },
+      { new: true },
+    ).populate("businessManager", "name staffCode");
+    if (!franchise) {
+      return res.status(404).json({ success: false, message: "Franchise not found" });
+    }
+
+    // Send the new RM's details to an already-approved partner (no-op if unassigned or already sent)
+    notifyPartnerRmDetails(franchise._id);
+
+    res.json({
+      success: true,
+      message: businessManager ? "Business Manager updated" : "Franchise unassigned",
+      data: franchise,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getAllFranchisesList = async (req, res) => {
   try {
-    const franchises = await Franchise.find({}, " _id businessName ownerName");
+    const franchises = await Franchise.find(
+      { ...franchiseScope(req) },
+      " _id businessName ownerName",
+    );
     res.status(200).json({
       success: true,
       data: franchises,
@@ -946,7 +1047,7 @@ const exportFranchisesCSV = async (req, res) => {
     const kycStatus = req.query.kycStatus?.trim() || "";
 
     // Build the same filter used by getAllFranchises
-    const filter = {};
+    const filter = { ...franchiseScope(req) };
     if (req.query.showDeleted === "true") {
       filter.isDeleted = true;
     } else if (req.query.includeDeleted !== "true") {
@@ -1096,4 +1197,6 @@ module.exports = {
   getAllFranchisesList,
   getSingleFranchise,
   exportFranchisesCSV,
+  reassignFranchiseManager,
+  assignUnassignedBusinessManagers,
 };

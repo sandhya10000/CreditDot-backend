@@ -60,6 +60,16 @@ const creditReportSchema = new mongoose.Schema(
     localPath: {
       type: String,
     },
+    // Low-score follow-up (score below LOW_SCORE_THRESHOLD)
+    lowScorePromptSentAt: {
+      type: Date,
+      default: null,
+    },
+    supportLeadId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CreditRepair",
+      default: null,
+    },
     pdfStatus: {
       // Only used for IndiConnect CIBIL (htmlUrl rendered to PDF in background)
       // undefined for all Surepass rows (back-compat)
