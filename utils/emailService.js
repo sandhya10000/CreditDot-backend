@@ -846,21 +846,7 @@ const sendAIAnalysisResponseToFranchise = async (
     ],
   };
 
-  try {
-    return await transporter.sendMail(mailOptions);
-  } catch (error) {
-    // ===== TEMP-DEBUG-START (remove after staging debugging) =====
-    console.error('[TEMP-DEBUG] Email send error:', {
-      message: error.message,
-      code: error.code,
-      command: error.command,
-      response: error.response,
-      responseCode: error.responseCode,
-      stack: error.stack,
-    });
-    // ===== TEMP-DEBUG-END =====
-    throw error;
-  }
+  return transporter.sendMail(mailOptions);
 };
 
 // Send password reset link email
