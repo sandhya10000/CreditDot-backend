@@ -165,6 +165,14 @@ const uploadDocument = async (req, res) => {
           aiAnalysisDoc.claudeAnalysisStatus = "processing";
           await aiAnalysisDoc.save();
 
+          // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+          console.log('[TEMP-DEBUG] About to process document:', {
+            NODE_ENV: process.env.NODE_ENV,
+            reqFile: req.file ? { path: req.file.path, key: req.file.key, location: req.file.location, originalname: req.file.originalname, size: req.file.size } : null,
+            language: effectiveLanguage,
+          });
+          // ===== TEMP-DEBUG-END =====
+
           // Process document with Claude
           const analysisResult = await processDocument(
             req.file.path,
@@ -183,6 +191,10 @@ const uploadDocument = async (req, res) => {
             path.dirname(req.file.path),
             htmlFileName,
           );
+
+          // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+          console.log('[TEMP-DEBUG] Writing HTML report to:', htmlFilePath);
+          // ===== TEMP-DEBUG-END =====
 
           // Save HTML analysis to file
           fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
@@ -215,6 +227,9 @@ const uploadDocument = async (req, res) => {
 
           // Send email with analysis report to franchise user
           try {
+            // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+            console.log('[TEMP-DEBUG] Reading HTML report for email attachment from:', htmlFilePath);
+            // ===== TEMP-DEBUG-END =====
             const htmlBuffer = fs.readFileSync(htmlFilePath);
             await sendAIAnalysisResponseToFranchise(
               {
@@ -229,6 +244,15 @@ const uploadDocument = async (req, res) => {
             aiAnalysisDoc.emailSentAt = new Date();
             await aiAnalysisDoc.save();
           } catch (emailError) {
+            // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+            console.error('[TEMP-DEBUG] Email send error in uploadDocument:', {
+              message: emailError.message,
+              code: emailError.code,
+              command: emailError.command,
+              response: emailError.response,
+              stack: emailError.stack,
+            });
+            // ===== TEMP-DEBUG-END =====
             console.error("Failed to send analysis report email:", emailError);
             // Keep status as 'completed' but log the error
             aiAnalysisDoc.claudeAnalysisError =
@@ -236,6 +260,21 @@ const uploadDocument = async (req, res) => {
             await aiAnalysisDoc.save();
           }
         } catch (analysisError) {
+          // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+          console.error('[TEMP-DEBUG] AI analysis FULL ERROR:', {
+            message: analysisError.message,
+            stack: analysisError.stack,
+            code: analysisError.code,
+            httpStatus: analysisError.status,
+            errorType: analysisError.constructor?.name,
+            filePath: req.file?.path,
+            fileKey: req.file?.key,
+            fileLocation: req.file?.location,
+            NODE_ENV: process.env.NODE_ENV,
+            CLAUDE_MODEL: process.env.CLAUDE_MODEL,
+            CLAUDE_API_KEY_SET: !!process.env.CLAUDE_API_KEY,
+          });
+          // ===== TEMP-DEBUG-END =====
           console.error("Claude analysis failed:", analysisError.message);
           // Update status to failed but don't delete the document
           aiAnalysisDoc.claudeAnalysisStatus = "failed";
@@ -515,6 +554,10 @@ const analyzeWithClaude = async (req, res) => {
           htmlFileName,
         );
 
+        // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+        console.log('[TEMP-DEBUG] Writing HTML report to:', htmlFilePath);
+        // ===== TEMP-DEBUG-END =====
+
         // Save HTML analysis to file
         fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
 
@@ -543,6 +586,9 @@ const analyzeWithClaude = async (req, res) => {
 
         // Send email with analysis report to franchise user
         try {
+          // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+          console.log('[TEMP-DEBUG] Reading HTML report for email attachment from:', htmlFilePath);
+          // ===== TEMP-DEBUG-END =====
           const htmlBuffer = fs.readFileSync(htmlFilePath);
           await sendAIAnalysisResponseToFranchise(
             {
@@ -553,9 +599,33 @@ const analyzeWithClaude = async (req, res) => {
             htmlBuffer,
           );
         } catch (emailError) {
+          // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+          console.error('[TEMP-DEBUG] Email send error in analyzeWithClaude:', {
+            message: emailError.message,
+            code: emailError.code,
+            command: emailError.command,
+            response: emailError.response,
+            stack: emailError.stack,
+          });
+          // ===== TEMP-DEBUG-END =====
           console.error("Failed to send analysis report email:", emailError);
         }
       } catch (analysisError) {
+        // ===== TEMP-DEBUG-START (remove after staging debugging) =====
+        console.error('[TEMP-DEBUG] AI analysis FULL ERROR:', {
+          message: analysisError.message,
+          stack: analysisError.stack,
+          code: analysisError.code,
+          httpStatus: analysisError.status,
+          errorType: analysisError.constructor?.name,
+          filePath: req.file?.path,
+          fileKey: req.file?.key,
+          fileLocation: req.file?.location,
+          NODE_ENV: process.env.NODE_ENV,
+          CLAUDE_MODEL: process.env.CLAUDE_MODEL,
+          CLAUDE_API_KEY_SET: !!process.env.CLAUDE_API_KEY,
+        });
+        // ===== TEMP-DEBUG-END =====
         console.error("Claude analysis failed:", analysisError.message);
 
         // Sanitize error message - hide sensitive API details from users

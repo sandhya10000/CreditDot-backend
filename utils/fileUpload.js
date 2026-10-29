@@ -68,6 +68,14 @@ const s3Storage = multerS3({
 // Choose storage based on environment
 const storage = process.env.NODE_ENV === 'production' ? s3Storage : localStorage;
 
+// ===== TEMP-DEBUG-START (remove after staging debugging) =====
+console.log('[TEMP-DEBUG] File storage mode:', process.env.NODE_ENV === 'production' ? 's3' : 'local', {
+  region: process.env.AWS_REGION,
+  bucket: process.env.AWS_S3_BUCKET_NAME,
+  keyIdPrefix: process.env.AWS_ACCESS_KEY_ID?.slice(0, 4),
+});
+// ===== TEMP-DEBUG-END =====
+
 // Multer upload configuration
 const upload = multer({
   storage: storage,
