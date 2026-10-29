@@ -103,4 +103,8 @@ const creditReportSchema = new mongoose.Schema(
   },
 );
 
+// The admin Reports list sorts newest first and pages through the whole collection
+creditReportSchema.index({ createdAt: -1 });
+creditReportSchema.index({ franchiseId: 1, createdAt: -1 });
+
 module.exports = mongoose.model("CreditReport", creditReportSchema);

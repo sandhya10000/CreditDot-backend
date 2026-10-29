@@ -1889,6 +1889,7 @@ const getAllCreditReports = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
+      .allowDiskUse(true)
       .lean();
 
     const total = await CreditReport.countDocuments(filter);
