@@ -34,6 +34,7 @@ const SCOPABLE_KEYS = [
   "credit",
   "kyc",
   "business",
+  "manual_payments",
   "ai_analysis",
   "support_tickets",
 ];

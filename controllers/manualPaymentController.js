@@ -3,6 +3,10 @@ const Joi = require("joi");
 const ManualPayment = require("../models/ManualPayment");
 const User = require("../models/User");
 const { sendManualPaymentConfirmationEmail } = require("../utils/emailService");
+const { isScoped } = require("../utils/franchiseScope");
+
+// Business Managers only see payment links they created (no franchise link exists here)
+const ownScope = (req) => (isScoped(req) ? { createdBy: req.user._id } : {});
 
 const LINK_VALIDITY_SECONDS = 24 * 60 * 60;
 
@@ -81,7 +85,7 @@ const listManualPayments = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const status = req.query.status;
 
-    const filter = {};
+    const filter = { ...ownScope(req) };
     if (search) {
       const regex = { $regex: escapeRegex(search), $options: "i" };
       filter.$or = [
@@ -190,7 +194,7 @@ const sendPaymentConfirmations = async (doc) => {
 // Pulls the current status from Razorpay. Used when a webhook was missed.
 const refreshManualPayment = async (req, res) => {
   try {
-    const doc = await ManualPayment.findById(req.params.id);
+    const doc = await ManualPayment.findOne({ _id: req.params.id, ...ownScope(req) });
     if (!doc) return res.status(404).json({ message: "Payment not found" });
 
     const link = await razorpay.paymentLink.fetch(doc.razorpayLinkId);
@@ -207,7 +211,7 @@ const refreshManualPayment = async (req, res) => {
 // POST /api/admin/manual-payments/:id/cancel
 const cancelManualPayment = async (req, res) => {
   try {
-    const doc = await ManualPayment.findById(req.params.id);
+    const doc = await ManualPayment.findOne({ _id: req.params.id, ...ownScope(req) });
     if (!doc) return res.status(404).json({ message: "Payment not found" });
     if (doc.status !== "created") {
       return res.status(400).json({ message: `Cannot cancel a ${doc.status} payment link` });
