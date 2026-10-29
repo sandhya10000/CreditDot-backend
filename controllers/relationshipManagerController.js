@@ -1,5 +1,6 @@
 const RelationshipManager = require('../models/RelationshipManager');
 const User = require('../models/User');
+const Franchise = require('../models/Franchise');
 
 // Create a new Relationship Manager
 const createRelationshipManager = async (req, res) => {
@@ -154,17 +155,26 @@ const deleteRelationshipManager = async (req, res) => {
 // Get assigned RM for a user
 const getUserRelationshipManager = async (req, res) => {
   try {
+    // Current assignment: Business Manager set on the partner's franchise
+    const franchise = await Franchise.findOne({ userId: req.user.id })
+      .populate('businessManager', 'name email phone');
+
+    if (franchise && franchise.businessManager) {
+      return res.json(franchise.businessManager);
+    }
+
+    // Legacy assignment: RelationshipManager linked on the user
     const user = await User.findById(req.user.id)
       .populate('relationshipManager', 'name email phone');
-    
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
     if (!user.relationshipManager) {
       return res.status(404).json({ message: 'No Relationship Manager assigned' });
     }
-    
+
     res.json(user.relationshipManager);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
