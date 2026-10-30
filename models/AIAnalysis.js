@@ -84,6 +84,27 @@ const aiAnalysisSchema = new mongoose.Schema(
       type: String,
       default: "English",
     },
+    downloadCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    claudeFailedStep: {
+      type: String,
+      default: null,
+    },
+    claudeErrorDetail: {
+      type: String,
+      default: null,
+    },
+    claudeAnalysisDurationMs: {
+      type: Number,
+      default: null,
+    },
+    claudeStepTimings: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
   {
     timestamps: true,
