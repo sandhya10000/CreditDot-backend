@@ -27,6 +27,18 @@ const businessFormSchema = new mongoose.Schema(
       enum: ["Franchise", "Direct Login"],
       default: "Direct Login",
     },
+    // Optional referral details for Individual customers (manual entry by admin/BM)
+    consultant: {
+      name: { type: String, trim: true },
+      phone: { type: String, trim: true },
+      email: { type: String, trim: true, lowercase: true },
+    },
+    // Business Manager ("RM") who owns this MIS entry; optional, admin can assign later
+    assignedRm: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     customerType: {
       type: String,
       enum: ["individual", "business"],

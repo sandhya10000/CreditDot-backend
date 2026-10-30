@@ -13,7 +13,11 @@ const {
   getBusinessFormsByFranchise,
   updateBusinessForm,
   deleteBusinessForm,
+  listAssignableRms,
+  lookupConsultant,
+  assignBusinessRm,
 } = require("../controllers/businessController");
+const requireFullAdmin = require("../middleware/fullAdmin");
 const {
   uploadAdminBusinessDocuments,
 } = require("../controllers/businessDocumentController");
@@ -104,6 +108,25 @@ router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route   GET /api/business/consultant-lookup?q=  (staff prefill for Individual Consultant)
+// @access  Private/Admin + Business Managers
+router.get("/consultant-lookup", auth, rbac("admin"), lookupConsultant);
+
+// @route   GET /api/business/rms  (active Business Managers for "Assign to RM")
+// @access  Private/Admin + Business Managers
+router.get("/rms", auth, rbac("admin"), listAssignableRms);
+
+// @route   PATCH /api/business/admin/business-forms/:id/rm
+// @desc    Set or clear the RM on a Business MIS entry (full admin only)
+// @access  Private/Full Admin
+router.patch(
+  "/admin/business-forms/:id/rm",
+  auth,
+  rbac("admin"),
+  requireFullAdmin,
+  assignBusinessRm,
+);
 
 // @route   PUT /api/business/admin/business-forms/:id/documents
 // @desc    Admin uploads or replaces one or more customer documents

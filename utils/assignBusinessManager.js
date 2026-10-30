@@ -142,4 +142,5 @@ module.exports = {
   nextInRotation,
   assignNextManager,
   assignUnassignedFranchises,
+  getEligibleManagers,
 };

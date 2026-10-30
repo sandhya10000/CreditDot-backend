@@ -5,9 +5,22 @@ const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const { validateAmcTerm } = require("./amcController");
-const { scopeFilter, franchiseScope } = require("../utils/franchiseScope");
+const { scopeFilter } = require("../utils/franchiseScope");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
+const { getEligibleManagers } = require("../utils/assignBusinessManager");
+
+// Returns the id of an active Business Manager, or null if the value is blank/invalid
+const resolveAssignableRmId = async (requestedId) => {
+  if (!requestedId || !mongoose.Types.ObjectId.isValid(requestedId)) return null;
+  const managers = await getEligibleManagers();
+  const match = managers.find((m) => String(m._id) === String(requestedId));
+  return match ? match._id : null;
+};
+
+// Escapes user input so it is matched literally in a regex
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const {
   sendBusinessFormSubmissionEmail,
   sendBusinessWelcomeEmail,
@@ -154,6 +167,12 @@ const submitBusinessForm = async (req, res) => {
       franchiseId,
       amc,
       workStatus,
+
+      // Individual customer: optional consultant referral + RM owner
+      consultantName,
+      consultantPhone,
+      consultantEmail,
+      assignedRm,
     } = req.body;
 
     const isBusinessCustomer = customerType === "business";
@@ -212,6 +231,15 @@ const submitBusinessForm = async (req, res) => {
       entrySource: req.user.role === "franchise" ? "Franchise" : "Direct Login",
       manualAmount: Number(manualAmount) || 0,
       customerType: isBusinessCustomer ? "business" : "individual",
+      // Consultant + RM are optional and only meaningful for individual customers
+      ...(!isBusinessCustomer && {
+        consultant: {
+          name: consultantName?.trim() || undefined,
+          phone: consultantPhone?.trim() || undefined,
+          email: consultantEmail?.trim().toLowerCase() || undefined,
+        },
+        assignedRm: (await resolveAssignableRmId(assignedRm)) || null,
+      }),
       businessDetails: isBusinessCustomer
         ? {
             directorName: businessDetails.directorName,
@@ -470,8 +498,8 @@ const getAllBusinessForms = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const paymentStatus = req.query.paymentStatus;
 
-    // Filter (Business Managers only see forms from their own franchises)
-    const filter = { ...(await scopeFilter(req)) };
+    // Business Managers see all Business MIS data (no franchise scoping on this list)
+    const filter = {};
 
     if (
       paymentStatus &&
@@ -489,7 +517,6 @@ const getAllBusinessForms = async (req, res) => {
 
     if (search) {
       const matchingFranchises = await Franchise.find({
-        ...franchiseScope(req),
         businessName: { $regex: search, $options: "i" },
       }).select("_id");
       const franchiseIds = matchingFranchises.map((f) => f._id);
@@ -516,6 +543,7 @@ const getAllBusinessForms = async (req, res) => {
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
       .populate("franchiseId", "businessName franchiseCode")
+      .populate("assignedRm", "name staffCode")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -570,10 +598,9 @@ const getSingleBusinessForm = async (req, res) => {
   try {
     const { customerId } = req.params;
 
-    // Find customer by customerId
+    // Find customer by customerId (BMs can view all Business MIS data, so no franchise scoping)
     const businessForms = await BusinessForm.findOne({
       customerId: customerId,
-      ...(await scopeFilter(req)),
     })
       .populate(
         "selectedPackage",
@@ -782,7 +809,72 @@ async function assignCustomerId(businessForm) {
     throw error;
   }
 }
+
+// Active Business Managers for the "Assign to RM" dropdown
+const listAssignableRms = async (req, res) => {
+  try {
+    const managers = await getEligibleManagers();
+    res.json(
+      managers.map((m) => ({ _id: m._id, name: m.name, staffCode: m.staffCode })),
+    );
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Staff lookup for the Individual Consultant name field (min 3 chars)
+const lookupConsultant = async (req, res) => {
+  try {
+    const q = (req.query.q || "").toString().trim();
+    if (q.length < 3) return res.json([]);
+
+    const staff = await User.find({
+      name: { $regex: escapeRegex(q), $options: "i" },
+      staffRole: { $ne: null },
+      isActive: true,
+      isDeleted: { $ne: true },
+    })
+      .select("name email phone")
+      .limit(5)
+      .lean();
+
+    res.json(staff);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Full admins can set or clear the RM on an existing Business MIS entry
+const assignBusinessRm = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rmId } = req.body;
+
+    const assignedRm = rmId ? await resolveAssignableRmId(rmId) : null;
+    if (rmId && !assignedRm) {
+      return res.status(400).json({ message: "Selected RM is not an active Business Manager" });
+    }
+
+    const updated = await BusinessForm.findByIdAndUpdate(
+      id,
+      { $set: { assignedRm } },
+      { new: true },
+    ).populate("assignedRm", "name staffCode");
+
+    if (!updated) {
+      return res.status(404).json({ message: "Business form not found" });
+    }
+
+    res.json({ message: "RM updated", businessForm: updated });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 module.exports = {
+  listAssignableRms,
+  lookupConsultant,
+  assignBusinessRm,
   updateBusinessForm,
   submitBusinessForm,
   verifyPayment,
