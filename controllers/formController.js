@@ -729,6 +729,23 @@ const updateFranchiseLeadStatus = async (req, res) => {
   }
 };
 
+const deleteFranchiseLead = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const lead = await FranchiseOpportunity.findByIdAndDelete(id);
+
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    res.json({ message: "Lead deleted successfully" });
+  } catch (error) {
+    console.error("Delete franchise lead error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 // Unread = still "New" and not yet opened by an admin
 const UNREAD_NEW = { status: "New", isRead: false };
 const WHATSAPP_LEAD = { $or: [{ source: "whatsapp" }, { problemType: WHATSAPP_PROBLEM_TYPE }] };
@@ -804,6 +821,7 @@ module.exports = {
   deleteCreditRepairEnquiry,
   getAllFranchiseLeads,
   updateFranchiseLeadStatus,
+  deleteFranchiseLead,
   getLeadUnreadCounts,
   markCreditRepairRead,
   markFranchiseLeadRead,

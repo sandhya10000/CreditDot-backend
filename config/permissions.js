@@ -10,7 +10,7 @@ const PERMISSIONS = [
   { key: "manual_payments", label: "Manual Payments" },
   { key: "credit", label: "Credit Reports & Credit Check" },
   { key: "kyc", label: "KYC" },
-  { key: "business", label: "Business Forms & AMC" },
+  { key: "business", label: "Business Forms, Business MIS Pending & AMC" },
   { key: "ai_analysis", label: "AI Analysis" },
   { key: "support_tickets", label: "Support Tickets" },
   { key: "blogs", label: "Blogs" },

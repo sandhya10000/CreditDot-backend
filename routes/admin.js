@@ -50,6 +50,7 @@ const {
   updateFranchiseLeadStatus,
   updateCreditRepairStatus,
   deleteCreditRepairEnquiry,
+  deleteFranchiseLead,
   getLeadUnreadCounts,
   markCreditRepairRead,
   markFranchiseLeadRead,
@@ -308,6 +309,16 @@ router.put(
   auth,
   rbac("admin"),
   updateFranchiseLeadStatus,
+);
+
+// @route   DELETE /api/admin/franchise-leads/:id
+// @desc    Delete website franchise lead
+// @access  Private/Admin
+router.delete(
+  "/franchise-leads/:id",
+  auth,
+  rbac("admin"),
+  deleteFranchiseLead,
 );
 
 // @route   PUT /api/admin/credit-repair/:id/status
