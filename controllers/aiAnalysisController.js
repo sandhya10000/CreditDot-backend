@@ -13,6 +13,7 @@ const {
   DEFAULT_LANGUAGE_CODE,
 } = require("../config/languages");
 const { resolveFranchiseAiLimit } = require("../utils/aiLimitService");
+const { createTracker } = require("../utils/analysisLogger");
 const path = require("path");
 const fs = require("fs");
 
@@ -29,25 +30,64 @@ const DIAMOND_AI_ANALYSIS_HARD_CAP = parseInt(
  * the Diamond cap has been exceeded (never happens for Silver/Gold/Platinum).
  */
 async function atomicIncrementAiUsage(franchiseId, isUnlimited) {
+  const beforeFranchise = await Franchise.findById(franchiseId).select(
+    "aiReportsUsed aiUsed assignedPackages businessName email"
+  ).populate("assignedPackages");
+
+  const beforeReportsUsed = beforeFranchise ? beforeFranchise.aiReportsUsed : null;
+  const beforeAiUsed = beforeFranchise ? beforeFranchise.aiUsed : null;
+  const pkgInfo = beforeFranchise ? resolveFranchiseAiLimit(beforeFranchise) : {};
+
+  const completedCount = await AIAnalysis.countDocuments({
+    franchise: franchiseId,
+    claudeAnalysisStatus: "completed",
+  });
+  const totalCount = await AIAnalysis.countDocuments({
+    franchise: franchiseId,
+  });
+
+  console.log("[AI-CREDITS] atomicIncrementAiUsage [BEFORE]:", {
+    franchiseId: String(franchiseId),
+    packageName: pkgInfo.packageName,
+    limit: pkgInfo.limit,
+    isUnlimited,
+    aiReportsUsedBefore: beforeReportsUsed,
+    aiUsedBefore: beforeAiUsed,
+    dbCountCompleted: completedCount,
+    dbCountTotal: totalCount,
+  });
+
+  let result;
   if (isUnlimited) {
     // Diamond: enforce hidden hard cap with atomic conditional update
     const updated = await Franchise.findOneAndUpdate(
       { _id: franchiseId, aiReportsUsed: { $lt: DIAMOND_AI_ANALYSIS_HARD_CAP } },
       { $inc: { aiReportsUsed: 1, aiUsed: 1 } },
-      { new: false }, // we only need to know if the condition matched
+      { new: true },
     );
     if (!updated) {
-      // Cap already reached (concurrent-safe)
+      console.log("[AI-CREDITS] atomicIncrementAiUsage: Cap already reached for franchise:", franchiseId);
       return { ok: false, fairUseLimitReached: true };
     }
-    return { ok: true };
+    result = { ok: true, afterReportsUsed: updated.aiReportsUsed, afterAiUsed: updated.aiUsed };
+  } else {
+    // Non-Diamond: simple unconditional increment (limit was already checked before analysis)
+    const updated = await Franchise.findOneAndUpdate(
+      { _id: franchiseId },
+      { $inc: { aiReportsUsed: 1, aiUsed: 1 } },
+      { new: true },
+    );
+    result = { ok: true, afterReportsUsed: updated ? updated.aiReportsUsed : null, afterAiUsed: updated ? updated.aiUsed : null };
   }
 
-  // Non-Diamond: simple unconditional increment (limit was already checked before analysis)
-  await Franchise.findOneAndUpdate(
-    { _id: franchiseId },
-    { $inc: { aiReportsUsed: 1, aiUsed: 1 } },
-  );
+  console.log("[AI-CREDITS] atomicIncrementAiUsage [AFTER]:", {
+    franchiseId: String(franchiseId),
+    aiReportsUsedAfter: result.afterReportsUsed,
+    aiUsedAfter: result.afterAiUsed,
+    dbCountCompleted: completedCount,
+    dbCountTotal: totalCount,
+  });
+
   return { ok: true };
 }
 
@@ -65,6 +105,8 @@ const uploadDocument = async (req, res) => {
           .status(400)
           .json({ message: "File upload error", error: err.message });
       }
+
+      const tracker = createTracker();
 
       // Check if file was uploaded
       if (!req.file) {
@@ -85,7 +127,18 @@ const uploadDocument = async (req, res) => {
           .json({ message: "Only PDF and HTML files are allowed" });
       }
 
+      // Parse and whitelist language (only when MULTILANG_ENABLED flag is true)
+      const requestedLang = isMultiLangEnabled() && req.body && req.body.language ? req.body.language : DEFAULT_LANGUAGE_CODE;
+      const langConfig = getLanguageConfig(requestedLang);
+      const effectiveLanguage = isMultiLangEnabled() ? langConfig.code : DEFAULT_LANGUAGE_CODE;
+      const effectiveLanguageName = isMultiLangEnabled() ? langConfig.name : "English";
+
+      // Log upload_received
+      tracker.start("upload_received");
+      tracker.end(`file: ${req.file.originalname}, size: ${req.file.size} bytes, mimetype: ${req.file.mimetype}, language: ${effectiveLanguage}`);
+
       // Get franchise details with assigned packages
+      tracker.start("limit_check");
       const franchise = await Franchise.findOne({
         userId: req.user.id,
       })
@@ -100,6 +153,8 @@ const uploadDocument = async (req, res) => {
 
       // Check package limits
       const limitInfo = resolveFranchiseAiLimit(franchise);
+      tracker.end(`packageName: ${limitInfo.packageName || 'none'}, used: ${limitInfo.used}, limit: ${limitInfo.limit}, remaining: ${limitInfo.remaining}, isUnlimited: ${limitInfo.isUnlimited}`);
+
       if (!limitInfo.hasActivePackage) {
         fs.unlinkSync(req.file.path);
         return res.status(403).json({
@@ -117,17 +172,11 @@ const uploadDocument = async (req, res) => {
         return res.status(403).json({
           success: false,
           code: "AI_LIMIT_REACHED",
-          message: `You have used all ${limitInfo.limit} AI report analyses in your ${limitInfo.packageName} package. Please upgrade to continue.`,
+          message: `Your AI Analysis limit has been reached. Please connect with your RM for further assistance`,
           used: limitInfo.used,
           limit: limitInfo.limit,
         });
       }
-
-      // Parse and whitelist language (only when MULTILANG_ENABLED flag is true)
-      const requestedLang = isMultiLangEnabled() && req.body && req.body.language ? req.body.language : DEFAULT_LANGUAGE_CODE;
-      const langConfig = getLanguageConfig(requestedLang);
-      const effectiveLanguage = isMultiLangEnabled() ? langConfig.code : DEFAULT_LANGUAGE_CODE;
-      const effectiveLanguageName = isMultiLangEnabled() ? langConfig.name : "English";
 
       // Create AI Analysis document record
       const aiAnalysisDoc = new AIAnalysis({
@@ -142,6 +191,7 @@ const uploadDocument = async (req, res) => {
       });
 
       await aiAnalysisDoc.save();
+      tracker.setAnalysisId(aiAnalysisDoc._id);
 
       // Send admin notification email (non-blocking)
       (async () => {
@@ -162,16 +212,41 @@ const uploadDocument = async (req, res) => {
       (async () => {
         try {
           // Update status to processing
+          tracker.start("db_update");
           aiAnalysisDoc.claudeAnalysisStatus = "processing";
           await aiAnalysisDoc.save();
+          tracker.end("status: processing", "db_update");
 
           // Process document with Claude
-          const analysisResult = await processDocument(
-            req.file.path,
-            req.file.originalname,
-            null, // Use default prompt from env
-            effectiveLanguage,
-          );
+          let analysisResult;
+          try {
+            analysisResult = await processDocument(
+              req.file.path,
+              req.file.originalname,
+              null, // Use default prompt from env
+              effectiveLanguage,
+              tracker
+            );
+          } catch (procErr) {
+            const failInfo = tracker.fail(procErr, { step: "claude_call" });
+            const timings = tracker.finish("failed");
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
+            throw procErr;
+          }
+
+          if (!analysisResult || !analysisResult.content) {
+            const err = new Error("processDocument returned empty or unsuccessful content");
+            const failInfo = tracker.fail(err, { step: "claude_call" });
+            const timings = tracker.finish("failed");
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
+            throw err;
+          }
 
           // Generate HTML file name: English keeps legacy format, non-English adds language code
           const baseName = path.basename(req.file.originalname, path.extname(req.file.originalname));
@@ -185,26 +260,61 @@ const uploadDocument = async (req, res) => {
           );
 
           // Save HTML analysis to file
-          fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+          tracker.start("save_html");
+          try {
+            fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+            tracker.end(`Saved HTML file: ${htmlFileName} (${analysisResult.content.length} chars)`, "save_html");
+          } catch (writeErr) {
+            const failInfo = tracker.fail(writeErr, { step: "save_html" });
+            const timings = tracker.finish("failed");
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
+            throw writeErr;
+          }
 
           // Atomically increment AI usage counter on successful analysis.
           // For Diamond users the hidden hard cap is enforced inside atomicIncrementAiUsage.
-          const incResult = await atomicIncrementAiUsage(
-            franchise._id,
-            limitInfo.isUnlimited,
-          );
+          tracker.start("increment_usage");
+          let incResult;
+          try {
+            incResult = await atomicIncrementAiUsage(
+              franchise._id,
+              limitInfo.isUnlimited,
+            );
+            const freshFranchise = await Franchise.findById(franchise._id).select("aiReportsUsed");
+            const curReportsUsed = freshFranchise ? freshFranchise.aiReportsUsed : "unknown";
+            tracker.end(`result: ${JSON.stringify(incResult)}, aiReportsUsed: ${curReportsUsed}, DIAMOND_AI_ANALYSIS_HARD_CAP: ${DIAMOND_AI_ANALYSIS_HARD_CAP}`, "increment_usage");
+          } catch (incErr) {
+            const failInfo = tracker.fail(incErr, { step: "increment_usage" });
+            const timings = tracker.finish("failed");
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
+            throw incErr;
+          }
+
           if (!incResult.ok && incResult.fairUseLimitReached) {
+            const capErr = new Error(`Maximum AI analysis usage reached for Diamond plan (cap: ${DIAMOND_AI_ANALYSIS_HARD_CAP})`);
+            const failInfo = tracker.fail(capErr, { step: "increment_usage", reason: "Diamond fair-use hard cap reached" });
+            const timings = tracker.finish("failed_cap_reached");
+
             // Update document status so the UI shows the failure cleanly
             aiAnalysisDoc.claudeAnalysisStatus = "failed";
             aiAnalysisDoc.claudeAnalysisError =
               "You have reached the maximum AI analysis usage for your plan. Please contact your Relationship Manager.";
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
             await aiAnalysisDoc.save();
-            // Return early — do NOT send email or mark completed
             return;
           }
 
-
           // Update document with analysis
+          tracker.start("db_update");
           aiAnalysisDoc.claudeAnalysisHtml = htmlFilePath;
           aiAnalysisDoc.claudeAnalysisFileName = htmlFileName;
           aiAnalysisDoc.analysisPrompt = process.env.AI_ANALYSIS_PROMPT;
@@ -212,11 +322,13 @@ const uploadDocument = async (req, res) => {
           aiAnalysisDoc.claudeAnalysisStatus = "completed";
           aiAnalysisDoc.analyzedAt = new Date();
           await aiAnalysisDoc.save();
+          tracker.end("status: completed", "db_update");
 
           // Send email with analysis report to franchise user
+          tracker.start("email_send");
           try {
             const htmlBuffer = fs.readFileSync(htmlFilePath);
-            await sendAIAnalysisResponseToFranchise(
+            const emailRes = await sendAIAnalysisResponseToFranchise(
               {
                 email: aiAnalysisDoc.franchiseEmail,
                 businessName: aiAnalysisDoc.franchiseName,
@@ -224,26 +336,34 @@ const uploadDocument = async (req, res) => {
               htmlFileName,
               htmlBuffer,
             );
+            tracker.end(`recipient: ${aiAnalysisDoc.franchiseEmail}, providerResponse: ${JSON.stringify(emailRes || 'ok')}`, "email_send");
+
             // Update status to email_sent after successful email delivery
+            tracker.start("db_update");
             aiAnalysisDoc.claudeAnalysisStatus = "email_sent";
             aiAnalysisDoc.emailSentAt = new Date();
+            const timings = tracker.finish("success");
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
             await aiAnalysisDoc.save();
+            tracker.info("db_update", "status: email_sent");
           } catch (emailError) {
             console.error("Failed to send analysis report email:", emailError);
-            // Keep status as 'completed' but log the error
+            const failInfo = tracker.fail(emailError, { step: "email_send" });
+            const timings = tracker.finish("partial_completed_email_failed");
             aiAnalysisDoc.claudeAnalysisError =
               "Analysis completed but email failed to send";
+            aiAnalysisDoc.claudeFailedStep = failInfo.failedStep;
+            aiAnalysisDoc.claudeErrorDetail = failInfo.detail;
+            aiAnalysisDoc.claudeAnalysisDurationMs = timings.totalDurationMs;
+            aiAnalysisDoc.claudeStepTimings = timings.stepTimings;
             await aiAnalysisDoc.save();
           }
         } catch (analysisError) {
           console.error("Claude analysis failed:", analysisError.message);
-          // Update status to failed but don't delete the document
           aiAnalysisDoc.claudeAnalysisStatus = "failed";
 
-          // Sanitize error message - hide sensitive API details from users
           let sanitizedError = "Analysis failed. Please contact admin.";
-
-          // Check if it's a Claude API error with credit balance issue
           if (
             analysisError.message &&
             analysisError.message.includes("credit balance is too low")
@@ -253,14 +373,16 @@ const uploadDocument = async (req, res) => {
             analysisError.message &&
             analysisError.message.includes("400")
           ) {
-            // For other 400 errors, also show generic message
             sanitizedError = "Analysis failed. Please contact admin.";
           } else {
-            // For other errors, still use generic message for security
             sanitizedError = "Analysis failed. Please contact admin.";
           }
 
           aiAnalysisDoc.claudeAnalysisError = sanitizedError;
+          if (!aiAnalysisDoc.claudeFailedStep) {
+            aiAnalysisDoc.claudeFailedStep = "claude_analysis";
+            aiAnalysisDoc.claudeErrorDetail = analysisError.message ? analysisError.message.substring(0, 1000) : "Unknown error";
+          }
           await aiAnalysisDoc.save();
         }
       })();
@@ -440,7 +562,13 @@ const analyzeWithClaude = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
+    const tracker = createTracker(document._id);
+
+    // Limit check
+    tracker.start("limit_check");
     const limitInfo = resolveFranchiseAiLimit(franchise);
+    tracker.end(`packageName: ${limitInfo.packageName || 'none'}, used: ${limitInfo.used}, limit: ${limitInfo.limit}, remaining: ${limitInfo.remaining}, isUnlimited: ${limitInfo.isUnlimited}`);
+
     if (!limitInfo.hasActivePackage) {
       return res.status(403).json({
         success: false,
@@ -456,7 +584,7 @@ const analyzeWithClaude = async (req, res) => {
       return res.status(403).json({
         success: false,
         code: "AI_LIMIT_REACHED",
-        message: `You have used all ${limitInfo.limit} AI report analyses in your ${limitInfo.packageName} package. Please upgrade to continue.`,
+        message: `Your AI Analysis limit has been reached. Please connect with your RM for further assistance`,
         used: limitInfo.used,
         limit: limitInfo.limit,
       });
@@ -487,22 +615,47 @@ const analyzeWithClaude = async (req, res) => {
     const effectiveLanguageName = isMultiLangEnabled() ? langConfig.name : "English";
 
     // Update status to processing and update language
+    tracker.start("db_update");
     document.claudeAnalysisStatus = "processing";
     document.analysisPrompt = req.body.prompt || process.env.AI_ANALYSIS_PROMPT;
     document.language = effectiveLanguage;
     document.languageName = effectiveLanguageName;
     await document.save();
+    tracker.end("status: processing", "db_update");
 
     // Run analysis asynchronously
     (async () => {
       try {
         // Process document with Claude
-        const analysisResult = await processDocument(
-          document.uploadedDocument,
-          document.uploadedDocumentName,
-          req.body.prompt || null,
-          effectiveLanguage,
-        );
+        let analysisResult;
+        try {
+          analysisResult = await processDocument(
+            document.uploadedDocument,
+            document.uploadedDocumentName,
+            req.body.prompt || null,
+            effectiveLanguage,
+            tracker
+          );
+        } catch (procErr) {
+          const failInfo = tracker.fail(procErr, { step: "claude_call" });
+          const timings = tracker.finish("failed");
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          throw procErr;
+        }
+
+        if (!analysisResult || !analysisResult.content) {
+          const err = new Error("processDocument returned empty or unsuccessful content");
+          const failInfo = tracker.fail(err, { step: "claude_call" });
+          const timings = tracker.finish("failed");
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          throw err;
+        }
 
         // Generate HTML file name: English keeps legacy format, non-English adds language code
         const baseName = path.basename(document.uploadedDocumentName, path.extname(document.uploadedDocumentName));
@@ -516,35 +669,73 @@ const analyzeWithClaude = async (req, res) => {
         );
 
         // Save HTML analysis to file
-        fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+        tracker.start("save_html");
+        try {
+          fs.writeFileSync(htmlFilePath, analysisResult.content, "utf-8");
+          tracker.end(`Saved HTML file: ${htmlFileName} (${analysisResult.content.length} chars)`, "save_html");
+        } catch (writeErr) {
+          const failInfo = tracker.fail(writeErr, { step: "save_html" });
+          const timings = tracker.finish("failed");
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          throw writeErr;
+        }
 
         // Atomically increment AI usage counter on successful analysis.
         // For Diamond users the hidden hard cap is enforced inside atomicIncrementAiUsage.
-        const incResult = await atomicIncrementAiUsage(
-          franchise._id,
-          limitInfo.isUnlimited,
-        );
+        tracker.start("increment_usage");
+        let incResult;
+        try {
+          incResult = await atomicIncrementAiUsage(
+            franchise._id,
+            limitInfo.isUnlimited,
+          );
+          const freshFranchise = await Franchise.findById(franchise._id).select("aiReportsUsed");
+          const curReportsUsed = freshFranchise ? freshFranchise.aiReportsUsed : "unknown";
+          tracker.end(`result: ${JSON.stringify(incResult)}, aiReportsUsed: ${curReportsUsed}, DIAMOND_AI_ANALYSIS_HARD_CAP: ${DIAMOND_AI_ANALYSIS_HARD_CAP}`, "increment_usage");
+        } catch (incErr) {
+          const failInfo = tracker.fail(incErr, { step: "increment_usage" });
+          const timings = tracker.finish("failed");
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          throw incErr;
+        }
+
         if (!incResult.ok && incResult.fairUseLimitReached) {
+          const capErr = new Error(`Maximum AI analysis usage reached for Diamond plan (cap: ${DIAMOND_AI_ANALYSIS_HARD_CAP})`);
+          const failInfo = tracker.fail(capErr, { step: "increment_usage", reason: "Diamond fair-use hard cap reached" });
+          const timings = tracker.finish("failed_cap_reached");
+
           document.claudeAnalysisStatus = "failed";
           document.claudeAnalysisError =
             "You have reached the maximum AI analysis usage for your plan. Please contact your Relationship Manager.";
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
           await document.save();
           return;
         }
 
-
         // Update document with analysis
+        tracker.start("db_update");
         document.claudeAnalysisHtml = htmlFilePath;
         document.claudeAnalysisFileName = htmlFileName;
         document.isAutoAnalyzed = false; // Manual analysis
         document.claudeAnalysisStatus = "completed";
         document.analyzedAt = new Date();
         await document.save();
+        tracker.end("status: completed", "db_update");
 
         // Send email with analysis report to franchise user
+        tracker.start("email_send");
         try {
           const htmlBuffer = fs.readFileSync(htmlFilePath);
-          await sendAIAnalysisResponseToFranchise(
+          const emailRes = await sendAIAnalysisResponseToFranchise(
             {
               email: document.franchiseEmail,
               businessName: document.franchiseName,
@@ -552,16 +743,32 @@ const analyzeWithClaude = async (req, res) => {
             htmlFileName,
             htmlBuffer,
           );
+          tracker.end(`recipient: ${document.franchiseEmail}, providerResponse: ${JSON.stringify(emailRes || 'ok')}`, "email_send");
+
+          tracker.start("db_update");
+          document.claudeAnalysisStatus = "email_sent";
+          document.emailSentAt = new Date();
+          const timings = tracker.finish("success");
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          await document.save();
+          tracker.info("db_update", "status: email_sent");
         } catch (emailError) {
           console.error("Failed to send analysis report email:", emailError);
+          const failInfo = tracker.fail(emailError, { step: "email_send" });
+          const timings = tracker.finish("partial_completed_email_failed");
+          document.claudeAnalysisError =
+            "Analysis completed but email failed to send";
+          document.claudeFailedStep = failInfo.failedStep;
+          document.claudeErrorDetail = failInfo.detail;
+          document.claudeAnalysisDurationMs = timings.totalDurationMs;
+          document.claudeStepTimings = timings.stepTimings;
+          await document.save();
         }
       } catch (analysisError) {
         console.error("Claude analysis failed:", analysisError.message);
 
-        // Sanitize error message - hide sensitive API details from users
         let sanitizedError = "Analysis failed. Please contact admin.";
-
-        // Check if it's a Claude API error with credit balance issue
         if (
           analysisError.message &&
           analysisError.message.includes("credit balance is too low")
@@ -571,15 +778,17 @@ const analyzeWithClaude = async (req, res) => {
           analysisError.message &&
           analysisError.message.includes("400")
         ) {
-          // For other 400 errors, also show generic message
           sanitizedError = "Analysis failed. Please contact admin.";
         } else {
-          // For other errors, still use generic message for security
           sanitizedError = "Analysis failed. Please contact admin.";
         }
 
         document.claudeAnalysisStatus = "failed";
         document.claudeAnalysisError = sanitizedError;
+        if (!document.claudeFailedStep) {
+          document.claudeFailedStep = "claude_analysis";
+          document.claudeErrorDetail = analysisError.message ? analysisError.message.substring(0, 1000) : "Unknown error";
+        }
         await document.save();
       }
     })();
@@ -786,6 +995,27 @@ const getFranchiseAiUsage = async (req, res) => {
     }
 
     const limitInfo = resolveFranchiseAiLimit(franchise);
+
+    const completedCount = await AIAnalysis.countDocuments({
+      franchise: franchise._id,
+      claudeAnalysisStatus: "completed",
+    });
+    const totalCount = await AIAnalysis.countDocuments({
+      franchise: franchise._id,
+    });
+
+    console.log("[AI-CREDITS] getFranchiseAiUsage:", {
+      franchiseId: String(franchise._id),
+      userId: String(req.user.id),
+      packageName: limitInfo.packageName,
+      limit: limitInfo.limit,
+      isUnlimited: limitInfo.isUnlimited,
+      counterAiReportsUsed: franchise.aiReportsUsed,
+      counterAiUsed: franchise.aiUsed,
+      returnedUsed: limitInfo.used,
+      dbCountCompleted: completedCount,
+      dbCountTotal: totalCount,
+    });
 
     return res.status(200).json({
       success: true,
