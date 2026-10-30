@@ -11,3 +11,6 @@ uploads/
 backup/
 
 dump/
+
+# Application Logs
+logs/

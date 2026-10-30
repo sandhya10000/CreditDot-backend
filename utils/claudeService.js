@@ -378,11 +378,24 @@ const executeClaudeAttempt = async (documentData, basePrompt, documentType, lang
   // Validate output completeness and script
   const validation = validateReportOutput(cleanedAnalysis, languageCode);
   if (!validation.valid) {
-    throw new Error(`Output validation failed: ${validation.reason}`);
+    const last300 = cleanedAnalysis ? cleanedAnalysis.slice(-300).replace(/[\r\n]+/g, ' ') : '';
+    const valErr = new Error(`Output validation failed: ${validation.reason}`);
+    valErr.validationReason = validation.reason;
+    valErr.snippet = last300;
+    throw valErr;
   }
 
   // Deterministically post-process font tags, lang attribute, and fallback font stacks
-  return postProcessReportHtml(cleanedAnalysis, languageCode);
+  return {
+    html: postProcessReportHtml(cleanedAnalysis, languageCode),
+    stats: {
+      model,
+      maxTokens,
+      stopReason: finalMessage.stop_reason,
+      inputTokens: finalMessage.usage?.input_tokens || 0,
+      outputTokens: finalMessage.usage?.output_tokens || 0,
+    },
+  };
 };
 
 /**
@@ -397,21 +410,69 @@ const analyzeWithClaude = async (
   documentData,
   prompt,
   documentType = 'pdf',
-  language = DEFAULT_LANGUAGE_CODE
+  language = DEFAULT_LANGUAGE_CODE,
+  tracker = null
 ) => {
   const basePrompt = prompt || loadAnalysisPrompt();
   const effectiveLanguage = isMultiLangEnabled()
     ? (getLanguageConfig(language)?.code || DEFAULT_LANGUAGE_CODE)
     : DEFAULT_LANGUAGE_CODE;
 
+  if (tracker) {
+    tracker.start('prompt_build');
+    tracker.end(`Prompt length: ${basePrompt.length} chars, lang: ${effectiveLanguage}`);
+    tracker.start('claude_call');
+  }
+
+  const callStartTime = Date.now();
   try {
-    return await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+    const attempt1Res = await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+    const durationMs = Date.now() - callStartTime;
+    if (durationMs > 60000 && tracker) {
+      tracker.warn('claude_call', `Claude call took over 60 seconds (${durationMs}ms)`, durationMs);
+    }
+    if (tracker) {
+      tracker.end(
+        `model: ${attempt1Res.stats.model}, max_tokens: ${attempt1Res.stats.maxTokens}, stop_reason: ${attempt1Res.stats.stopReason}, input_tokens: ${attempt1Res.stats.inputTokens}, output_tokens: ${attempt1Res.stats.outputTokens}, retries: 0`,
+        'claude_call'
+      );
+      tracker.start('output_validation');
+      tracker.end('Output validation passed');
+    }
+    return attempt1Res.html;
   } catch (firstError) {
     console.warn(`Claude analysis attempt 1 failed: ${firstError.message}. Retrying once...`);
+    if (tracker) {
+      tracker.warn('claude_call', `Attempt 1 failed: ${firstError.message}. Retrying once...`);
+    }
     try {
-      return await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+      const attempt2Res = await executeClaudeAttempt(documentData, basePrompt, documentType, effectiveLanguage);
+      const durationMs = Date.now() - callStartTime;
+      if (durationMs > 60000 && tracker) {
+        tracker.warn('claude_call', `Claude call took over 60 seconds (${durationMs}ms) after retry`, durationMs);
+      }
+      if (tracker) {
+        tracker.end(
+          `model: ${attempt2Res.stats.model}, max_tokens: ${attempt2Res.stats.maxTokens}, stop_reason: ${attempt2Res.stats.stopReason}, input_tokens: ${attempt2Res.stats.inputTokens}, output_tokens: ${attempt2Res.stats.outputTokens}, retries: 1`,
+          'claude_call'
+        );
+        tracker.start('output_validation');
+        tracker.end('Output validation passed on retry');
+      }
+      return attempt2Res.html;
     } catch (retryError) {
       console.error('Claude analysis attempt 2 (retry) also failed:', retryError.message);
+
+      if (tracker) {
+        if (retryError.validationReason) {
+          tracker.start('output_validation');
+          tracker.fail(retryError, {
+            step: 'output_validation',
+            reason: retryError.validationReason,
+            snippet: retryError.snippet,
+          });
+        }
+      }
 
       if (retryError.status === 401) {
         throw new Error('Invalid Claude API key. Please check your API key configuration.');
@@ -421,7 +482,7 @@ const analyzeWithClaude = async (
         throw new Error('Claude API server error. Please try again later.');
       }
 
-      throw new Error(`Claude analysis failed: ${retryError.message}`);
+      throw retryError;
     }
   }
 };
@@ -432,36 +493,58 @@ const analyzeWithClaude = async (
  * @param {string} fileName - Original file name
  * @param {string} customPrompt - Optional custom prompt
  * @param {string} language - Target language ISO code (optional, defaults to 'en')
+ * @param {Object} [tracker] - Optional analysis logger tracker
  * @returns {Promise<{content: string, type: string}>} - Document content and type
  */
 const processDocument = async (
   filePath,
   fileName,
   customPrompt = null,
-  language = DEFAULT_LANGUAGE_CODE
+  language = DEFAULT_LANGUAGE_CODE,
+  tracker = null
 ) => {
   try {
     const fileExtension = path.extname(fileName).toLowerCase();
     let documentData;
     let documentType;
 
+    if (tracker) {
+      tracker.start('file_read');
+    }
+
     if (['.pdf'].includes(fileExtension)) {
       documentData = await readFileAsBase64(filePath);
       documentType = 'pdf';
+      if (tracker) {
+        const charCount = documentData.base64 ? documentData.base64.length : 0;
+        const flag = charCount === 0 ? ' [WARNING: 0 characters/bytes extracted!]' : '';
+        tracker.end(`PDF document read as base64: ${charCount} chars${flag}`, 'file_read');
+      }
     } else if (['.html', '.htm'].includes(fileExtension)) {
       documentData = await readFileAsBase64(filePath);
       documentType = 'html';
+      if (tracker) {
+        const charCount = documentData.base64 ? documentData.base64.length : 0;
+        const flag = charCount === 0 ? ' [WARNING: 0 characters/bytes extracted!]' : '';
+        tracker.end(`HTML document read as base64: ${charCount} chars${flag}`, 'file_read');
+      }
     } else {
       const content = await fs.promises.readFile(filePath, 'utf-8');
       documentData = { text: content };
       documentType = 'text';
+      if (tracker) {
+        const charCount = content ? content.length : 0;
+        const flag = charCount === 0 ? ' [WARNING: 0 characters extracted!]' : '';
+        tracker.end(`Text document read: ${charCount} characters extracted${flag}`, 'file_read');
+      }
     }
 
     const analysisHtml = await analyzeWithClaude(
       documentData,
       customPrompt,
       documentType,
-      language
+      language,
+      tracker
     );
 
     return {

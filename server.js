@@ -107,6 +107,40 @@ if (!fs.existsSync(reportsDir)) {
 }
 
 const app = express();
+// CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // List of allowed origins - easily expandable for additional origins
+    const allowedOrigins = [
+      process.env.FRONTEND_URL || "http://localhost:5173",
+      "https://reactbackend.creditdost.co.in",
+      "https://creditdost.co.in",
+      "https://www.creditdost.co.in",
+      "https://www.reactbackend.creditdost.co.in",
+      "https://staging.creditdost.co.in",
+    ];
+    console.log(process.env.FRONTEND_URL, "process.env.FRONTEND_URL");
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "PUT", "DELETE", "POST", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "X-Requested-With",
+  ],
+  exposedHeaders: ["Content-Range", "X-Content-Range"],
+};
+
+app.use(cors(corsOptions));
 // // app.use(
 // //   cors({
 // //     origin: ["http://localhost:5173","https://www.creditdost.co.in","https://staging.creditdost.co.in"],
@@ -155,40 +189,7 @@ app.use(
 app.use("/backend-uploads", express.static(path.join(__dirname, "uploads")));
 //serve static files from the backend uploads directory case study
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
 
-    // List of allowed origins - easily expandable for additional origins
-    const allowedOrigins = [
-      process.env.FRONTEND_URL || "http://localhost:5173",
-      "https://reactbackend.creditdost.co.in",
-      "https://creditdost.co.in",
-      "https://www.creditdost.co.in",
-      "https://www.reactbackend.creditdost.co.in",
-      "https://staging.creditdost.co.in",
-    ];
-
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "PUT", "DELETE", "POST", "PATCH", "OPTIONS"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Accept",
-    "X-Requested-With",
-  ],
-  exposedHeaders: ["Content-Range", "X-Content-Range"],
-};
-
-app.use(cors(corsOptions));
 
 // Session configuration
 app.use(
