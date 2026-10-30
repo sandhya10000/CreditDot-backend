@@ -523,6 +523,57 @@ const getAccountStatus = (tradeline) => {
 };
 
 // ============================================================
+// ACCOUNT OWNERSHIP
+// ============================================================
+
+const extractAccountOwnership = (partition, tradeline, grantedTrade) => {
+  const candidates = [
+    partition?.AccountDesignator,
+    partition?.AccountOwnership,
+    partition?.ownership,
+
+    tradeline?.AccountDesignator,
+    tradeline?.AccountOwnership,
+    tradeline?.accountOwnership,
+    tradeline?.ownership,
+    tradeline?.["OWNERSHIP-IND"],
+
+    grantedTrade?.AccountDesignator,
+    grantedTrade?.AccountOwnership,
+    grantedTrade?.ownership,
+  ];
+
+  const value = candidates.find((item) => {
+    if (item === undefined || item === null || item === "") return false;
+
+    if (typeof item === "object") {
+      return Boolean(
+        item.symbol || item.description || item.abbreviation || item.value,
+      );
+    }
+
+    return String(item).trim() !== "";
+  });
+
+  if (!value) return "-";
+
+  if (typeof value === "object") {
+    return (
+      value.symbol ||
+      value.description ||
+      value.abbreviation ||
+      value.value ||
+      "-"
+    );
+  }
+
+  return value;
+};
+// ============================================================
+// EXTRACT ACCOUNTS
+// ============================================================
+
+// ============================================================
 // EXTRACT ACCOUNTS
 // ============================================================
 
@@ -540,10 +591,26 @@ const extractAccounts = (report) => {
 
     const grantedTrade = tradeline?.GrantedTrade || {};
 
+    // Extract ownership
+    const ownership = extractAccountOwnership(
+      partition,
+      tradeline,
+      grantedTrade,
+    );
+
+    // Debug ownership extraction
+    console.log("[CIBIL OWNERSHIP DEBUG]", {
+      ownership,
+      partitionOwnership: partition?.AccountDesignator,
+      tradelineOwnership: tradeline?.AccountDesignator,
+      grantedTradeOwnership: grantedTrade?.AccountDesignator,
+      partitionKeys: Object.keys(partition || {}),
+      tradelineKeys: Object.keys(tradeline || {}),
+      grantedTradeKeys: Object.keys(grantedTrade || {}),
+    });
+
     accounts.push({
-      // --------------------------------------------------------
       // BASIC ACCOUNT DETAILS
-      // --------------------------------------------------------
 
       creditorName: tradeline?.creditorName || "-",
 
@@ -558,9 +625,10 @@ const extractAccounts = (report) => {
         grantedTrade?.AccountType?.symbol ||
         "-",
 
-      // --------------------------------------------------------
+      // ACCOUNT OWNERSHIP
+      ownership,
+
       // DATES
-      // --------------------------------------------------------
 
       dateOpened: normalizeDate(tradeline?.dateOpened),
 
@@ -570,9 +638,7 @@ const extractAccounts = (report) => {
 
       dateAccountStatus: normalizeDate(tradeline?.dateAccountStatus),
 
-      // --------------------------------------------------------
       // AMOUNTS
-      // --------------------------------------------------------
 
       currentBalance: cleanValue(tradeline?.currentBalance),
 
@@ -592,9 +658,7 @@ const extractAccounts = (report) => {
 
       dateLastPayment: normalizeDate(grantedTrade?.dateLastPayment),
 
-      // --------------------------------------------------------
       // WRITE OFF / SETTLEMENT
-      // --------------------------------------------------------
 
       writtenOff: cleanValue(tradeline?.writtenOffAmtTotal),
 
@@ -602,9 +666,7 @@ const extractAccounts = (report) => {
 
       settlementAmount: cleanValue(tradeline?.settlementAmount),
 
-      // --------------------------------------------------------
       // PAYMENT / COLLATERAL
-      // --------------------------------------------------------
 
       actualPaymentAmount: cleanValue(grantedTrade?.actualPaymentAmount),
 
@@ -625,15 +687,11 @@ const extractAccounts = (report) => {
         grantedTrade?.CreditType?.symbol ||
         "-",
 
-      // --------------------------------------------------------
       // STATUS
-      // --------------------------------------------------------
 
       status: getAccountStatus(tradeline),
 
-      // --------------------------------------------------------
       // PAYMENT HISTORY
-      // --------------------------------------------------------
 
       paymentHistory: normalizePaymentHistory(grantedTrade?.PayStatusHistory),
     });
