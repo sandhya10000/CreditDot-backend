@@ -434,10 +434,10 @@ const getFranchiseBusinessForms = async (req, res) => {
     const filter = {};
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { ownerName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { ownerName: { $regex: escapeRegex(search), $options: "i" } },
+        { email: { $regex: escapeRegex(search), $options: "i" } },
+        { phone: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -474,9 +474,9 @@ const getFranchiseBusinessForms = async (req, res) => {
 const getBusinessFormsByFranchise = async (req, res) => {
   try {
     const { _id } = req.params;
+    // $and keeps the scope from overwriting the franchiseId being viewed
     const businessForms = await BusinessForm.find({
-      franchiseId: _id,
-      ...(await scopeFilter(req)),
+      $and: [{ franchiseId: _id }, await scopeFilter(req)],
     })
       .populate(
         "selectedPackage",
@@ -486,6 +486,50 @@ const getBusinessFormsByFranchise = async (req, res) => {
       .sort({ createdAt: -1 });
 
     res.json(businessForms);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Paid business forms no admin has opened yet, split like the Business MIS sub-pages
+const getBusinessUnreadCounts = async (req, res) => {
+  try {
+    const unread = { isRead: false, paymentStatus: "paid" };
+    const [individual, business] = await Promise.all([
+      BusinessForm.countDocuments({ ...unread, customerType: { $ne: "business" } }),
+      BusinessForm.countDocuments({ ...unread, customerType: "business" }),
+    ]);
+    res.json({ individual, business, total: individual + business });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Called when an admin opens the individual or business Business MIS list
+const markBusinessFormsListRead = async (req, res) => {
+  try {
+    const { customerType } = req.query;
+    if (!["individual", "business"].includes(customerType)) {
+      return res.status(400).json({ message: "customerType must be individual or business" });
+    }
+    const typeFilter =
+      customerType === "business" ? { customerType: "business" } : { customerType: { $ne: "business" } };
+    const result = await BusinessForm.updateMany(
+      { isRead: false, paymentStatus: "paid", ...typeFilter },
+      { isRead: true },
+    );
+    res.json({ success: true, marked: result.modifiedCount });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Called when an admin opens a customer in Business MIS
+const markBusinessFormRead = async (req, res) => {
+  try {
+    const form = await BusinessForm.findByIdAndUpdate(req.params._id, { isRead: true }, { new: true });
+    if (!form) return res.status(404).json({ message: "Business form not found" });
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -517,15 +561,15 @@ const getAllBusinessForms = async (req, res) => {
 
     if (search) {
       const matchingFranchises = await Franchise.find({
-        businessName: { $regex: search, $options: "i" },
+        businessName: { $regex: escapeRegex(search), $options: "i" },
       }).select("_id");
       const franchiseIds = matchingFranchises.map((f) => f._id);
 
       filter.$or = [
-        { customerName: { $regex: search, $options: "i" } },
-        { customerEmail: { $regex: search, $options: "i" } },
-        { customerPhone: { $regex: search, $options: "i" } },
-        { customerId: { $regex: search, $options: "i" } },
+        { customerName: { $regex: escapeRegex(search), $options: "i" } },
+        { customerEmail: { $regex: escapeRegex(search), $options: "i" } },
+        { customerPhone: { $regex: escapeRegex(search), $options: "i" } },
+        { customerId: { $regex: escapeRegex(search), $options: "i" } },
       ];
 
       if (franchiseIds.length > 0) {
@@ -886,4 +930,7 @@ module.exports = {
   getBusinessFormsByFranchise,
   deleteBusinessForm,
   assignCustomerId,
+  getBusinessUnreadCounts,
+  markBusinessFormRead,
+  markBusinessFormsListRead,
 };

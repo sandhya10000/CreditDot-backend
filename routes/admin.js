@@ -117,6 +117,11 @@ router.get("/leads", auth, rbac("admin"), getAllLeads);
 // @route   GET /api/admin/leads/:id
 // @desc    Get lead by ID
 // @access  Private/Admin
+// @route   GET /api/admin/leads/unread-counts
+// @desc    New, unread lead counts for the Credit Report Leads badge and tabs
+// @access  Private/Admin
+// Must stay above /leads/:id, otherwise "unread-counts" is treated as a lead id
+router.get("/leads/unread-counts", auth, rbac("admin"), getLeadUnreadCounts);
 router.get("/leads/:id", auth, rbac("admin"), getLeadById);
 
 // @route   PUT /api/admin/leads/:id
@@ -280,11 +285,6 @@ router.get("/download-stats", auth, rbac("admin"), getDownloadStats);
 // @desc    Get all credit repair enquiries
 // @access  Private/Admin
 router.get("/credit-repair", auth, rbac("admin"), getAllCreditRepairEnquiries);
-
-// @route   GET /api/admin/leads/unread-counts
-// @desc    New, unread lead counts for the Credit Report Leads badge and tabs
-// @access  Private/Admin
-router.get("/leads/unread-counts", auth, rbac("admin"), getLeadUnreadCounts);
 
 // @route   PUT /api/admin/credit-repair/:id/read
 // @desc    Mark a credit repair enquiry as read

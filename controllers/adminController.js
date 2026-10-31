@@ -7,6 +7,7 @@ const Transaction = require("../models/Transaction");
 const Payout = require("../models/Payout");
 const Referral = require("../models/Referral");
 const CreditReport = require("../models/CreditReport");
+const AIAnalysis = require("../models/AIAnalysis");
 const Setting = require("../models/Setting");
 const BusinessForm = require("../models/BusinessForm");
 const KycRequest = require("../models/KycRequest");
@@ -92,7 +93,8 @@ const getDashboardStats = async (req, res) => {
     const periodMatch = periodRange ? { createdAt: periodRange } : {};
 
     // Business Managers see only their own franchises' figures (no-op for admins)
-    const franchiseFilter = franchiseScope(req);
+    // Soft-deleted franchises are hidden from the Franchises list, so exclude them here too
+    const franchiseFilter = { ...franchiseScope(req), isDeleted: { $ne: true } };
     const leadFilter = await scopeFilter(req);
     const txScope = await scopeTransactions(req);
     const bizFormFilter = await scopeFilter(req);
@@ -335,10 +337,30 @@ const getDashboardStats = async (req, res) => {
     const customerPackageRevenue =
       paidBusinessForms.length > 0 ? paidBusinessForms[0].total : 0;
 
+    // Report counts for today and this month (bureau = CreditReport, AI = AIAnalysis).
+    // Failed AI runs are excluded, matching how AI credits are counted.
+    const reportNow = new Date();
+    const startOfToday = new Date(reportNow.getFullYear(), reportNow.getMonth(), reportNow.getDate());
+    const startOfThisMonth = new Date(reportNow.getFullYear(), reportNow.getMonth(), 1);
+    const bureauScope = await scopeFilter(req, "franchiseId");
+    const aiScope = await scopeFilter(req, "franchise");
+    const countBetween = (Model, scope, extra, since) =>
+      Model.countDocuments({ ...scope, ...extra, createdAt: { $gte: since } });
+    const [bureauToday, bureauMonth, aiToday, aiMonth] = await Promise.all([
+      countBetween(CreditReport, bureauScope, {}, startOfToday),
+      countBetween(CreditReport, bureauScope, {}, startOfThisMonth),
+      countBetween(AIAnalysis, aiScope, { claudeAnalysisStatus: { $ne: "failed" } }, startOfToday),
+      countBetween(AIAnalysis, aiScope, { claudeAnalysisStatus: { $ne: "failed" } }, startOfThisMonth),
+    ]);
+
     res.json({
       totalFranchises,
       activeFranchises,
       pendingKycFranchises,
+      reportCounts: {
+        bureau: { today: bureauToday, monthly: bureauMonth },
+        ai: { today: aiToday, monthly: aiMonth },
+      },
       totalPackages,
       totalLeads,
       totalTransactions,

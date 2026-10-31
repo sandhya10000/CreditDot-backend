@@ -16,6 +16,9 @@ const {
   listAssignableRms,
   lookupConsultant,
   assignBusinessRm,
+  getBusinessUnreadCounts,
+  markBusinessFormRead,
+  markBusinessFormsListRead,
 } = require("../controllers/businessController");
 const requireFullAdmin = require("../middleware/fullAdmin");
 const {
@@ -108,6 +111,18 @@ router.delete("/admin/business-forms/:id/amc", auth, rbac("admin"), cancelAmc);
 // @desc    Get all business forms (admin only)
 // @access  Private/Admin
 router.get("/all", auth, rbac("admin"), getAllBusinessForms);
+
+// @route   GET /api/business/unread-counts
+// @desc    Paid business forms not yet opened by an admin (Business MIS badges)
+router.get("/unread-counts", auth, rbac("admin"), getBusinessUnreadCounts);
+
+// @route   PUT /api/business/admin/business-forms/mark-read?customerType=individual|business
+// @desc    Marks every unread paid form of one type as seen (opening the Business MIS list)
+router.put("/admin/business-forms/mark-read", auth, rbac("admin"), markBusinessFormsListRead);
+
+// @route   PUT /api/business/admin/business-forms/:_id/read
+// @desc    Marks a business form as opened by an admin
+router.put("/admin/business-forms/:_id/read", auth, rbac("admin"), markBusinessFormRead);
 
 // @route   GET /api/business/consultant-lookup?q=  (staff prefill for Individual Consultant)
 // @access  Private/Admin + Business Managers

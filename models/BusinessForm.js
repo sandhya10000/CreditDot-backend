@@ -170,6 +170,13 @@ const businessFormSchema = new mongoose.Schema(
       default: "pending",
     },
 
+    // Set when an admin opens the customer; drives the Business MIS unread counts
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     //add new field to know  business status from admin
     workStatus: {
       type: String,
