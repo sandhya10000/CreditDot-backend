@@ -2,7 +2,8 @@
 // This is the single source of truth for the backend and for the Roles page.
 // To add a section: add it to PERMISSIONS, then add a path rule to ROUTE_RULES.
 const PERMISSIONS = [
-  { key: "dashboard", label: "Dashboard & Reports" },
+  { key: "dashboard", label: "Dashboard" },
+  { key: "reports", label: "View Reports" },
   { key: "franchises", label: "Franchises" },
   { key: "packages", label: "Packages" },
   { key: "leads", label: "Leads & Website Enquiries" },
@@ -27,6 +28,7 @@ const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 // they own, so sections without a franchise link (settings, users) are excluded.
 const SCOPABLE_KEYS = [
   "dashboard",
+  "reports",
   "franchises",
   "packages",
   "leads",
@@ -44,7 +46,9 @@ const SCOPABLE_KEYS = [
 const ROUTE_RULES = [
   [/^\/api\/admin\/(marketing|case-studies|reward)/, "marketing"],
   [/^\/api\/admin\/dashboard/, "dashboard"],
-  [/^\/api\/admin\/download-stats/, "dashboard"],
+  [/^\/api\/admin\/download-stats/, "reports"],
+  [/^\/api\/credit\/reports\/all/, "reports"],
+  [/^\/api\/credit\/reports\/[^/]+\/download/, "reports"],
   [/^\/api\/(dashboard|analytics)/, "dashboard"],
   [/^\/api\/admin\/users/, "users"],
   [/^\/api\/admin\/(leads|franchise-leads|credit-repair)/, "leads"],

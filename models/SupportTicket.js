@@ -74,6 +74,12 @@ const supportSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    // Set when an admin opens the ticket or replies; a new franchise reply clears it
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,

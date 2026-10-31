@@ -12,6 +12,8 @@ const {
   getAllTickets,
   updateTicketStatus,
   updateTicketMeta,
+  getSupportUnreadCount,
+  markTicketRead,
 } = require("../controllers/suppoticketController");
 
 // Franchise routes
@@ -31,8 +33,14 @@ router.post("/support/tickets/:id/reply", auth, attachments, replyToTicket);
 //@route GET /api/admin/support/all-tickets?status&category&priority&search&page&limit
 router.get("/admin/support/all-tickets", auth, rbac("admin"), getAllTickets);
 
+//@route GET /api/admin/support/unread-count  (new tickets/replies not yet opened by an admin)
+router.get("/admin/support/unread-count", auth, rbac("admin"), getSupportUnreadCount);
+
 //@route GET /api/admin/support/tickets/:id
 router.get("/admin/support/tickets/:id", auth, rbac("admin"), getTicket);
+
+//@route PATCH /api/admin/support/tickets/:id/read
+router.patch("/admin/support/tickets/:id/read", auth, rbac("admin"), markTicketRead);
 
 //@route POST /api/admin/support/tickets/:id/reply
 router.post(

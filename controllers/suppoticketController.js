@@ -128,6 +128,8 @@ const replyToTicket = async (req, res) => {
     // Franchise replies reopen a resolved ticket; admin replies mark it in progress
     if (!admin && ticket.status === "Resolved") ticket.status = "Pending";
     if (admin && ticket.status === "Pending") ticket.status = "In Progress";
+    // A franchise reply needs admin attention again; an admin reply is already handled
+    ticket.isRead = admin;
     ticket.lastActivityAt = new Date();
     await ticket.save();
 
@@ -256,6 +258,28 @@ const updateTicketMeta = async (req, res) => {
   }
 };
 
+// Tickets a franchise has raised or replied to that no admin has opened yet
+const getSupportUnreadCount = async (req, res) => {
+  try {
+    const unread = await SupportTicket.countDocuments({ isRead: false });
+    res.json({ unread });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// Called when an admin opens a ticket
+const markTicketRead = async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) return fail(res, 400, "Invalid ticket id");
+    const ticket = await SupportTicket.findByIdAndUpdate(req.params.id, { isRead: true }, { new: true });
+    if (!ticket) return fail(res, 404, "Ticket not found");
+    res.json({ success: true });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
 module.exports = {
   createTicket,
   getMyTickets,
@@ -264,4 +288,6 @@ module.exports = {
   getAllTickets,
   updateTicketStatus,
   updateTicketMeta,
+  getSupportUnreadCount,
+  markTicketRead,
 };

@@ -1,3 +1,4 @@
+const escapeRegex = require("../utils/escapeRegex");
 const Franchise = require("../models/Franchise");
 const User = require("../models/User");
 const BusinessForm = require("../models/BusinessForm");
@@ -365,10 +366,11 @@ const getAllFranchises = async (req, res) => {
     }
     if (search) {
       filter.$or = [
-        { businessName: { $regex: search, $options: "i" } },
-        { ownerName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { businessName: { $regex: escapeRegex(search), $options: "i" } },
+        { ownerName: { $regex: escapeRegex(search), $options: "i" } },
+        { email: { $regex: escapeRegex(search), $options: "i" } },
+        { phone: { $regex: escapeRegex(search), $options: "i" } },
+        { franchiseCode: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
     if (kycStatus) {
@@ -1055,10 +1057,11 @@ const exportFranchisesCSV = async (req, res) => {
     }
     if (search) {
       filter.$or = [
-        { businessName: { $regex: search, $options: "i" } },
-        { ownerName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { businessName: { $regex: escapeRegex(search), $options: "i" } },
+        { ownerName: { $regex: escapeRegex(search), $options: "i" } },
+        { email: { $regex: escapeRegex(search), $options: "i" } },
+        { phone: { $regex: escapeRegex(search), $options: "i" } },
+        { franchiseCode: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
     if (kycStatus) {
