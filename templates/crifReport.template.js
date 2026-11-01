@@ -1,6 +1,7 @@
 // ============================================================
 // CRIF HIGH MARK CREDIT REPORT PDF TEMPLATE
 // File: templates/crifReport.template.js
+// Layout matches the official CRIF Consumer Credit Report PDF
 // ============================================================
 
 const fs = require("fs");
@@ -14,7 +15,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   const findB2CReport = (root, visited = new WeakSet()) => {
     if (!root || typeof root !== "object") return null;
     if (visited.has(root)) return null;
-
     visited.add(root);
 
     if (root["B2C-REPORT"] && typeof root["B2C-REPORT"] === "object") {
@@ -27,11 +27,9 @@ const generateCrifPdf = async (apiData, creditReportId) => {
         if (found) return found;
       }
     }
-
     return null;
   };
 
-  // Support both the complete API response and an already-extracted report.
   const report =
     findB2CReport(apiData) ||
     (apiData &&
@@ -46,7 +44,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
 
   if (!report) {
     console.error("[CRIF PDF] Input keys:", Object.keys(apiData || {}));
-
     throw new Error(
       "CRIF B2C-REPORT data not found. Input is neither a complete response nor a recognized report object.",
     );
@@ -57,50 +54,32 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   // ----------------------------------------------------------
   const getValue = (obj, ...keys) => {
     if (!obj || typeof obj !== "object") return null;
-
     for (const key of keys) {
       const value = obj[key];
-
-      if (value !== undefined && value !== null && value !== "") {
-        return value;
-      }
+      if (value !== undefined && value !== null && value !== "") return value;
     }
-
     return null;
   };
 
   const getObject = (obj, ...keys) => {
     const value = getValue(obj, ...keys);
-
     return value && typeof value === "object" && !Array.isArray(value)
       ? value
       : {};
   };
 
   const arr = (value) => {
-    if (value === undefined || value === null || value === "") {
-      return [];
-    }
-
+    if (value === undefined || value === null || value === "") return [];
     return Array.isArray(value) ? value : [value];
   };
 
-  const firstItem = (value) => {
-    if (Array.isArray(value)) return value[0] || {};
-    return value && typeof value === "object" ? value : {};
-  };
-
   const esc = (value, fallback = "-") => {
-    if (value === undefined || value === null || value === "") {
-      value = fallback;
-    }
-
+    if (value === undefined || value === null || value === "") value = fallback;
     if (typeof value === "object") {
       value =
         getValue(value, "VALUE", "TEXT", "NAME", "DESCRIPTION", "ID") ??
         fallback;
     }
-
     return String(value)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
@@ -109,65 +88,39 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       .replace(/'/g, "&#039;");
   };
 
-  const getPathValue = (obj, pathParts) => {
-    return pathParts.split(".").reduce((current, key) => {
-      if (current === null || current === undefined) return undefined;
+  const firstAvailable = (...values) =>
+    values.find((v) => v !== undefined && v !== null && v !== "") ?? null;
 
-      return current[key];
-    }, obj);
-  };
-
-  const firstAvailable = (...values) => {
-    return (
-      values.find(
-        (value) => value !== undefined && value !== null && value !== "",
-      ) ?? null
-    );
-  };
-
-  const fmtNum = (value) => {
+  // Indian number format. Missing -> "-" (or "0" when zeroDefault is true)
+  const money = (value, zeroDefault = false) => {
     if (
       value === undefined ||
       value === null ||
       value === "" ||
-      !Number.isFinite(Number(value))
+      !Number.isFinite(Number(String(value).replace(/,/g, "")))
     ) {
-      return "0";
+      return zeroDefault ? "0" : "-";
     }
-
-    return new Intl.NumberFormat("en-IN", {
-      maximumFractionDigits: 2,
-    }).format(Number(value));
+    return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(
+      Number(String(value).replace(/,/g, "")),
+    );
   };
 
   const fmtDate = (value) => {
     if (!value || value === "-") return "-";
-
     const input = String(value).trim();
 
-    let match = input.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    let m = input.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
-    if (match) {
-      return `${match[1]}-${match[2]}-${match[3]}`;
-    }
+    m = input.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
 
-    match = input.match(/^(\d{4})-(\d{2})-(\d{2})/);
-
-    if (match) {
-      return `${match[3]}-${match[2]}-${match[1]}`;
-    }
-
-    match = input.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-
-    if (match) {
-      return `${match[1]}-${match[2]}-${match[3]}`;
-    }
+    m = input.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
     const date = new Date(input);
-
-    if (Number.isNaN(date.getTime())) {
-      return input;
-    }
+    if (Number.isNaN(date.getTime())) return input;
 
     return [
       String(date.getDate()).padStart(2, "0"),
@@ -176,47 +129,21 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     ].join("-");
   };
 
-  const maskAddress = (rawAddress) => {
-    if (!rawAddress) return "-";
-
-    const value = String(rawAddress).trim();
-
-    if (!value || value === "-") return "-";
-
-    const parts = value
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    return parts.length > 3 ? parts.slice(-3).join(", ") : parts.join(", ");
-  };
-
-  const getText = (obj, ...keys) => {
-    const value = getValue(obj, ...keys);
-
-    if (value === null) return "-";
-
-    if (typeof value === "object") {
-      return esc(value);
-    }
-
-    return String(value);
+  const truncate = (value, max = 62) => {
+    const text = String(value ?? "").trim();
+    return text.length > max ? `${text.slice(0, max - 3)}...` : text;
   };
 
   const getNumber = (obj, ...keys) => {
     const value = getValue(obj, ...keys);
-    const number = Number(value);
-
-    return value === null || value === "" || !Number.isFinite(number)
-      ? 0
-      : number;
+    const n = Number(value);
+    return value === null || !Number.isFinite(n) ? 0 : n;
   };
 
   const sum = (...values) =>
-    values.reduce((total, value) => {
-      const number = Number(value);
-
-      return total + (Number.isFinite(number) ? number : 0);
+    values.reduce((t, v) => {
+      const n = Number(v);
+      return t + (Number.isFinite(n) ? n : 0);
     }, 0);
 
   // ----------------------------------------------------------
@@ -224,28 +151,23 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   // ----------------------------------------------------------
   const header = getObject(report, "HEADER");
   const request = getObject(report, "REQUEST");
-
   const personal = getObject(report, "PERSONAL-INFO", "PERSONAL-INFORMATION");
-
   const contact = getObject(report, "CONTACT-DETAILS", "CONTACT-INFORMATION");
-
   const summary = getObject(report, "ACCOUNTS-SUMMARY");
-
   const primary = getObject(summary, "PRIMARY-ACCOUNTS-SUMMARY");
-
   const secondary = getObject(summary, "SECONDARY-ACCOUNTS-SUMMARY");
-
+  const group = firstAvailable(
+    getObject(summary, "GROUP-ACCOUNTS-SUMMARY", "GROUP-ACCOUNT-SUMMARY"),
+    {},
+  );
   const derived = getObject(summary, "DERIVED-ATTRIBUTES");
-
   const employment = getObject(report, "EMPLOYMENT-DETAILS", "EMPLOYMENT");
-
   const enquiryRoot = getObject(
     report,
     "ENQUIRY-HISTORY",
     "ENQUIRIES",
     "INQUIRY-HISTORY",
   );
-
   const variationRoot = getObject(
     report,
     "PERSONAL-INFO-VARIATION",
@@ -270,19 +192,14 @@ const generateCrifPdf = async (apiData, creditReportId) => {
         "EMAIL",
         "ID",
       );
-
       if (nested !== null) raw = nested;
     }
 
     return arr(raw)
       .map((item) => {
         if (typeof item !== "object" || item === null) {
-          return {
-            value: item,
-            date: null,
-          };
+          return { value: item, date: null };
         }
-
         return {
           value: getValue(
             item,
@@ -310,8 +227,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
         };
       })
       .filter(
-        (item) =>
-          item.value !== null && item.value !== undefined && item.value !== "",
+        (i) => i.value !== null && i.value !== undefined && i.value !== "",
       );
   };
 
@@ -319,37 +235,30 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     "NAME-VARIATIONS",
     "NAME-VARIATION",
   ]);
-
   const dobVariations = pickList(variationRoot, [
     "DOB-VARIATIONS",
     "DOB-VARIATION",
     "DATE-OF-BIRTH-VARIATIONS",
   ]);
-
   const addressVariations = pickList(variationRoot, [
     "ADDRESS-VARIATIONS",
     "ADDRESS-VARIATION",
   ]);
-
   const phoneVariations = pickList(variationRoot, [
     "PHONE-VARIATIONS",
     "PHONE-VARIATION",
     "MOBILE-VARIATIONS",
   ]);
-
   const emailVariations = pickList(variationRoot, [
     "EMAIL-VARIATIONS",
     "EMAIL-VARIATION",
   ]);
-
   const idVariations = pickList(variationRoot, [
     "ID-VARIATIONS",
     "ID-VARIATION",
     "PAN-VARIATIONS",
     "PAN-VARIATION",
   ]);
-
-  // Also support variation fields supplied directly on the report.
   if (!idVariations.length) {
     idVariations.push(
       ...pickList(report, ["PAN-VARIATIONS", "PAN-VARIATION", "ID-VARIATIONS"]),
@@ -359,56 +268,39 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   // ----------------------------------------------------------
   // APPLICANT DETAILS
   // ----------------------------------------------------------
+  const pickReq = (...keys) =>
+    firstAvailable(
+      getValue(request, ...keys),
+      getValue(personal, ...keys),
+      getValue(contact, ...keys),
+    );
+
   const name = firstAvailable(
-    getValue(request, "NAME", "FULL-NAME", "APPLICANT-NAME"),
-    getValue(personal, "NAME", "FULL-NAME", "APPLICANT-NAME"),
+    pickReq("NAME", "FULL-NAME", "APPLICANT-NAME"),
     getValue(apiData, "name", "applicantName"),
   );
-
-  const dob = firstAvailable(
-    getValue(request, "DOB", "DATE-OF-BIRTH"),
-    getValue(personal, "DOB", "DATE-OF-BIRTH"),
+  const dob = pickReq("DOB", "DATE-OF-BIRTH");
+  const pan = pickReq("PAN", "PAN-NUMBER", "ID-NUMBER");
+  const gender = pickReq("GENDER", "SEX");
+  const father = pickReq("FATHER", "FATHER-NAME");
+  const spouse = pickReq("SPOUSE", "SPOUSE-NAME");
+  const mother = pickReq("MOTHER", "MOTHER-NAME");
+  const mobile = pickReq(
+    "PHONE-1",
+    "MOBILE",
+    "MOBILE-NUMBER",
+    "PHONE",
+    "PHONE-NUMBER",
   );
-
-  const pan = firstAvailable(
-    getValue(request, "PAN", "PAN-NUMBER", "ID-NUMBER"),
-    getValue(personal, "PAN", "PAN-NUMBER", "ID-NUMBER"),
-  );
-
-  const gender = firstAvailable(
-    getValue(request, "GENDER", "SEX"),
-    getValue(personal, "GENDER", "SEX"),
-  );
-
-  const mobile = firstAvailable(
-    getValue(
-      request,
-      "PHONE-1",
-      "MOBILE",
-      "MOBILE-NUMBER",
-      "PHONE",
-      "PHONE-NUMBER",
-    ),
-    getValue(
-      contact,
-      "PHONE-1",
-      "MOBILE",
-      "MOBILE-NUMBER",
-      "PHONE",
-      "PHONE-NUMBER",
-    ),
-  );
-
-  const email = firstAvailable(
-    getValue(request, "EMAIL-1", "EMAIL", "EMAIL-ID", "EMAIL-ADDRESS"),
-    getValue(contact, "EMAIL-1", "EMAIL", "EMAIL-ID", "EMAIL-ADDRESS"),
-  );
-
+  const email = pickReq("EMAIL-1", "EMAIL", "EMAIL-ID", "EMAIL-ADDRESS");
   const address = firstAvailable(
-    getValue(request, "ADDRESS-1", "ADDRESS", "CURRENT-ADDRESS"),
-    getValue(contact, "ADDRESS-1", "ADDRESS", "CURRENT-ADDRESS"),
-    getValue(personal, "ADDRESS-1", "ADDRESS", "CURRENT-ADDRESS"),
+    pickReq("ADDRESS-1", "ADDRESS", "CURRENT-ADDRESS"),
     addressVariations[0]?.value,
+  );
+  const otherAddress = pickReq(
+    "ADDRESS-2",
+    "OTHER-ADDRESS",
+    "PERMANENT-ADDRESS",
   );
 
   const reportNumber = firstAvailable(
@@ -424,76 +316,89 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     creditReportId,
   );
 
-  const reportDate = fmtDate(
+  const applicationId = firstAvailable(
+    getValue(header, "APPLICATION-ID", "INQUIRY-UNIQUE-REF-NO"),
+    getValue(request, "APPLICATION-ID", "INQUIRY-UNIQUE-REF-NO"),
+    getValue(report, "APPLICATION-ID"),
+  );
+
+  const dateOfIssue = fmtDate(
     firstAvailable(
       getValue(header, "DATE-OF-ISSUE"),
+      getValue(header, "DATE-OF-REPORT"),
+      getValue(header, "REPORT-DATE"),
       getValue(header, "DATE-OF-REQUEST"),
+    ),
+  );
+  const dateOfRequest = fmtDate(
+    firstAvailable(
+      getValue(header, "DATE-OF-REQUEST"),
+      getValue(header, "DATE-OF-ISSUE"),
       getValue(header, "DATE-OF-REPORT"),
       getValue(header, "REPORT-DATE"),
     ),
   );
 
+  const employmentText = firstAvailable(
+    getValue(
+      employment,
+      "OCCUPATION",
+      "OCCUPATION-TYPE",
+      "EMPLOYER",
+      "EMPLOYER-NAME",
+    ),
+    getValue(request, "EMPLOYMENT-DETAILS", "OCCUPATION"),
+    getValue(personal, "EMPLOYMENT-DETAILS", "OCCUPATION"),
+  );
+
   // ----------------------------------------------------------
   // CREDIT SCORE
   // ----------------------------------------------------------
+  const scoreObj = firstAvailable(
+    arr(report?.SCORES?.SCORE)[0],
+    arr(report?.SCORES)[0],
+    {},
+  );
+
   const scoreCandidates = [
     apiData?.data?.score,
     apiData?.score,
     report?.["CREDIT-SCORE"],
     report?.SCORE,
     report?.["SCORE-VALUE"],
-    report?.SCORES?.SCORE?.["SCORE-VALUE"],
-    report?.SCORES?.SCORE?.["SCORE"],
+    scoreObj?.["SCORE-VALUE"],
+    scoreObj?.["SCORE"],
     report?.["SCORE-DETAILS"]?.["SCORE-VALUE"],
     report?.["CREDIT-SCORE-DETAILS"]?.["SCORE-VALUE"],
   ];
 
   const scoreRaw = scoreCandidates.find(
-    (value) =>
-      value !== undefined &&
-      value !== null &&
-      value !== "" &&
-      Number.isFinite(Number(value)),
+    (v) =>
+      v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v)),
   );
-
   const score = scoreRaw === undefined ? null : Number(scoreRaw);
-
-  const scoreStatus =
-    score === null
-      ? "Not Available"
-      : score >= 750
-        ? "Excellent"
-        : score >= 700
-          ? "Good"
-          : score >= 650
-            ? "Fair"
-            : "Needs Improvement";
-
-  const scoreDescription =
-    score === null
-      ? "Credit score information is not available in the supplied API response."
-      : score >= 750
-        ? "The reported score falls in a higher score band."
-        : score >= 700
-          ? "The reported score falls in a good score band."
-          : score >= 650
-            ? "The reported score falls in a moderate score band."
-            : "Review the credit report details to understand the reported score.";
 
   const scoreName = firstAvailable(
     getValue(report, "SCORE-NAME"),
+    getValue(scoreObj, "SCORE-NAME", "NAME"),
     getValue(getObject(report, "SCORE-DETAILS"), "SCORE-NAME"),
-    "CRIF High Mark Score",
+    "PERFORM CONSUMER 2.2",
+  );
+  const scoreRange = firstAvailable(
+    getValue(scoreObj, "SCORE-RANGE", "RANGE"),
+    "300-900",
+  );
+  const scoreDescription = firstAvailable(
+    getValue(scoreObj, "SCORE-COMMENTS", "DESCRIPTION"),
+    getValue(report, "SCORE-DESCRIPTION"),
   );
 
   // ----------------------------------------------------------
   // ACCOUNT COLLECTION
   // ----------------------------------------------------------
   const responseRoot = getObject(report, "RESPONSES");
-
   let accounts = arr(getValue(responseRoot, "RESPONSE", "RESPONSES", "ITEM"));
 
-  // Support a single account object directly on the report.
   if (!accounts.length && getValue(report, "LOAN-DETAILS")) {
     accounts = [report];
   }
@@ -506,79 +411,84 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       item?.ACCOUNT,
       item,
     );
-
     return loan && typeof loan === "object" ? loan : {};
   };
 
   const accountLoans = accounts.map(getLoan);
 
-  const totalAccounts = firstAvailable(
-    sum(
-      getNumber(primary, "PRIMARY-NUMBER-OF-ACCOUNTS"),
-      getNumber(secondary, "SECONDARY-NUMBER-OF-ACCOUNTS"),
-    ) || null,
-    accountLoans.length,
-  );
+  // ----------------------------------------------------------
+  // ACCOUNT SUMMARY TABLES (Primary / Secondary / Group)
+  // ----------------------------------------------------------
+  const summaryColumns = [
+    ["Number of<br/>Accounts", ["NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Active", ["ACTIVE-NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Overdue", ["OVERDUE-NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Secured", ["SECURED-NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Unsecured", ["UNSECURED-NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Untagged", ["UNTAGGED-NUMBER-OF-ACCOUNTS"], "zero"],
+    ["Total<br/>Current<br/>Balance", ["CURRENT-BALANCE"], "zero"],
+    [
+      "Current<br/>Balance<br/>Secured",
+      ["SECURED-CURRENT-BALANCE", "CURRENT-BALANCE-SECURED"],
+      "dash",
+    ],
+    [
+      "Current<br/>Balance<br/>Unsecured",
+      ["UNSECURED-CURRENT-BALANCE", "CURRENT-BALANCE-UNSECURED"],
+      "dash",
+    ],
+    ["Total<br/>Sanctioned<br/>Amount", ["SANCTIONED-AMOUNT"], "zero"],
+    ["Total<br/>Disbursed<br/>Amount", ["DISBURSED-AMOUNT"], "zero"],
+    [
+      "Total<br/>Amount<br/>Overdue",
+      ["OVERDUE-AMOUNT", "TOTAL-AMOUNT-OVERDUE"],
+      "zero",
+    ],
+  ];
 
-  const activeAccounts = sum(
-    getNumber(primary, "PRIMARY-ACTIVE-NUMBER-OF-ACCOUNTS"),
-    getNumber(secondary, "SECONDARY-ACTIVE-NUMBER-OF-ACCOUNTS"),
-  );
+  const summaryTable = (title, obj, prefix) => {
+    const hasData = Object.keys(obj || {}).length > 0;
 
-  const overdueAccounts = sum(
-    getNumber(primary, "PRIMARY-OVERDUE-NUMBER-OF-ACCOUNTS"),
-    getNumber(secondary, "SECONDARY-OVERDUE-NUMBER-OF-ACCOUNTS"),
-  );
+    const cells = summaryColumns.map(([, suffixes, mode]) => {
+      const raw = getValue(obj, ...suffixes.map((s) => `${prefix}-${s}`));
+      if (raw === null) return hasData && mode === "zero" ? "0" : "-";
+      return money(raw, false) === "-" ? esc(raw) : money(raw);
+    });
 
-  const securedAccounts = sum(
-    getNumber(primary, "PRIMARY-SECURED-NUMBER-OF-ACCOUNTS"),
-    getNumber(secondary, "SECONDARY-SECURED-NUMBER-OF-ACCOUNTS"),
-  );
-
-  const unsecuredAccounts = sum(
-    getNumber(primary, "PRIMARY-UNSECURED-NUMBER-OF-ACCOUNTS"),
-    getNumber(secondary, "SECONDARY-UNSECURED-NUMBER-OF-ACCOUNTS"),
-  );
-
-  const currentBalance = sum(
-    getNumber(primary, "PRIMARY-CURRENT-BALANCE"),
-    getNumber(secondary, "SECONDARY-CURRENT-BALANCE"),
-  );
-
-  const disbursedAmount = sum(
-    getNumber(primary, "PRIMARY-DISBURSED-AMOUNT"),
-    getNumber(secondary, "SECONDARY-DISBURSED-AMOUNT"),
-  );
-
-  const enquiries6 = firstAvailable(
-    getValue(
-      derived,
-      "INQURIES-IN-LAST-SIX-MONTHS",
-      "INQUIRIES-IN-LAST-SIX-MONTHS",
-    ),
-    "-",
-  );
+    return `
+      <section class="section">
+        <div class="section-title">${esc(title)}</div>
+        <table class="grid-table summary-table">
+          <thead>
+            <tr>${summaryColumns.map(([label]) => `<th>${label}</th>`).join("")}</tr>
+          </thead>
+          <tbody>
+            <tr>${cells.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>
+          </tbody>
+        </table>
+      </section>
+    `;
+  };
 
   const enquiries24 = firstAvailable(
+    getValue(
+      derived,
+      "INQURIES-IN-LAST-24-MONTHS",
+      "INQUIRIES-IN-LAST-24-MONTHS",
+      "INQUIRIES-IN-LAST-TWENTY-FOUR-MONTHS",
+    ),
     getValue(
       enquiryRoot,
       "NUMBER-OF-ENQUIRIES",
       "TOTAL-ENQUIRIES",
       "INQUIRIES-IN-LAST-24-MONTHS",
     ),
-    getValue(
-      derived,
-      "INQUIRIES-IN-LAST-TWENTY-FOUR-MONTHS",
-      "INQUIRIES-IN-LAST-24-MONTHS",
-    ),
     "-",
   );
-
   const newAccounts6 = firstAvailable(
     getValue(derived, "NEW-ACCOUNTS-IN-LAST-SIX-MONTHS"),
     "-",
   );
-
   const newDelinquent6 = firstAvailable(
     getValue(derived, "NEW-DELINQUENT-ACCOUNTS-IN-LAST-SIX-MONTHS"),
     "-",
@@ -587,23 +497,19 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   // ----------------------------------------------------------
   // PAYMENT HISTORY
   // ----------------------------------------------------------
-
   const normalizeHistory = (raw) => {
     if (!raw) return [];
 
-    // Handles array-based payment history
     if (Array.isArray(raw)) {
       return raw
         .map((item) => ({
           month: getValue(item, "MONTH", "MONTH-NAME") || "",
           year: String(getValue(item, "YEAR") || ""),
-
-          amount:
-            String(getValue(item, "AMOUNT", "DAYS-PAST-DUE", "DPD") || "-")
-              .replace(/XXX/gi, "")
-              .replace(/\s+/g, " ")
-              .trim() || "-",
-
+          amount: String(
+            getValue(item, "AMOUNT", "DAYS-PAST-DUE", "DPD") || "-",
+          )
+            .replace(/\s+/g, " ")
+            .trim(),
           status: String(
             getValue(item, "STATUS", "ASSET-CLASSIFICATION") || "-",
           )
@@ -613,7 +519,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
         .filter((item) => item.month && item.year);
     }
 
-    // Handles string-based payment history
     const text = String(raw)
       .replace(/\r?\n/g, " ")
       .replace(/\s+/g, " ")
@@ -630,18 +535,14 @@ const generateCrifPdf = async (apiData, creditReportId) => {
 
     const output = [];
     let match;
-
     while ((match = regex.exec(text)) !== null) {
       output.push({
         month: match[1],
         year: match[2],
-
-        amount: match[3].replace(/XXX/gi, "").trim() || "-",
-
+        amount: match[3].trim() || "-",
         status: match[4].trim().toUpperCase(),
       });
     }
-
     return output;
   };
 
@@ -660,180 +561,98 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     "December",
   ];
 
-  const monthMap = {
-    Jan: "January",
-    Feb: "February",
-    Mar: "March",
-    Apr: "April",
-    May: "May",
-    Jun: "June",
-    Jul: "July",
-    Aug: "August",
-    Sep: "September",
-    Oct: "October",
-    Nov: "November",
-    Dec: "December",
-  };
-
   const paymentHtml = (raw) => {
     const history = normalizeHistory(raw);
 
     if (!history.length) {
-      return `
-      <div class="muted">
-        Payment history is not available in the supplied response.
-      </div>
-    `;
+      return `<div class="muted pad">Payment history is not available.</div>`;
     }
 
     const years = {};
-
     history.forEach((item) => {
-      const monthKey = String(item.month || "")
-        .slice(0, 3)
-        .toLowerCase();
-
-      const month = {
-        jan: "January",
-        feb: "February",
-        mar: "March",
-        apr: "April",
-        may: "May",
-        jun: "June",
-        jul: "July",
-        aug: "August",
-        sep: "September",
-        oct: "October",
-        nov: "November",
-        dec: "December",
-      }[monthKey];
-
+      const month = months.find(
+        (m) =>
+          m.slice(0, 3).toLowerCase() ===
+          String(item.month).slice(0, 3).toLowerCase(),
+      );
       if (!month || !item.year) return;
-
       if (!years[item.year]) years[item.year] = {};
-
-      years[item.year][month] = {
-        amount:
-          String(item.amount || "-")
-            .replace(/\bXXX\b/gi, "")
-            .trim() || "-",
-        status: String(item.status || "-")
-          .trim()
-          .toUpperCase(),
-      };
+      years[item.year][month] = item;
     });
 
     return `
-    <div class="table-wrap payment-history-wrap">
-      <table class="payment-table">
+      <table class="grid-table payment-table">
         <thead>
           <tr>
-            <th class="year-col">Year</th>
-            ${months.map((month) => `<th>${esc(month)}</th>`).join("")}
+            <th class="year-col"></th>
+            ${months.map((m) => `<th>${m}</th>`).join("")}
           </tr>
         </thead>
-
         <tbody>
           ${Object.keys(years)
             .sort((a, b) => Number(b) - Number(a))
             .map(
               (year) => `
-                <tr>
-                  <th class="year-cell">${esc(year)}</th>
+            <tr>
+              <th class="year-cell">${esc(year)}</th>
+              ${months
+                .map((month) => {
+                  const item = years[year][month];
+                  if (!item) return `<td></td>`;
+                  const amount =
+                    item.amount && item.amount !== "-" ? item.amount : "";
+                  const status =
+                    item.status && item.status !== "-" ? item.status : "";
+                  const text =
+                    amount && status
+                      ? `${amount}/${status}`
+                      : amount || status || "-";
+                  return `<td>${esc(text)}</td>`;
+                })
+                .join("")}
+            </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+  };
 
-                  ${months
-                    .map((month) => {
-                      const item = years[year][month];
+  // ----------------------------------------------------------
+  // HTML COMPONENTS
+  // ----------------------------------------------------------
+  const kv = (label, value) =>
+    `<td class="k">${esc(label)}</td><td class="v">${esc(value)}</td>`;
 
-                      if (!item) {
-                        return `<td class="empty-cell">-</td>`;
-                      }
-
-                      const status = item.status;
-                      const className =
-                        status === "STD"
-                          ? "std"
-                          : /(SUB|DBT|LOS|LSS|SMA|DA|DPD)/.test(status)
-                            ? "alert"
-                            : "";
-
-                      const amount =
-                        String(item.amount ?? "-")
-                          .replace(/XXX/gi, "")
-                          .trim() || "-";
-
-                      return `
-                        <td class="${className}">
-                          <span class="payment-value">
-  ${esc(amount)}
-</span>
-                        </td>
-                      `;
-                    })
-                    .join("")}
-                </tr>
-              `,
+  const variationTable = (items, heading, { address = false } = {}) => `
+    <div class="var-block">
+      <table class="var-table">
+        <thead>
+          <tr>
+            <th>${esc(heading)}</th>
+            <th class="right">Reported On</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items
+            .map(
+              (item) => `
+            <tr>
+              <td>${esc(address ? truncate(item.value, 60) : item.value)}</td>
+              <td class="right">${esc(fmtDate(item.date), "N.A.")}</td>
+            </tr>`,
             )
             .join("")}
         </tbody>
       </table>
     </div>
   `;
-  };
 
   // ----------------------------------------------------------
-  // REUSABLE HTML COMPONENTS
+  // ACCOUNT INFORMATION
   // ----------------------------------------------------------
-  const infoCard = (label, value, wide = false) => `
-    <div class="info-card ${wide ? "wide" : ""}">
-      <div class="label">${esc(label)}</div>
-      <div class="value">${esc(value)}</div>
-    </div>
-  `;
+  const securityRows = [];
 
-  const variationTable = (items, heading, addressMode = false) => `
-    <div class="variation-block">
-      <div class="subheading">${esc(heading)}</div>
-
-      ${
-        items.length
-          ? `
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>${addressMode ? "City / State / PIN" : "Value"}</th>
-                  <th>Reported On</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                ${items
-                  .map(
-                    (item) => `
-                  <tr>
-                    <td>
-                      ${esc(addressMode ? maskAddress(item.value) : item.value)}
-                    </td>
-                    <td>${esc(fmtDate(item.date))}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-              </tbody>
-            </table>
-          `
-          : `
-            <div class="muted">
-              No ${esc(heading.toLowerCase())} available in the response.
-            </div>
-          `
-      }
-    </div>
-  `;
-
-  // ----------------------------------------------------------
-  // ACCOUNT INFORMATION HTML
-  // ----------------------------------------------------------
   const accountsHtml = accountLoans.length
     ? accountLoans
         .map((loan, index) => {
@@ -862,55 +681,126 @@ const generateCrifPdf = async (apiData, creditReportId) => {
               "MEMBER-NAME",
             ) || "-";
 
+          const accNo = getValue(loan, "ACCT-NUMBER", "ACCOUNT-NUMBER") || "-";
+          const infoAsOf = fmtDate(
+            getValue(loan, "INFO-AS-OF", "DATE-REPORTED"),
+          );
+
+          const suitStatus =
+            getValue(
+              loan,
+              "SUIT-FILED_WILFUL-DEFAULT",
+              "SUIT-FILED-WILFUL-DEFAULT",
+              "SUIT-FILED",
+              "WILFUL-DEFAULT",
+              "ASSET-CLASS",
+            ) || "-";
+
+          // Security / collateral rows
+          arr(
+            getValue(
+              loan,
+              "SECURITY-DETAILS",
+              "COLLATERAL-DETAILS",
+              "SECURITY",
+            ),
+          ).forEach((sec) => {
+            if (sec && typeof sec === "object") {
+              securityRows.push([
+                getValue(sec, "SECURITY-TYPE", "TYPE"),
+                getValue(sec, "TYPE-OF-CHARGE", "CHARGE-TYPE"),
+                getValue(sec, "SECURITY-VALUE", "VALUE"),
+                getValue(sec, "DATE-OF-VALUE", "VALUE-DATE"),
+              ]);
+            }
+          });
+
           const fields = [
-            ["Credit Grantor", grantor],
+            ["Ownership:", getValue(loan, "OWNERSHIP-IND", "OWNERSHIP") || "-"],
             [
-              "Account Number",
-              getValue(loan, "ACCT-NUMBER", "ACCOUNT-NUMBER") || "-",
-            ],
-            ["Ownership", getValue(loan, "OWNERSHIP-IND", "OWNERSHIP") || "-"],
-            [
-              "Date Reported",
-              fmtDate(getValue(loan, "DATE-REPORTED", "INFO-AS-OF")),
-            ],
-            [
-              "Disbursed Date",
+              "Disbursed Date:",
               fmtDate(getValue(loan, "DISBURSED-DT", "DISBURSED-DATE")),
             ],
             [
-              "Disbursed Amount / High Credit",
-              `₹ ${fmtNum(getValue(loan, "DISBURSED-AMT", "DISBURSED-AMOUNT"))}`,
+              "Disbd Amt/High Credit:",
+              money(getValue(loan, "DISBURSED-AMT", "DISBURSED-AMOUNT")),
             ],
-            ["Credit Limit", `₹ ${fmtNum(getValue(loan, "CREDIT-LIMIT"))}`],
-            ["Cash Limit", `₹ ${fmtNum(getValue(loan, "CASH-LIMIT"))}`],
-            ["Last Payment Date", fmtDate(getValue(loan, "LAST-PAYMENT-DATE"))],
+            ["Credit Limit:", money(getValue(loan, "CREDIT-LIMIT"))],
             [
-              "Closed Date",
+              "Last Payment Date:",
+              fmtDate(getValue(loan, "LAST-PAYMENT-DATE")),
+            ],
+            [
+              "Current Balance:",
+              money(getValue(loan, "CURRENT-BAL", "CURRENT-BALANCE"), true),
+            ],
+            ["Cash Limit:", money(getValue(loan, "CASH-LIMIT"))],
+            [
+              "Closed Date:",
               fmtDate(getValue(loan, "CLOSED-DATE", "CLOSED-DT")),
             ],
             [
-              "Current Balance",
-              `₹ ${fmtNum(getValue(loan, "CURRENT-BAL", "CURRENT-BALANCE"))}`,
+              "Last Paid Amt:",
+              money(getValue(loan, "LAST-PAID-AMT", "LAST-PAID-AMOUNT")),
             ],
             [
-              "Overdue Amount",
-              `₹ ${fmtNum(getValue(loan, "OVERDUE-AMT", "OVERDUE-AMOUNT"))}`,
-            ],
-            [
-              "Installment / Frequency",
+              "InstlAmt/Freq:",
               getValue(
                 loan,
+                "INSTL-AMT",
                 "INSTLAMT-FREQ",
                 "INSTL-AMT-FREQ",
                 "INSTALLMENT-AMOUNT",
               ) || "-",
             ],
-            ["Tenure", getValue(loan, "TENURE", "TENURE-MONTH") || "-"],
+            ["Tenure(month):", getValue(loan, "TENURE", "TENURE-MONTH") || "-"],
             [
-              "Last Paid Amount",
-              `₹ ${fmtNum(getValue(loan, "LAST-PAID-AMT", "LAST-PAID-AMOUNT"))}`,
+              "Overdue Amt:",
+              money(getValue(loan, "OVERDUE-AMT", "OVERDUE-AMOUNT"), true),
+            ],
+            ["Status:", suitStatus],
+            [
+              "Settlement Amt:",
+              money(getValue(loan, "SETTLEMENT-AMT", "SETTLEMENT-AMOUNT")),
+            ],
+            [
+              "Principal Writeoff Amt:",
+              money(
+                getValue(
+                  loan,
+                  "PRINCIPAL-WRITEOFF-AMT",
+                  "PRINCIPAL-WRITE-OFF-AMT",
+                ),
+              ),
+            ],
+            [
+              "Total Writeoff Amt:",
+              money(
+                getValue(
+                  loan,
+                  "WRITE-OFF-AMT",
+                  "TOTAL-WRITEOFF-AMT",
+                  "TOTAL-WRITE-OFF-AMT",
+                ),
+                true,
+              ),
             ],
           ];
+
+          // Build rows of 3 key/value pairs
+          const rows = [];
+          for (let i = 0; i < fields.length; i += 3) {
+            rows.push(fields.slice(i, i + 3));
+          }
+
+          const statusUpper = String(status).toUpperCase();
+          const stripClass = /CLOSED|SETTLED|WRITTEN/.test(statusUpper)
+            ? "closed"
+            : "active";
+          const stripText = statusUpper
+            .split("")
+            .map((ch) => (ch === " " ? "&nbsp;" : esc(ch)))
+            .join("<br/>");
 
           const history = getValue(
             loan,
@@ -923,50 +813,68 @@ const generateCrifPdf = async (apiData, creditReportId) => {
           return `
           <article class="account-card">
             <div class="account-heading">
-              <div class="account-heading-main">
-                <span class="account-index">${index + 1}</span>
-
-                <div class="account-title-wrap">
-                  <strong class="account-title">
-                    ${esc(type)}
-                  </strong>
-
-                  <span class="grantor">
-                    Credit Grantor: ${esc(grantor)}
-                  </span>
-                </div>
-              </div>
-
-              <span class="status">${esc(status)}</span>
+              <span class="acc-index">${index + 1}</span>
+              <span class="acc-item">Account Type:<span class="acc-type">${esc(type)}</span></span>
+              <span class="acc-item">Credit Grantor: ${esc(grantor)}</span>
+              <span class="acc-item">Account #: ${esc(accNo)}</span>
+              <span class="acc-item plain">Info, as of: <span class="plain-val">${esc(infoAsOf)}</span></span>
             </div>
 
-            <div class="account-grid">
-              ${fields
-                .map(
-                  ([label, value]) => `
-                <div class="account-field">
-                  <div class="label">${esc(label)}</div>
-                  <div class="value">${esc(value)}</div>
-                </div>
-              `,
-                )
-                .join("")}
-            </div>
+            <table class="account-table">
+              <tbody>
+                ${rows
+                  .map((row, rIdx) => {
+                    const cells = row.map(([k, v]) => kv(k, v)).join("");
+                    const pad =
+                      row.length < 3
+                        ? `<td class="k" colspan="${(3 - row.length) * 2}"></td>`
+                        : "";
+                    const strip =
+                      rIdx === 0
+                        ? `<td class="strip ${stripClass}" rowspan="${rows.length}">${stripText}</td>`
+                        : "";
+                    return `<tr>${strip}${cells}${pad}</tr>`;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
 
-            <div class="payment-heading">
-              Payment History / Asset Classification
-            </div>
-
+            <div class="payment-heading">Payment History/Asset Classification</div>
             ${paymentHtml(history)}
-          </article>
-        `;
+          </article>`;
         })
         .join("")
-    : `
-      <div class="muted">
-        No account details are available in this CRIF report.
-      </div>
-    `;
+    : `<div class="muted pad">No account details are available in this CRIF report.</div>`;
+
+  const securityHtml = `
+    <div class="payment-heading collateral-heading">Collateral/Security Details</div>
+    <table class="grid-table collateral-table">
+      <thead>
+        <tr>
+          <th>Security Type</th>
+          <th>Type of Charge</th>
+          <th>Security Value</th>
+          <th>Date Of Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${
+          securityRows.length
+            ? securityRows
+                .map(
+                  (r) => `<tr>
+                    <td>${esc(r[0])}</td>
+                    <td>${esc(r[1])}</td>
+                    <td>${esc(money(r[2]) === "-" ? r[2] : money(r[2]))}</td>
+                    <td>${esc(r[3] ? fmtDate(r[3]) : "-")}</td>
+                  </tr>`,
+                )
+                .join("")
+            : `<tr><td>-</td><td>-</td><td>-</td><td>-</td></tr>`
+        }
+      </tbody>
+    </table>
+  `;
 
   // ----------------------------------------------------------
   // LENDER ENQUIRIES
@@ -974,1199 +882,483 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   let enquiryItems = arr(
     getValue(enquiryRoot, "ENQUIRY", "ENQUIRIES", "RESPONSE", "ITEM"),
   );
-
   if (!enquiryItems.length) {
-    const nestedEnquiries = getValue(report, "ENQUIRY", "INQUIRY", "ENQUIRIES");
-
-    enquiryItems = arr(nestedEnquiries);
+    enquiryItems = arr(getValue(report, "ENQUIRY", "INQUIRY", "ENQUIRIES"));
   }
 
-  const enquiryHtml = enquiryItems.length
-    ? `
-      <div class="table-wrap">
-        <table class="data-table enquiry-table">
-          <thead>
-            <tr>
-              <th>Lender Name</th>
-              <th>Date of Inquiry</th>
-              <th>Purpose</th>
-              <th>Ownership Type</th>
-              <th>Amount (₹)</th>
-              <th>Remark</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            ${enquiryItems
-              .map(
-                (enquiry) => `
-              <tr>
-                <td>
-                  ${esc(
-                    getValue(
-                      enquiry,
-                      "LENDER-NAME",
-                      "MEMBER-NAME",
-                      "CREDIT-GUARANTOR",
-                      "CREDIT-GRANTOR",
-                    ),
-                  )}
-                </td>
-
-                <td>
-                  ${esc(
-                    fmtDate(
-                      getValue(
-                        enquiry,
-                        "DATE-OF-INQUIRY",
-                        "INQUIRY-DATE",
-                        "DATE",
-                        "DATE-OF-ENQUIRY",
-                      ),
-                    ),
-                  )}
-                </td>
-
-                <td>
-                  ${esc(
-                    getValue(
-                      enquiry,
-                      "PURPOSE",
-                      "ENQUIRY-PURPOSE",
-                      "PURPOSE-TYPE",
-                    ),
-                  )}
-                </td>
-
-                <td>
-                  ${esc(getValue(enquiry, "OWNERSHIP-TYPE", "OWNERSHIP-IND"))}
-                </td>
-
-                <td>
-                  ${esc(
-                    fmtNum(
-                      getValue(
-                        enquiry,
-                        "AMOUNT",
-                        "ENQUIRY-AMOUNT",
-                        "INQUIRY-AMOUNT",
-                      ),
-                    ),
-                  )}
-                </td>
-
-                <td>
-                  ${esc(getValue(enquiry, "REMARK", "REMARKS"))}
-                </td>
-              </tr>
-            `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    `
-    : `
-      <div class="muted">
-        Individual lender enquiry details are not available
-        in the supplied API response.
-      </div>
-    `;
+  const enquiryHtml = `
+    <table class="grid-table enquiry-table">
+      <thead>
+        <tr>
+          <th>Lender Name</th>
+          <th>Date of Inquiry</th>
+          <th>Purpose</th>
+          <th>Ownership Type</th>
+          <th>Amount</th>
+          <th>Remark</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${
+          enquiryItems.length
+            ? enquiryItems
+                .map(
+                  (e) => `
+          <tr>
+            <td>${esc(getValue(e, "LENDER-NAME", "MEMBER-NAME", "CREDIT-GUARANTOR", "CREDIT-GRANTOR"))}</td>
+            <td>${esc(fmtDate(getValue(e, "DATE-OF-INQUIRY", "INQUIRY-DATE", "DATE", "DATE-OF-ENQUIRY")))}</td>
+            <td>${esc(getValue(e, "PURPOSE", "ENQUIRY-PURPOSE", "PURPOSE-TYPE"))}</td>
+            <td>${esc(getValue(e, "OWNERSHIP-TYPE", "OWNERSHIP-IND"))}</td>
+            <td>${esc(money(getValue(e, "AMOUNT", "ENQUIRY-AMOUNT", "INQUIRY-AMOUNT")))}</td>
+            <td>${esc(getValue(e, "REMARK", "REMARKS"), "—")}</td>
+          </tr>`,
+                )
+                .join("")
+            : `<tr><td colspan="6" class="center">No inquiries reported</td></tr>`
+        }
+      </tbody>
+    </table>
+  `;
 
   // ----------------------------------------------------------
-  // EMPLOYMENT AND COMMENTS
-  // ----------------------------------------------------------
-  const comments = firstAvailable(
-    getValue(report, "COMMENTS", "COMMENT"),
-    getValue(report, "REPORT-COMMENTS"),
-  );
-
-  // ----------------------------------------------------------
-  // COMPLETE PDF HTML
+  // COMPLETE HTML
   // ----------------------------------------------------------
   const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CRIF High Mark Consumer Credit Report</title>
+<style>
+  @page { size: A4; }
+
+  :root {
+    --navy: #1f3b73;
+    --text: #222;
+    --green: #bcd9b8;
+    --orange: #fcd9a6;
+    --head-bg: #eaeff7;
+    --border: #cdd3dc;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 
-      <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-      />
-
-      <title>CRIF High Mark Consumer Credit Report</title>
-
-      <style>
- 
-/* =========================================
-   CRIF REFERENCE PDF STYLE
-   HORIZONTAL LAYOUT - A4 PDF
-   BOLD KEYS + PAYMENT HISTORY FIX
-========================================= */
-
-@page {
-  size: A4;
-  margin: 10mm 9mm 12mm;
-}
-
-:root {
-  --primary: #234f6b;
-  --primary-dark: #173d55;
-  --key-color: #173f59;
-  --value-color: #172630;
-  --border-color: #cbd5db;
-  --light-bg: #f0f3f4;
-  --green-bg: #e7f3e8;
-  --green-text: #245a37;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 9px;
-  color: var(--value-color);
-  line-height: 1.4;
-  background: #fff;
-  overflow-wrap: anywhere;
-}
-
-img {
-  max-width: 100%;
-}
-
-/* =========================================
-   GLOBAL TEXT COLORS
-   KEYS / LABELS BOLD
-========================================= */
-
-.label,
-.info-card .label,
-.account-field .label,
-.account-title,
-.section-title,
-.subheading,
-.payment-heading,
-.score-title,
-.data-table th,
-.summary-table th,
-.payment-table th,
-strong,
-b {
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-}
-
-.value,
-.info-card .value,
-.account-field .value,
-.data-table td,
-.summary-table td,
-.payment-table td {
-  color: var(--value-color) !important;
-  font-weight: 500 !important;
-}
-
-/* Bold labels in common key-value structures */
-.info-card .label,
-.account-field .label {
-  display: block;
-  font-size: 8px;
-  font-weight: 800 !important;
-  margin-bottom: 3px;
-}
-
-.info-card .value,
-.account-field .value {
-  display: block;
-  font-size: 8px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-/* If the template uses label/value inline pairs */
-.info-card label,
-.account-field label,
-.key,
-.field-label,
-.data-label {
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-}
-
-/* =========================================
-   HEADER - HORIZONTAL
-========================================= */
-
-.masthead {
-  display: grid !important;
-  grid-template-columns:
-    minmax(0, 1fr)
-    minmax(0, 1.5fr)
-    minmax(0, 1fr) !important;
-  align-items: center !important;
-  gap: 8px;
-  width: 100%;
-  border-bottom: 1px solid #bfc9ce;
-  padding-bottom: 10px;
-  margin-bottom: 14px;
-}
-
-.brand {
-  min-width: 0;
-  font-size: 17px;
-  font-weight: 800 !important;
-  color: var(--primary-dark);
-  letter-spacing: -0.4px;
-  text-align: left;
-}
-
-.brand small {
-  display: block !important;
-  font-size: 7px;
-  font-weight: 500 !important;
-  color: #435966;
-  letter-spacing: 0;
-  margin-top: 4px;
-}
-
-.report-name {
-  display: block;
-  min-width: 0;
-  text-align: center !important;
-  font-size: 16px;
-  font-weight: 800 !important;
-  color: var(--primary-dark);
-  margin: 0 0 3px;
-}
-
-.mast-right {
-  min-width: 0;
-  font-size: 7px;
-  line-height: 1.5;
-  text-align: right !important;
-  color: #263d49;
-  overflow-wrap: anywhere;
-}
-
-.masthead::after {
-  content: none !important;
-}
-
-.prepared {
-  display: block;
-  text-align: center;
-  font-size: 10px;
-  font-weight: 700 !important;
-  color: var(--primary-dark);
-  margin-bottom: 12px;
-}
-
-.top-meta {
-  display: none !important;
-}
-
-/* =========================================
-   TAGLINE
-========================================= */
-
-.tagline {
-  display: block;
-  width: 100%;
-  background: #c6e5c9;
-  color: #243d2c;
-  padding: 8px 12px;
-  font-size: 10px;
-  font-weight: 800 !important;
-  text-transform: none;
-  letter-spacing: 0;
-  margin: 12px 0 8px;
-}
-
-/* =========================================
-   SECTION HEADINGS
-========================================= */
-
-.section {
-  display: block;
-  width: 100%;
-  margin: 13px 0;
-}
-
-.section-title {
-  display: block;
-  width: 100%;
-  background: #c6e5c9;
-  border: 0;
-  border-radius: 2px;
-  color: #203c2a !important;
-  font-size: 10px;
-  font-weight: 800 !important;
-  padding: 8px 12px;
-  margin-bottom: 10px;
-  break-after: avoid;
-}
-
-.section-title.orange-title {
-  background: #ffdfad;
-  color: #3e3425 !important;
-}
-
-/* =========================================
-   INQUIRY / PERSONAL INFORMATION
-   THREE COLUMNS
-========================================= */
-
-.info-grid {
-  display: grid !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  grid-auto-flow: row;
-  gap: 5px 12px;
-  align-items: start;
-  width: 100%;
-}
-
-.info-card {
-  display: block !important;
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  padding: 3px 2px;
-  background: #fff;
-  break-inside: avoid;
-}
-
-.info-card.wide {
-  grid-column: 1 / -1 !important;
-}
-
-.label {
-  display: block;
-  color: var(--key-color) !important;
-  font-size: 8px;
-  font-weight: 800 !important;
-  text-transform: none;
-  letter-spacing: 0;
-  margin-bottom: 2px;
-}
-
-.value {
-  display: block;
-  font-size: 8px;
-  color: var(--value-color) !important;
-  font-weight: 500 !important;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-/* =========================================
-   CREDIT SCORE
-========================================= */
-
-.score-panel {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) 105px !important;
-  align-items: center !important;
-  gap: 12px;
-  width: 100%;
-  border: 0;
-  background: #fff;
-  padding: 6px 10px;
-  break-inside: avoid;
-}
-
-.score-panel > * {
-  min-width: 0;
-}
-
-.score-row {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap;
-  align-items: center !important;
-  gap: 12px;
-  width: 100%;
-}
-
-.score-title {
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-  text-transform: uppercase;
-  font-size: 10px;
-}
-
-.score-number {
-  flex-shrink: 0;
-  color: var(--primary-dark) !important;
-  font-size: 31px;
-  font-weight: 800 !important;
-  white-space: nowrap;
-}
-
-.score-number small {
-  color: var(--primary-dark) !important;
-  font-weight: 700 !important;
-}
-
-/* Circular score badge, if score-number is the circle element */
-.score-number.circle,
-.score-number.score-circle,
-.score-circle {
-  display: inline-flex !important;
-  justify-content: center;
-  align-items: center;
-  width: 76px;
-  height: 76px;
-  border: 3px solid var(--primary);
-  border-radius: 50% !important;
-  text-align: center;
-  padding: 8px;
-}
-
-.score-status {
-  color: var(--primary-dark) !important;
-  font-weight: 800 !important;
-}
-
-.score-description {
-  color: #334953 !important;
-  font-weight: 500 !important;
-}
-
-.score-range {
-  font-size: 8px;
-  font-weight: 700 !important;
-}
-
-/* =========================================
-   VARIATIONS / SUBSECTIONS
-========================================= */
-
-.section-note {
-  display: block;
-  font-size: 7px;
-  font-style: italic;
-  color: #52636d;
-  text-align: center;
-  margin: 0 0 10px;
-}
-
-.variation-block {
-  display: block;
-  width: 100%;
-  margin: 9px 0 12px;
-  break-inside: auto;
-}
-
-.subheading {
-  display: block;
-  width: 100%;
-  background: var(--light-bg);
-  color: var(--key-color) !important;
-  font-size: 8px;
-  font-weight: 800 !important;
-  padding: 7px;
-  margin-bottom: 0;
-}
-
-/* =========================================
-   ALL TABLES
-   HORIZONTAL TABLE LAYOUT
-========================================= */
-
-.data-table,
-.summary-table,
-.payment-table {
-  display: table !important;
-  width: 100% !important;
-  max-width: 100%;
-  border-collapse: collapse !important;
-  border-spacing: 0;
-  table-layout: fixed !important;
-}
-
-.data-table thead,
-.summary-table thead,
-.payment-table thead {
-  display: table-header-group !important;
-}
-
-.data-table tbody,
-.summary-table tbody,
-.payment-table tbody {
-  display: table-row-group !important;
-}
-
-.data-table tr,
-.summary-table tr,
-.payment-table tr {
-  display: table-row !important;
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-
-.data-table th,
-.summary-table th,
-.payment-table th {
-  display: table-cell !important;
-  background: var(--light-bg);
-  color: var(--key-color) !important;
-  font-size: 7px;
-  font-weight: 800 !important;
-  text-transform: none;
-  letter-spacing: 0;
-  text-align: left;
-  vertical-align: middle !important;
-  padding: 6px 5px;
-  border: 1px solid var(--border-color);
-  overflow-wrap: anywhere;
-  word-break: normal;
-}
-
-.data-table td,
-.summary-table td,
-.payment-table td {
-  display: table-cell !important;
-  background: #fff;
-  color: var(--value-color) !important;
-  font-size: 8px;
-  font-weight: 500 !important;
-  padding: 6px 5px;
-  border: 1px solid var(--border-color);
-  vertical-align: top !important;
-  overflow-wrap: anywhere;
-  word-break: normal;
-}
-
-.summary-table td.number {
-  font-size: 10px;
-  font-weight: 800 !important;
-  text-align: center;
-}
-
-.table-wrap {
-  display: block !important;
-  width: 100% !important;
-  max-width: 100%;
-  overflow: visible !important;
-}
-
-/* =========================================
-   ACCOUNT SUMMARY METRICS
-========================================= */
-
-.inline-metrics {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 18px;
-  width: 100%;
-  border: 0;
-  background: #fff;
-  padding: 9px 4px;
-  font-size: 8px;
-  line-height: 1.7;
-}
-
-.inline-metrics > * {
-  min-width: 0;
-}
-
-.inline-metrics strong,
-.inline-metrics b,
-.inline-metrics .label {
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-}
-
-/* =========================================
-   ACCOUNT DETAILS CARD
-========================================= */
-
-.account-card {
-  display: block;
-  width: 100%;
-  margin: 12px 0;
-  border: 1px solid #d7dfe3;
-  break-inside: auto;
-}
-
-.account-heading {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap;
-  justify-content: space-between !important;
-  align-items: center !important;
-  gap: 10px;
-  width: 100%;
-  background: #eef1f2;
-  border-bottom: 1px solid #d7dfe3;
-  padding: 8px;
-}
-
-.account-heading-main {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap;
-  align-items: center !important;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.account-index {
-  display: inline-flex !important;
-  flex-shrink: 0;
-  justify-content: center;
-  align-items: center;
-  background: var(--primary);
-  color: #fff !important;
-  font-weight: 800 !important;
-}
-
-.account-title-wrap {
-  display: flex !important;
-  flex-direction: column !important;
-  min-width: 0;
-}
-
-.account-title {
-  color: var(--primary-dark) !important;
-  font-size: 9px;
-  font-weight: 800 !important;
-  overflow-wrap: anywhere;
-}
-
-.status {
-  display: inline-block !important;
-  flex-shrink: 0;
-  background: #d8eadb;
-  color: #245a37 !important;
-  font-weight: 800 !important;
-  white-space: nowrap;
-  padding: 3px 6px;
-}
-
-.account-grid {
-  display: grid !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  grid-auto-flow: row;
-  gap: 0 !important;
-  align-items: stretch;
-  width: 100%;
-}
-
-.account-field {
-  display: block !important;
-  min-width: 0;
-  padding: 7px;
-  border-color: #e0e5e8;
-  border-style: solid;
-  border-width: 0 1px 1px 0;
-  overflow-wrap: anywhere;
-}
-
-.account-field .label {
-  margin-bottom: 3px;
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-}
-
-.account-field .value {
-  line-height: 1.4;
-  color: var(--value-color) !important;
-  font-weight: 500 !important;
-}
-
-/* =========================================
-   PAYMENT HISTORY
-   TABLE FIXES
-========================================= */
-
-.payment-heading {
-  display: block;
-  margin: 8px 0 12px;
-  color: #111 !important;
-  font-size: 10px;
-  font-weight: 800 !important;
-}
-
-.payment-table {
-  display: table !important;
-  width: 100% !important;
-  max-width: 100%;
-  table-layout: fixed !important;
-  border-collapse: collapse !important;
-  border-spacing: 0 !important;
-}
-
-.payment-table thead {
-  display: table-header-group !important;
-}
-
-.payment-table tbody {
-  display: table-row-group !important;
-}
-
-.payment-table tr {
-  display: table-row !important;
-  break-inside: avoid;
-  page-break-inside: avoid;
-}
-
-.payment-table th,
-.payment-table td {
-  display: table-cell !important;
-  vertical-align: middle !important;
-  text-align: center;
-  border: 1px solid var(--border-color) !important;
-  padding: 5px 3px !important;
-  overflow-wrap: anywhere;
-  word-break: normal;
-  white-space: normal;
-}
-
-.payment-table th {
-  background: var(--light-bg) !important;
-  color: var(--key-color) !important;
-  font-size: 7px !important;
-  font-weight: 800 !important;
-}
-
-.payment-table td {
-  background: #fff !important;
-  color: var(--value-color) !important;
-  font-size: 7px !important;
-  font-weight: 600 !important;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Standard / on-time payment indicator */
-.payment-table td.std {
-  background: var(--green-bg) !important;
-  color: var(--green-text) !important;
-  font-weight: 800 !important;
-}
-
-/* Keep payment codes/numbers readable */
-.payment-table td span,
-.payment-table td strong,
-.payment-table td b {
-  color: inherit !important;
-  font-weight: 800 !important;
-}
-
-/* Prevent CSS pseudo-elements from duplicating cell text.
-   This does not remove XXX/numbers present in actual HTML data. */
-.payment-table td::before,
-.payment-table td::after,
-.payment-table th::before,
-.payment-table th::after {
-  content: none !important;
-  display: none !important;
-}
-
-/* Don't allow nested elements to create extra layout columns */
-.payment-table td > *,
-.payment-table th > * {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-/* =========================================
-   DISCLAIMER AND FOOTER
-========================================= */
-
-.disclaimer {
-  display: block;
-  width: 100%;
-  border-top: 1px solid #c5cfd4;
-  color: #43545d;
-  font-size: 7px;
-  font-weight: 500 !important;
-  line-height: 1.5;
-  padding-top: 6px;
-}
-
-.disclaimer strong,
-.disclaimer b {
-  color: var(--key-color) !important;
-  font-weight: 800 !important;
-}
-
-.footer-note {
-  display: block;
-  width: 100%;
-  color: #52636d;
-  font-size: 7px;
-  font-weight: 500 !important;
-  text-align: center;
-  margin-top: 8px;
-}
-
-/* =========================================
-   PRINT / PUPPETEER PDF
-========================================= */
-
-@media print {
-  html,
   body {
-    width: 100%;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 8.5px;
+    color: var(--text);
+    line-height: 1.35;
   }
 
-  .masthead,
-  .info-grid,
-  .score-panel,
-  .account-heading {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
+  .page-break { break-before: page; page-break-before: always; }
 
-  .section-title,
-  .variation-block {
-    break-after: avoid;
-    page-break-after: avoid;
-  }
-
-  .section-title,
-  .subheading,
-  .data-table th,
-  .summary-table th,
-  .payment-table th {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  .data-table,
-  .summary-table,
-  .payment-table {
-    width: 100% !important;
-  }
-
-  .data-table th,
-  .data-table td,
-  .summary-table th,
-  .summary-table td,
-  .payment-table th,
-  .payment-table td {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-}
-
-/* =========================================
-   SMALL SCREEN FALLBACK
-   PDF remains A4 when rendered by Puppeteer
-========================================= */
-
-@media screen and (max-width: 650px) {
+  /* ---------- Masthead ---------- */
   .masthead {
-    grid-template-columns: minmax(0, 1fr) !important;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .logo { width: 33%; }
+  .logo .crif {
+    font-size: 22px;
+    font-weight: 900;
+    color: #1b2b44;
+    letter-spacing: -0.5px;
+  }
+  .logo .hm {
+    font-size: 11px;
+    font-weight: 800;
+    color: #1a6b9a;
+    margin-left: 6px;
+  }
+  .logo .tag {
+    font-size: 7px;
+    font-style: italic;
+    color: #666;
+    margin-top: 1px;
+  }
+  .title { width: 34%; }
+  .title h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 800;
+    color: #1b2b44;
+  }
+  .title .for {
+    font-size: 10px;
+    font-weight: 700;
+    color: #1b2b44;
+    margin-top: 2px;
+  }
+  .meta { width: 33%; }
+  .meta table { border-collapse: collapse; font-size: 7.5px; margin-left: auto; }
+  .meta td { padding: 1.5px 6px; vertical-align: top; }
+  .meta td.l { color: #666; }
+  .meta td.r { font-weight: 800; color: #111; }
+
+  /* ---------- Section titles ---------- */
+  .section { margin: 0 0 14px; }
+  .section-title {
+    background: var(--green);
+    color: #1b2b44;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 7px 9px;
+    margin-bottom: 7px;
+    break-after: avoid;
+  }
+  .section-title.orange { background: var(--orange); }
+
+  /* ---------- Inquiry input ---------- */
+  .input-table { width: 100%; border-collapse: collapse; }
+  .input-table td { padding: 2.5px 4px; vertical-align: top; }
+  .input-table td.lab { font-weight: 800; color: #1b2b44; white-space: nowrap; width: 11%; }
+  .input-table td.val { width: 22%; }
+
+  /* ---------- Generic grid tables ---------- */
+  .grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  .grid-table th {
+    background: var(--head-bg);
+    color: var(--navy);
+    font-weight: 800;
+    font-size: 7.5px;
     text-align: center;
+    padding: 5px 3px;
+    border: 1px solid var(--border);
   }
-
-  .brand,
-  .mast-right {
-    text-align: center !important;
+  .grid-table td {
+    padding: 5px 3px;
+    border: 1px solid var(--border);
+    text-align: center;
+    font-size: 8px;
+    word-wrap: break-word;
   }
+  .grid-table tr { break-inside: avoid; }
 
-  .info-grid,
-  .account-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  .score-table td { text-align: left; padding: 6px; }
+  .score-table th { text-align: left; padding: 6px; }
+
+  .summary-table td { font-size: 8.5px; padding: 6px 3px; }
+
+  .inline-metrics {
+    display: flex;
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--head-bg);
+    margin-top: 14px;
+    margin-bottom: 14px;
   }
-
-  .score-panel {
-    grid-template-columns: minmax(0, 1fr) !important;
+  .inline-metrics div {
+    flex: 1;
+    padding: 6px 8px;
+    border-right: 1px solid var(--border);
+    color: var(--navy);
+    font-weight: 800;
+    font-size: 8px;
   }
-}
+  .inline-metrics div:last-child { border-right: 0; }
+  .inline-metrics span { color: var(--text); font-weight: 400; }
 
- 
-      </style>
-    </head>
+  /* ---------- Score ---------- */
+  .score-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 14px 4px 6px;
+  }
+  .score-info { display: flex; gap: 90px; }
+  .score-info .lbl { font-weight: 800; color: var(--navy); margin-bottom: 5px; font-size: 9px; }
+  .score-info .val { font-size: 9px; }
+  .score-badge {
+    width: 72px;
+    height: 58px;
+    border-radius: 16px;
+    background: #2d6178;
+    color: #fff;
+    text-align: center;
+    padding-top: 6px;
+    margin-right: 30px;
+  }
+  .score-badge .num { font-size: 24px; font-weight: 800; line-height: 1.05; }
+  .score-badge .txt { font-size: 9px; font-weight: 700; color: #cfe0e8; }
 
-    <body>
-      <header class="masthead">
-        <div class="brand">
-          CRIF HIGH MARK
-          <small>TOGETHER TO THE NEXT LEVEL</small>
+  .factors-title { font-size: 10px; font-weight: 800; color: #1b2b44; margin: 14px 4px 5px; }
+  .factor-bar { font-size: 9px; letter-spacing: 1px; color: #666; margin-left: 4px; }
+  .tips { text-align: right; font-size: 7.5px; color: #555; margin-top: 8px; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin: 0 3px 0 10px; }
+  .dot.g { background: #3aa655; }
+  .dot.o { background: #ef7b45; }
+
+  /* ---------- Variations ---------- */
+  .tip-note { font-size: 7.5px; font-style: italic; color: #555; margin: -2px 0 8px; }
+  .var-cols { display: flex; gap: 22px; align-items: flex-start; }
+  .var-col { flex: 1; }
+  .var-col.right { flex: 0 0 38%; }
+  .var-block { margin-bottom: 14px; }
+  .var-col.right .var-block {
+    background: #fffaf2;
+    border: 1px solid #f0c98f;
+    padding: 4px 6px;
+  }
+  .var-table { width: 100%; border-collapse: collapse; font-size: 7.5px; }
+  .var-table th {
+    text-align: left;
+    color: var(--navy);
+    font-weight: 800;
+    padding: 3px 2px 4px;
+  }
+  .var-table td { padding: 2px; vertical-align: top; }
+  .right { text-align: right !important; }
+
+  /* ---------- Accounts ---------- */
+  .account-card { margin-bottom: 18px; break-inside: avoid; }
+  .account-heading {
+    background: #e8edf6;
+    padding: 7px 8px;
+    font-weight: 800;
+    color: var(--navy);
+    font-size: 9px;
+  }
+  .account-heading .acc-index { margin-right: 6px; }
+  .account-heading .acc-item { margin-right: 22px; }
+  .account-heading .acc-type { color: #d2232a; margin-left: 0; }
+  .account-heading .plain { font-weight: 800; }
+  .account-heading .plain-val { font-weight: 400; color: #222; }
+
+  .account-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .account-table td {
+    border: 1px solid var(--border);
+    padding: 3.5px 5px;
+    font-size: 8px;
+  }
+  .account-table td.k { color: #444; width: 13%; }
+  .account-table td.v { text-align: right; font-weight: 800; color: #111; width: 20%; }
+  .account-table td.strip {
+    width: 16px;
+    text-align: center;
+    font-weight: 800;
+    font-size: 7.5px;
+    line-height: 1.2;
+    color: #fff;
+    border: 0;
+    padding: 2px;
+  }
+  .strip.closed { background: #8fcf8f; }
+  .strip.active { background: #5aa7d9; }
+
+  .payment-heading {
+    font-weight: 800;
+    color: var(--navy);
+    font-size: 8.5px;
+    margin: 8px 0 3px 2px;
+  }
+  .collateral-heading { margin: 10px 0 6px 6px; font-size: 9px; }
+
+  .payment-table th, .payment-table td { font-size: 6.8px; padding: 4px 1px; }
+  .payment-table .year-col { width: 6%; background: #fff; border-top-color: transparent; }
+  .payment-table .year-cell { background: #fff; color: var(--text); font-size: 8px; }
+
+  .collateral-table td { color: #666; padding: 8px 3px; }
+
+  .muted { color: #666; }
+  .pad { padding: 6px; }
+  .center { text-align: center !important; }
+
+  /* ---------- Disclaimer ---------- */
+  .disclaimer {
+    font-size: 7.5px;
+    line-height: 1.5;
+    color: #333;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+  <!-- MASTHEAD -->
+  <div class="masthead">
+    <div class="logo">
+      <div><span class="crif">CRIF</span><span class="hm">HIGH MARK</span></div>
+      <div class="tag">Together to the next level</div>
+    </div>
+
+    <div class="title">
+      <h1>CONSUMER CREDIT REPORT</h1>
+      <div class="for">For ${esc(name)}</div>
+    </div>
+
+    <div class="meta">
+      <table>
+        <tr><td class="l">CHM Ref #:</td><td class="r">${esc(reportNumber)}</td></tr>
+        <tr><td class="l">Application ID:</td><td class="r">${esc(applicationId)}</td></tr>
+        <tr><td class="l">Date of Request:</td><td class="r">${esc(dateOfRequest)}</td></tr>
+        <tr><td class="l">Date of Issue:</td><td class="r">${esc(dateOfIssue)}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- INQUIRY INPUT INFORMATION -->
+  <section class="section">
+    <div class="section-title">Inquiry Input Information</div>
+    <table class="input-table">
+      <tr>
+        <td class="lab">Name:</td><td class="val">${esc(name)}</td>
+        <td class="lab">DOB/Age:</td><td class="val">${esc(fmtDate(dob))}</td>
+        <td class="lab">Gender:</td><td class="val">${esc(gender)}</td>
+      </tr>
+      <tr>
+        <td class="lab">Father:</td><td class="val">${esc(father)}</td>
+        <td class="lab">Spouse:</td><td class="val">${esc(spouse)}</td>
+        <td class="lab">Mother:</td><td class="val">${esc(mother)}</td>
+      </tr>
+      <tr>
+        <td class="lab">Phone Numbers:</td><td class="val">${esc(mobile)}</td>
+        <td class="lab">Email ID(s):</td><td class="val">${esc(email)}</td>
+        <td class="lab">ID(s):</td><td class="val">${esc(pan)}</td>
+      </tr>
+      <tr>
+        <td class="lab">Current Address:</td>
+        <td class="val" colspan="5">${esc(address)}</td>
+      </tr>
+      <tr>
+        <td class="lab">Other Address:</td>
+        <td class="val" colspan="5">${esc(otherAddress)}</td>
+      </tr>
+      <tr>
+        <td class="lab">Employment Details:</td>
+        <td class="val" colspan="5">${esc(employmentText)}</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- CREDIT SCORE -->
+  <section class="section">
+    <div class="section-title">CRIF HIGHMARK SCORE(S):</div>
+
+    <table class="grid-table score-table">
+      <thead>
+        <tr>
+          <th style="width:34%">SCORE NAME</th>
+          <th style="width:16%">RANGE</th>
+          <th style="width:12%">SCORE</th>
+          <th>DESCRIPTION</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>${esc(scoreName)}</td>
+          <td>${esc(scoreRange)}</td>
+          <td>${score === null ? "-" : esc(score)}</td>
+          <td>${esc(scoreDescription)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="score-wrap">
+      <div class="score-info">
+        <div>
+          <div class="lbl">SCORE NAME</div>
+          <div class="val">${esc(scoreName)}</div>
         </div>
-
-        <div class="mast-right">
-          <strong>CONSUMER CREDIT REPORT</strong>
-          Confidential Credit Information<br />
-          CHM Ref #: ${esc(reportNumber)}<br />
-          Date of Request: ${esc(reportDate)}<br />
-          Date of Issue: ${esc(reportDate)}
+        <div>
+          <div class="lbl">Score Range</div>
+          <div class="val">${esc(scoreRange)}</div>
         </div>
-      </header>
-
-      <div class="tagline">Inquiry Input Information</div>
-
-      <h1 class="report-name">Consumer Credit Report</h1>
-
-      <div class="prepared">
-        For <strong>${esc(name)}</strong>
       </div>
 
-      <div class="top-meta">
-        <div>
-          <span>Report Reference</span>
-          <strong>${esc(reportNumber)}</strong>
-        </div>
-
-        <div>
-          <span>Date of Request / Issue</span>
-          <strong>${esc(reportDate)}</strong>
-        </div>
-
-        <div>
-          <span>Applicant Name</span>
-          <strong>${esc(name)}</strong>
-        </div>
+      <div class="score-badge">
+        <div class="num">${score === null ? "-" : esc(score)}</div>
+        <div class="txt">Score</div>
       </div>
+    </div>
 
-      <!-- INQUIRY INPUT INFORMATION -->
-      <section class="section">
-        <div class="section-title">
-          Inquiry Input Information
-        </div>
+    <div class="factors-title">SCORING FACTORS</div>
+    <div class="factor-bar">|||||||||||</div>
 
-        <div class="info-grid">
-          ${infoCard("Name", name)}
-          ${infoCard("Date of Birth", fmtDate(dob))}
-          ${infoCard("Gender", gender)}
-          ${infoCard("Phone Number", mobile)}
-          ${infoCard("Email ID", email)}
-          ${infoCard("ID / PAN", pan)}
-          ${infoCard("Address", maskAddress(address), true)}
-        </div>
-      </section>
+    <div class="tips">
+      Tips: <span class="dot g"></span>Positive impact on credit score
+      <span class="dot o"></span>Negative impact on credit score
+    </div>
+  </section>
 
-      <!-- CREDIT SCORE -->
-      <section class="section">
-        <div class="section-title">
-          CRIF HIGH MARK SCORE
-        </div>
+  <!-- PERSONAL INFORMATION VARIATIONS -->
+  <section class="section">
+    <div class="section-title orange">Personal Information - Variations</div>
+    <div class="tip-note">Tip: These are applicant's personal information variations as contributed by various financial institutions</div>
 
-        <div class="score-panel">
-          <div>
-            <div class="score-title">Score Information</div>
-
-            <div class="score-row">
-              <div class="score-number">
-                ${score === null ? "-" : esc(score)}
-
-                <small>CRIF Score</small>
-              </div>
-
-              <div>
-                <div class="score-name">${esc(scoreName)}</div>
-                <div class="score-range">Score Range: 300–900</div>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div class="score-status">${esc(scoreStatus)}</div>
-            <div class="score-description">
-              ${esc(scoreDescription)}
-            </div>
-          </div>
-        </div>
-
-        <div class="subheading" style="margin-top: 11px">
-          Scoring Factors
-        </div>
-
-        <ul class="factor-list">
-          <li>
-            The reported credit score should be interpreted with
-            the credit information shown in this report.
-          </li>
-          <li>
-            Review account status, outstanding balances and
-            payment history for additional context.
-          </li>
-        </ul>
-      </section>
-
-      <!-- PERSONAL INFORMATION VARIATIONS -->
-      <section class="section">
-        <div class="section-title">
-          Personal Information - Variations
-        </div>
-
-        <div class="section-note">
-          Variations reported by financial institutions in the source data.
-        </div>
-
+    <div class="var-cols">
+      <div class="var-col">
         ${variationTable(nameVariations, "Name Variations")}
+        ${variationTable(addressVariations, "Address Variation", { address: true })}
+        ${variationTable(emailVariations, "Email Variation")}
+      </div>
+      <div class="var-col right">
         ${variationTable(dobVariations, "DOB Variations")}
-        ${variationTable(addressVariations, "Address Variations", true)}
         ${variationTable(phoneVariations, "Phone Variations")}
-        ${variationTable(idVariations, "ID / PAN Variations")}
-        ${variationTable(emailVariations, "Email ID Variations")}
-      </section>
-
-      <!-- ACCOUNT SUMMARY -->
-      <section class="section">
-        <div class="section-title">Account Summary</div>
-
-        <div class="section-note">
-          Amounts are shown in INR. Values are based on the
-          account-summary fields returned by the source.
-        </div>
-
-        <table class="summary-table">
-          <thead>
-            <tr>
-              <th>Number of Accounts</th>
-              <th>Active Accounts</th>
-              <th>Overdue Accounts</th>
-              <th>Current Balance (₹)</th>
-              <th>Disbursed Amount / High Credit (₹)</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            <tr>
-              <td class="number">${esc(totalAccounts)}</td>
-              <td class="number">${esc(activeAccounts)}</td>
-              <td class="number">${esc(overdueAccounts)}</td>
-              <td class="number">${esc(fmtNum(currentBalance))}</td>
-              <td class="number">${esc(fmtNum(disbursedAmount))}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div class="inline-metrics">
-          <strong>Inquiries in last 24 months:</strong>
-          ${esc(enquiries24)}
-          &nbsp; | &nbsp;
-
-          <strong>New accounts in last 6 months:</strong>
-          ${esc(newAccounts6)}
-          &nbsp; | &nbsp;
-
-          <strong>New delinquent accounts in last 6 months:</strong>
-          ${esc(newDelinquent6)}
-        </div>
-
-        <div class="info-grid" style="margin-top: 8px">
-          ${infoCard("Secured Accounts", securedAccounts)}
-          ${infoCard("Unsecured Accounts", unsecuredAccounts)}
-          ${infoCard("Inquiries - Last 6 Months", enquiries6)}
-        </div>
-      </section>
-
-      <!-- ACCOUNT INFORMATION -->
-      <section class="section">
-        <div class="section-title">Account Information</div>
-        ${accountsHtml}
-      </section>
-
-      <!-- LENDER ENQUIRIES -->
-      <section class="section">
-        <div class="section-title">
-          Inquiry Done by Lenders - Past 24 Months
-        </div>
-
-        ${enquiryHtml}
-      </section>
-
-      <!-- EMPLOYMENT DETAILS -->
-      <section class="section">
-        <div class="section-title">Employment Details</div>
-
-        <div class="info-grid">
-          ${infoCard(
-            "Occupation",
-            getValue(employment, "OCCUPATION", "OCCUPATION-TYPE"),
-          )}
-
-          ${infoCard(
-            "Employer",
-            getValue(employment, "EMPLOYER", "EMPLOYER-NAME"),
-          )}
-
-          ${infoCard(
-            "Income",
-            getValue(employment, "INCOME", "MONTHLY-INCOME", "ANNUAL-INCOME"),
-          )}
-
-          ${infoCard(
-            "Employment Type",
-            getValue(employment, "EMPLOYMENT-TYPE", "EMPLOYMENT_TYPE"),
-          )}
-        </div>
-      </section>
-
-      <!-- COMMENTS -->
-      <section class="section">
-        <div class="section-title">Comments</div>
-
-        <div class="muted">
-          ${esc(comments)}
-        </div>
-      </section>
-
-      <!-- APPENDIX -->
-      <section class="section">
-        <div class="section-title">Appendix - Understanding the Report</div>
-
-        <div class="appendix-note">
-          <strong>Account information:</strong>
-          Account details and status are displayed using the
-          information supplied by the source response.
-
-          <br /><br />
-
-          <strong>Payment history:</strong>
-          Payment history and asset-classification values are
-          displayed when they are available in the API response.
-          A dash indicates that a value was not supplied.
-
-          <br /><br />
-
-          <strong>Data variations:</strong>
-          Personal-information variations reflect the variation
-          fields present in the supplied response. Missing variation
-          records are not inferred or created.
-        </div>
-      </section>
-
-      <!-- DISCLAIMER -->
-      <div class="disclaimer">
-        <strong>Disclaimer:</strong>
-        This report is generated using information received from
-        the CRIF High Mark credit information source through the
-        configured API integration. The information is subject to
-        the source data and may be updated or corrected by reporting
-        institutions. Missing fields are displayed as “-” when the
-        corresponding value is not present in the API response.
-        This report contains confidential personal and financial
-        information and should only be accessed or shared by
-        authorized recipients.
+        ${variationTable(idVariations, "PAN Variations")}
       </div>
+    </div>
+  </section>
 
-      <div class="footer-note">
-        CRIF HIGH MARK · CONSUMER CREDIT REPORT · CONFIDENTIAL
-      </div>
-    </body>
-    </html>
+  <!-- ACCOUNT SUMMARY (page 2) -->
+  <div class="page-break"></div>
+
+  ${summaryTable("Primary Account Summary", primary, "PRIMARY")}
+  ${summaryTable("Secondary Account Summary", secondary, "SECONDARY")}
+  ${summaryTable("Group Account Summary", group, "GROUP")}
+
+  <div class="inline-metrics">
+    <div>Inquiries in last 24 Months: <span>${esc(enquiries24)}</span></div>
+    <div>New Account(s) in last 6 Months: <span>${esc(newAccounts6)}</span></div>
+    <div>New Delinquent Account(s) in last 6 Months: <span>${esc(newDelinquent6)}</span></div>
+  </div>
+
+  <!-- ACCOUNT INFORMATION -->
+  <section class="section">
+    <div class="section-title">Account Information</div>
+    ${accountsHtml}
+    ${securityHtml}
+  </section>
+
+  <!-- LENDER INQUIRIES (page 3) -->
+  <div class="page-break"></div>
+
+  <section class="section">
+    <div class="section-title">Inquiry Done by Lenders (Reported For Past 24 Months)</div>
+    ${enquiryHtml}
+  </section>
+
+  <!-- DISCLAIMER (page 4) -->
+  <div class="page-break"></div>
+
+  <div class="disclaimer">
+    <strong>Disclaimer:</strong> This document is prepared based on the data submitted by member
+    institutions of CRIF High Mark Credit Information Services Private Limited (CRIF High Mark) and
+    by using the proprietary match logic of CRIF High Mark. No alterations are made to the data
+    submitted by member institutions and the same is up to date as well as accurate to the best of
+    its knowledge. By using data contained in this document, the user acknowledges that CRIF High
+    Mark is not responsible for errors/omissions resulting from submission of erroneous data from
+    Members to CRIF High Mark. Any paper copy of this document will be considered uncontrolled. If
+    you are not the intended recipient, you are not authorized to read, print, retain, copy,
+    disseminate, distribute or use this information or any part thereof. PERFORM score provided in
+    this document is joint work of CRIF SPA (Italy) and CRIF High Mark (India). For any assistance
+    on this report, reach out to us at customerservice@crifhighmark.com
+  </div>
+
+</body>
+</html>
   `;
 
   // ----------------------------------------------------------
@@ -2178,15 +1370,17 @@ b {
     "credit-reports",
     "crif",
   );
-
   fs.mkdirSync(uploadDir, { recursive: true });
 
   const safeId = String(creditReportId || Date.now()).replace(
     /[^a-zA-Z0-9_-]/g,
     "_",
   );
-
   const filePath = path.join(uploadDir, `crif-${safeId}.pdf`);
+
+  const headerLabel = applicationId
+    ? `CRIF_Credit_Report_${String(applicationId).replace(/[^a-zA-Z0-9_-]/g, "")}`
+    : "CRIF_Credit_Report";
 
   let browser;
 
@@ -2202,61 +1396,35 @@ b {
     });
 
     const page = await browser.newPage();
-
-    await page.setViewport({
-      width: 1240,
-      height: 1754,
-      deviceScaleFactor: 1,
-    });
-
-    await page.setContent(html, {
-      waitUntil: "networkidle0",
-    });
-
+    await page.setViewport({ width: 1240, height: 1754, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "networkidle0" });
     await page.emulateMediaType("print");
 
     await page.pdf({
       path: filePath,
       format: "A4",
       printBackground: true,
-      preferCSSPageSize: true,
       displayHeaderFooter: true,
 
       headerTemplate: `
-        <div style="
-          width: 100%;
-          font-size: 7px;
-          color: #73858e;
-          text-align: right;
-          padding: 0 11mm;
-          font-family: Arial, Helvetica, sans-serif;
-        ">
-          CRIF High Mark Consumer Credit Report
-        </div>
-      `,
+        <div style="width:100%; font-size:8px; color:#777; text-align:right;
+                    padding:0 12mm; font-family:Arial,Helvetica,sans-serif;">
+          ${esc(headerLabel)}
+        </div>`,
 
       footerTemplate: `
-        <div style="
-          width: 100%;
-          font-size: 7px;
-          color: #73858e;
-          text-align: center;
-          padding: 0 11mm;
-          font-family: Arial, Helvetica, sans-serif;
-        ">
-          Page
-          <span class="pageNumber"></span>
-          of
-          <span class="totalPages"></span>
-        </div>
-      `,
+        <div style="width:100%; font-size:7px; color:#777; padding:0 12mm;
+                    font-family:Arial,Helvetica,sans-serif;
+                    display:flex; justify-content:space-between;">
+          <span style="flex:1;">© Copyright ${new Date().getFullYear()}. All rights reserved</span>
+          <span style="flex:1.4; text-align:center;">CRIF High Mark Credit Information Services Pvt. Ltd.</span>
+          <span style="flex:1; text-align:center;">Confidential</span>
+          <span style="flex:0.3; text-align:right;">
+            <span class="pageNumber"></span>/<span class="totalPages"></span>
+          </span>
+        </div>`,
 
-      margin: {
-        top: "14mm",
-        right: "11mm",
-        bottom: "16mm",
-        left: "11mm",
-      },
+      margin: { top: "14mm", right: "12mm", bottom: "14mm", left: "12mm" },
     });
 
     if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
@@ -2284,7 +1452,6 @@ b {
         );
       }
     }
-
     throw error;
   } finally {
     if (browser) {
