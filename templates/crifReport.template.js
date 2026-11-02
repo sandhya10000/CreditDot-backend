@@ -686,15 +686,25 @@ const generateCrifPdf = async (apiData, creditReportId) => {
             getValue(loan, "INFO-AS-OF", "DATE-REPORTED"),
           );
 
-          const suitStatus =
-            getValue(
-              loan,
-              "SUIT-FILED_WILFUL-DEFAULT",
-              "SUIT-FILED-WILFUL-DEFAULT",
-              "SUIT-FILED",
-              "WILFUL-DEFAULT",
-              "ASSET-CLASS",
-            ) || "-";
+          const accountStatus = firstAvailable(
+            getValue(loan, "ACCOUNT-STATUS"),
+            getValue(loan, "STATUS"),
+            getValue(loan, "ACCOUNT-STATUS-DESCRIPTION"),
+            "-",
+          );
+
+          const creditFacilityStatus = firstAvailable(
+            getValue(loan, "WRITTEN-OFF-SETTLED-STATUS"),
+            getValue(loan, "CREDIT-FACILITY-STATUS"),
+            "-",
+          );
+
+          const suitFiledStatus = firstAvailable(
+            getValue(loan, "SUIT-FILED-WILFUL-DEFAULT-STATUS"),
+            getValue(loan, "SUIT-FILED-WILFUL-DEFAULT"),
+            getValue(loan, "SUIT-FILED"),
+            "-",
+          );
 
           // Security / collateral rows
           arr(
@@ -758,7 +768,9 @@ const generateCrifPdf = async (apiData, creditReportId) => {
               "Overdue Amt:",
               money(getValue(loan, "OVERDUE-AMT", "OVERDUE-AMOUNT"), true),
             ],
-            ["Status:", suitStatus],
+            ["Account Status:", accountStatus],
+            ["Credit Facility Status:", creditFacilityStatus],
+            ["Suit Filed/Wilful Default:", suitFiledStatus],
             [
               "Settlement Amt:",
               money(getValue(loan, "SETTLEMENT-AMT", "SETTLEMENT-AMOUNT")),
@@ -792,16 +804,16 @@ const generateCrifPdf = async (apiData, creditReportId) => {
           for (let i = 0; i < fields.length; i += 3) {
             rows.push(fields.slice(i, i + 3));
           }
+          const statusUpper = String(accountStatus).toUpperCase();
 
-          const statusUpper = String(status).toUpperCase();
           const stripClass = /CLOSED|SETTLED|WRITTEN/.test(statusUpper)
             ? "closed"
             : "active";
+
           const stripText = statusUpper
             .split("")
             .map((ch) => (ch === " " ? "&nbsp;" : esc(ch)))
             .join("<br/>");
-
           const history = getValue(
             loan,
             "COMBINED-PAYMENT-HISTORY",
@@ -966,25 +978,39 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     justify-content: space-between;
     margin-bottom: 14px;
   }
-  .logo { width: 33%; }
-  .logo .crif {
-    font-size: 22px;
-    font-weight: 900;
-    color: #1b2b44;
-    letter-spacing: -0.5px;
-  }
-  .logo .hm {
-    font-size: 11px;
-    font-weight: 800;
-    color: #1a6b9a;
-    margin-left: 6px;
-  }
-  .logo .tag {
-    font-size: 7px;
-    font-style: italic;
-    color: #666;
-    margin-top: 1px;
-  }
+.logo {
+  width: 33%;
+}
+
+.logo > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1;
+}
+
+.logo .crif {
+  font-size: 22px;
+  font-weight: 900;
+  color: #1b2b44;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.logo .hm {
+  font-size: 11px;
+  font-weight: 800;
+  color: #1a6b9a;
+  margin-left: 0;
+  line-height: 1;
+}
+
+.logo .tag {
+  font-size: 7px;
+  font-style: italic;
+  color: #666;
+  margin-top: 3px;
+}
   .title { width: 34%; }
   .title h1 {
     margin: 0;
