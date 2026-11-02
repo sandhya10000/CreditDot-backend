@@ -2,28 +2,38 @@
 // CRIF HIGH MARK CREDIT REPORT PDF TEMPLATE
 // File: templates/crifReport.template.js
 // Layout matches the official CRIF Consumer Credit Report PDF
+//
+// Accepts either:
+//   - the full DB record / API response (credit_report is found automatically)
+//   - the credit_report object itself
 // ============================================================
 
 const fs = require("fs");
 const path = require("path");
-const puppeteer = require("puppeteer");
 
-const generateCrifPdf = async (apiData, creditReportId) => {
+// Set true to append extra per-account fields that the official PDF does not show
+// (interest rate, obligation, write-off date, suit date, remarks).
+const INCLUDE_EXTRA_FIELDS = false;
+
+// ------------------------------------------------------------
+// HTML BUILDER (separate from PDF so it can be tested alone)
+// ------------------------------------------------------------
+const buildCrifHtml = (apiData, creditReportId) => {
   // ----------------------------------------------------------
-  // FIND CRIF B2C REPORT
+  // FIND REPORT
   // ----------------------------------------------------------
-  const findB2CReport = (root, visited = new WeakSet()) => {
+  const findReport = (root, visited = new WeakSet()) => {
     if (!root || typeof root !== "object") return null;
     if (visited.has(root)) return null;
     visited.add(root);
 
-    if (root["B2C-REPORT"] && typeof root["B2C-REPORT"] === "object") {
-      return root["B2C-REPORT"];
+    for (const key of ["B2C-REPORT", "credit_report"]) {
+      if (root[key] && typeof root[key] === "object") return root[key];
     }
 
     for (const child of Object.values(root)) {
       if (child && typeof child === "object") {
-        const found = findB2CReport(child, visited);
+        const found = findReport(child, visited);
         if (found) return found;
       }
     }
@@ -31,7 +41,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   };
 
   const report =
-    findB2CReport(apiData) ||
+    findReport(apiData) ||
     (apiData &&
     typeof apiData === "object" &&
     (apiData.HEADER ||
@@ -45,7 +55,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   if (!report) {
     console.error("[CRIF PDF] Input keys:", Object.keys(apiData || {}));
     throw new Error(
-      "CRIF B2C-REPORT data not found. Input is neither a complete response nor a recognized report object.",
+      "CRIF report data not found. Input is neither a complete response nor a recognized report object.",
     );
   }
 
@@ -91,18 +101,18 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   const firstAvailable = (...values) =>
     values.find((v) => v !== undefined && v !== null && v !== "") ?? null;
 
-  // Indian number format. Missing -> "-" (or "0" when zeroDefault is true)
-  const money = (value, zeroDefault = false) => {
-    if (
-      value === undefined ||
-      value === null ||
-      value === "" ||
-      !Number.isFinite(Number(String(value).replace(/,/g, "")))
-    ) {
-      return zeroDefault ? "0" : "-";
-    }
+  // Indian number format. Handles "5,85,000", "-4,496", numbers.
+  //   zero:     missing value -> "0" instead of "-"
+  //   dashZero: a real 0 -> "-" (used for limits)
+  const money = (value, { zero = false, dashZero = false } = {}) => {
+    const text = String(value ?? "")
+      .replace(/,/g, "")
+      .trim();
+    const n = Number(text);
+    if (text === "" || !Number.isFinite(n)) return zero ? "0" : "-";
+    if (dashZero && n === 0) return "-";
     return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(
-      Number(String(value).replace(/,/g, "")),
+      n,
     );
   };
 
@@ -129,22 +139,26 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     ].join("-");
   };
 
-  const truncate = (value, max = 62) => {
+  const truncate = (value, max = 60) => {
     const text = String(value ?? "").trim();
     return text.length > max ? `${text.slice(0, max - 3)}...` : text;
   };
 
-  const getNumber = (obj, ...keys) => {
-    const value = getValue(obj, ...keys);
-    const n = Number(value);
-    return value === null || !Number.isFinite(n) ? 0 : n;
+  const squash = (value) =>
+    String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const parseDMY = (s) => {
+    const m = String(s || "").match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    return m ? new Date(+m[3], +m[2] - 1, +m[1]).getTime() : 0;
   };
 
-  const sum = (...values) =>
-    values.reduce((t, v) => {
-      const n = Number(v);
-      return t + (Number.isFinite(n) ? n : 0);
-    }, 0);
+  // Most recently reported value of a variation list
+  const latest = (list) =>
+    [...list]
+      .filter((i) => i.value && String(i.value).toLowerCase() !== "na")
+      .sort((a, b) => parseDMY(b.date) - parseDMY(a.date))[0]?.value ?? null;
 
   // ----------------------------------------------------------
   // REPORT SECTIONS
@@ -156,12 +170,14 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   const summary = getObject(report, "ACCOUNTS-SUMMARY");
   const primary = getObject(summary, "PRIMARY-ACCOUNTS-SUMMARY");
   const secondary = getObject(summary, "SECONDARY-ACCOUNTS-SUMMARY");
-  const group = firstAvailable(
-    getObject(summary, "GROUP-ACCOUNTS-SUMMARY", "GROUP-ACCOUNT-SUMMARY"),
-    {},
+  const group = getObject(
+    summary,
+    "GROUP-ACCOUNTS-SUMMARY",
+    "GROUP-ACCOUNT-SUMMARY",
   );
   const derived = getObject(summary, "DERIVED-ATTRIBUTES");
-  const employment = getObject(report, "EMPLOYMENT-DETAILS", "EMPLOYMENT");
+  const empRaw = getObject(report, "EMPLOYMENT-DETAILS", "EMPLOYMENT");
+  const employment = arr(empRaw["EMPLOYMENT-DETAIL"])[0] || empRaw;
   const enquiryRoot = getObject(
     report,
     "ENQUIRY-HISTORY",
@@ -246,13 +262,14 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   ]);
   const phoneVariations = pickList(variationRoot, [
     "PHONE-VARIATIONS",
+    "PHONE-NUMBER-VARIATIONS",
     "PHONE-VARIATION",
     "MOBILE-VARIATIONS",
-  ]);
+  ]).filter((p) => String(p.value).replace(/\D/g, "").length >= 6); // drop junk like "1", "2"
   const emailVariations = pickList(variationRoot, [
     "EMAIL-VARIATIONS",
     "EMAIL-VARIATION",
-  ]);
+  ]).filter((e) => String(e.value).toLowerCase() !== "na");
   const idVariations = pickList(variationRoot, [
     "ID-VARIATIONS",
     "ID-VARIATION",
@@ -279,23 +296,34 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     pickReq("NAME", "FULL-NAME", "APPLICANT-NAME"),
     getValue(apiData, "name", "applicantName"),
   );
-  const dob = pickReq("DOB", "DATE-OF-BIRTH");
-  const pan = pickReq("PAN", "PAN-NUMBER", "ID-NUMBER");
-  const gender = pickReq("GENDER", "SEX");
+  const dob = firstAvailable(
+    pickReq("DOB", "DATE-OF-BIRTH"),
+    getValue(apiData, "dob"),
+    dobVariations[0]?.value,
+  );
+  const pan = firstAvailable(
+    pickReq("PAN", "PAN-NUMBER", "ID-NUMBER"),
+    getValue(apiData, "pan"),
+    idVariations[0]?.value,
+  );
+  const gender = firstAvailable(
+    pickReq("GENDER", "SEX"),
+    getValue(apiData, "gender"),
+  );
   const father = pickReq("FATHER", "FATHER-NAME");
   const spouse = pickReq("SPOUSE", "SPOUSE-NAME");
   const mother = pickReq("MOTHER", "MOTHER-NAME");
-  const mobile = pickReq(
-    "PHONE-1",
-    "MOBILE",
-    "MOBILE-NUMBER",
-    "PHONE",
-    "PHONE-NUMBER",
+  const mobile = firstAvailable(
+    pickReq("PHONE-1", "MOBILE", "MOBILE-NUMBER", "PHONE", "PHONE-NUMBER"),
+    getValue(apiData, "mobile"),
   );
-  const email = pickReq("EMAIL-1", "EMAIL", "EMAIL-ID", "EMAIL-ADDRESS");
+  const email = firstAvailable(
+    pickReq("EMAIL-1", "EMAIL", "EMAIL-ID", "EMAIL-ADDRESS"),
+    latest(emailVariations),
+  );
   const address = firstAvailable(
     pickReq("ADDRESS-1", "ADDRESS", "CURRENT-ADDRESS"),
-    addressVariations[0]?.value,
+    latest(addressVariations),
   );
   const otherAddress = pickReq(
     "ADDRESS-2",
@@ -303,23 +331,15 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     "PERMANENT-ADDRESS",
   );
 
-  const reportNumber = firstAvailable(
-    getValue(
-      header,
-      "REPORT-ID",
-      "REPORT_NUMBER",
-      "REPORT-NUMBER",
-      "CHM-REF-NO",
-      "REFERENCE-NUMBER",
-    ),
-    getValue(report, "REPORT-ID", "REPORT-NUMBER"),
+  // In the official PDF: CHM Ref # = BATCH-ID, Application ID = REPORT-ID
+  const chmRef = firstAvailable(
+    getValue(header, "BATCH-ID", "CHM-REF-NO", "REFERENCE-NUMBER"),
     creditReportId,
   );
-
   const applicationId = firstAvailable(
-    getValue(header, "APPLICATION-ID", "INQUIRY-UNIQUE-REF-NO"),
+    getValue(header, "REPORT-ID", "APPLICATION-ID", "INQUIRY-UNIQUE-REF-NO"),
     getValue(request, "APPLICATION-ID", "INQUIRY-UNIQUE-REF-NO"),
-    getValue(report, "APPLICATION-ID"),
+    getValue(report, "REPORT-ID", "APPLICATION-ID"),
   );
 
   const dateOfIssue = fmtDate(
@@ -339,7 +359,9 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     ),
   );
 
+  // Official PDF prints the account type reported as employment detail
   const employmentText = firstAvailable(
+    getValue(employment, "ACCT-TYPE"),
     getValue(
       employment,
       "OCCUPATION",
@@ -347,8 +369,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       "EMPLOYER",
       "EMPLOYER-NAME",
     ),
-    getValue(request, "EMPLOYMENT-DETAILS", "OCCUPATION"),
-    getValue(personal, "EMPLOYMENT-DETAILS", "OCCUPATION"),
   );
 
   // ----------------------------------------------------------
@@ -361,17 +381,16 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   );
 
   const scoreCandidates = [
-    apiData?.data?.score,
-    apiData?.score,
+    scoreObj?.["SCORE-VALUE"],
+    scoreObj?.["SCORE"],
     report?.["CREDIT-SCORE"],
     report?.SCORE,
     report?.["SCORE-VALUE"],
-    scoreObj?.["SCORE-VALUE"],
-    scoreObj?.["SCORE"],
     report?.["SCORE-DETAILS"]?.["SCORE-VALUE"],
     report?.["CREDIT-SCORE-DETAILS"]?.["SCORE-VALUE"],
+    apiData?.data?.score,
+    apiData?.score,
   ];
-
   const scoreRaw = scoreCandidates.find(
     (v) =>
       v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v)),
@@ -380,25 +399,24 @@ const generateCrifPdf = async (apiData, creditReportId) => {
 
   const scoreName = firstAvailable(
     getValue(report, "SCORE-NAME"),
-    getValue(scoreObj, "SCORE-NAME", "NAME"),
-    getValue(getObject(report, "SCORE-DETAILS"), "SCORE-NAME"),
+    getValue(scoreObj, "SCORE-NAME", "SCORE-TYPE", "NAME"),
     "PERFORM CONSUMER 2.2",
   );
   const scoreRange = firstAvailable(
     getValue(scoreObj, "SCORE-RANGE", "RANGE"),
     "300-900",
   );
-  const scoreDescription = firstAvailable(
-    getValue(scoreObj, "SCORE-COMMENTS", "DESCRIPTION"),
-    getValue(report, "SCORE-DESCRIPTION"),
-  );
+  const scoreDescription = getValue(scoreObj, "SCORE-COMMENTS", "DESCRIPTION");
+  const scoreFactors = String(scoreObj?.["SCORE-FACTORS"] || "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   // ----------------------------------------------------------
-  // ACCOUNT COLLECTION
+  // ACCOUNTS
   // ----------------------------------------------------------
   const responseRoot = getObject(report, "RESPONSES");
   let accounts = arr(getValue(responseRoot, "RESPONSE", "RESPONSES", "ITEM"));
-
   if (!accounts.length && getValue(report, "LOAN-DETAILS")) {
     accounts = [report];
   }
@@ -413,7 +431,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     );
     return loan && typeof loan === "object" ? loan : {};
   };
-
   const accountLoans = accounts.map(getLoan);
 
   // ----------------------------------------------------------
@@ -452,7 +469,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     const cells = summaryColumns.map(([, suffixes, mode]) => {
       const raw = getValue(obj, ...suffixes.map((s) => `${prefix}-${s}`));
       if (raw === null) return hasData && mode === "zero" ? "0" : "-";
-      return money(raw, false) === "-" ? esc(raw) : money(raw);
+      return money(raw) === "-" ? String(raw) : money(raw);
     });
 
     return `
@@ -470,6 +487,23 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     `;
   };
 
+  // ----------------------------------------------------------
+  // LENDER ENQUIRIES
+  // ----------------------------------------------------------
+  let enquiryItems = arr(
+    getValue(
+      enquiryRoot,
+      "HISTORY",
+      "ENQUIRY",
+      "ENQUIRIES",
+      "RESPONSE",
+      "ITEM",
+    ),
+  );
+  if (!enquiryItems.length) {
+    enquiryItems = arr(getValue(report, "ENQUIRY", "INQUIRY", "ENQUIRIES"));
+  }
+
   const enquiries24 = firstAvailable(
     getValue(
       derived,
@@ -483,14 +517,18 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       "TOTAL-ENQUIRIES",
       "INQUIRIES-IN-LAST-24-MONTHS",
     ),
-    "-",
+    String(enquiryItems.length),
   );
   const newAccounts6 = firstAvailable(
     getValue(derived, "NEW-ACCOUNTS-IN-LAST-SIX-MONTHS"),
     "-",
   );
   const newDelinquent6 = firstAvailable(
-    getValue(derived, "NEW-DELINQUENT-ACCOUNTS-IN-LAST-SIX-MONTHS"),
+    getValue(
+      derived,
+      "NEW-DELINQUENT-ACCOUNTS-IN-LAST-SIX-MONTHS",
+      "NEW-DELINQ-ACCOUNT-IN-LAST-SIX-MONTHS",
+    ),
     "-",
   );
 
@@ -505,31 +543,17 @@ const generateCrifPdf = async (apiData, creditReportId) => {
         .map((item) => ({
           month: getValue(item, "MONTH", "MONTH-NAME") || "",
           year: String(getValue(item, "YEAR") || ""),
-          amount: String(
+          amount: squash(
             getValue(item, "AMOUNT", "DAYS-PAST-DUE", "DPD") || "-",
-          )
-            .replace(/\s+/g, " ")
-            .trim(),
-          status: String(
+          ),
+          status: squash(
             getValue(item, "STATUS", "ASSET-CLASSIFICATION") || "-",
-          )
-            .trim()
-            .toUpperCase(),
+          ).toUpperCase(),
         }))
         .filter((item) => item.month && item.year);
     }
 
-    const text = String(raw)
-      .replace(/\r?\n/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/X\s*X\s*X/gi, "XXX")
-      .replace(/S\s*TD/gi, "STD")
-      .replace(/S\s*UB/gi, "SUB")
-      .replace(/D\s*BT/gi, "DBT")
-      .replace(/L\s*OS/gi, "LOS")
-      .replace(/S\s*MA/gi, "SMA");
-
+    const text = squash(raw);
     const regex =
       /([A-Za-z]{3})\s*:\s*(\d{4})\s*,\s*([^/|]+?)\s*\/\s*([A-Za-z0-9-]+)(?=\s*(?:\||[A-Za-z]{3}\s*:|$))/gi;
 
@@ -638,7 +662,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
             .map(
               (item) => `
             <tr>
-              <td>${esc(address ? truncate(item.value, 60) : item.value)}</td>
+              <td>${esc(address ? truncate(squash(item.value), 60) : item.value)}</td>
               <td class="right">${esc(fmtDate(item.date), "N.A.")}</td>
             </tr>`,
             )
@@ -686,27 +710,25 @@ const generateCrifPdf = async (apiData, creditReportId) => {
             getValue(loan, "INFO-AS-OF", "DATE-REPORTED"),
           );
 
-          const accountStatus = firstAvailable(
-            getValue(loan, "ACCOUNT-STATUS"),
-            getValue(loan, "STATUS"),
-            getValue(loan, "ACCOUNT-STATUS-DESCRIPTION"),
-            "-",
-          );
+          // "Status:" = suit-filed status + written-off / settled status
+          const suitStatus =
+            [
+              getValue(
+                loan,
+                "SUIT-FILED-WILFUL-DEFAULT-STATUS",
+                "SUIT-FILED_WILFUL-DEFAULT",
+                "SUIT-FILED-WILFUL-DEFAULT",
+                "SUIT-FILED",
+                "WILFUL-DEFAULT",
+                "ASSET-CLASS",
+              ),
+              getValue(loan, "WRITTEN-OFF-SETTLED-STATUS"),
+            ]
+              .filter(Boolean)
+              .map(squash)
+              .join(" / ") || "-";
 
-          const creditFacilityStatus = firstAvailable(
-            getValue(loan, "WRITTEN-OFF-SETTLED-STATUS"),
-            getValue(loan, "CREDIT-FACILITY-STATUS"),
-            "-",
-          );
-
-          const suitFiledStatus = firstAvailable(
-            getValue(loan, "SUIT-FILED-WILFUL-DEFAULT-STATUS"),
-            getValue(loan, "SUIT-FILED-WILFUL-DEFAULT"),
-            getValue(loan, "SUIT-FILED"),
-            "-",
-          );
-
-          // Security / collateral rows
+          // Security / collateral rows (SECURITY-DETAILS.SECURITY-DETAIL)
           arr(
             getValue(
               loan,
@@ -714,16 +736,41 @@ const generateCrifPdf = async (apiData, creditReportId) => {
               "COLLATERAL-DETAILS",
               "SECURITY",
             ),
-          ).forEach((sec) => {
-            if (sec && typeof sec === "object") {
-              securityRows.push([
+          )
+            .flatMap((s) =>
+              arr(
+                s && typeof s === "object" && s["SECURITY-DETAIL"] !== undefined
+                  ? s["SECURITY-DETAIL"]
+                  : s,
+              ),
+            )
+            .forEach((sec) => {
+              if (!sec || typeof sec !== "object") return;
+              const row = [
                 getValue(sec, "SECURITY-TYPE", "TYPE"),
-                getValue(sec, "TYPE-OF-CHARGE", "CHARGE-TYPE"),
+                getValue(
+                  sec,
+                  "SECURITY-CHARGE",
+                  "TYPE-OF-CHARGE",
+                  "CHARGE-TYPE",
+                ),
                 getValue(sec, "SECURITY-VALUE", "VALUE"),
                 getValue(sec, "DATE-OF-VALUE", "VALUE-DATE"),
-              ]);
-            }
-          });
+              ];
+              if (row.some((v) => v !== null)) securityRows.push(row);
+            });
+
+          const instl =
+            squash(
+              getValue(
+                loan,
+                "INSTL-AMT",
+                "INSTLAMT-FREQ",
+                "INSTL-AMT-FREQ",
+                "INSTALLMENT-AMT",
+                "INSTALLMENT-AMOUNT",
+              ),
+            ).replace(/(\/[A-Za-z]+)\1$/, "$1") || "-";
 
           const fields = [
             ["Ownership:", getValue(loan, "OWNERSHIP-IND", "OWNERSHIP") || "-"],
@@ -735,16 +782,24 @@ const generateCrifPdf = async (apiData, creditReportId) => {
               "Disbd Amt/High Credit:",
               money(getValue(loan, "DISBURSED-AMT", "DISBURSED-AMOUNT")),
             ],
-            ["Credit Limit:", money(getValue(loan, "CREDIT-LIMIT"))],
+            [
+              "Credit Limit:",
+              money(getValue(loan, "CREDIT-LIMIT"), { dashZero: true }),
+            ],
             [
               "Last Payment Date:",
               fmtDate(getValue(loan, "LAST-PAYMENT-DATE")),
             ],
             [
               "Current Balance:",
-              money(getValue(loan, "CURRENT-BAL", "CURRENT-BALANCE"), true),
+              money(getValue(loan, "CURRENT-BAL", "CURRENT-BALANCE"), {
+                zero: true,
+              }),
             ],
-            ["Cash Limit:", money(getValue(loan, "CASH-LIMIT"))],
+            [
+              "Cash Limit:",
+              money(getValue(loan, "CASH-LIMIT"), { dashZero: true }),
+            ],
             [
               "Closed Date:",
               fmtDate(getValue(loan, "CLOSED-DATE", "CLOSED-DT")),
@@ -753,24 +808,19 @@ const generateCrifPdf = async (apiData, creditReportId) => {
               "Last Paid Amt:",
               money(getValue(loan, "LAST-PAID-AMT", "LAST-PAID-AMOUNT")),
             ],
+            ["InstlAmt/Freq:", instl],
             [
-              "InstlAmt/Freq:",
-              getValue(
-                loan,
-                "INSTL-AMT",
-                "INSTLAMT-FREQ",
-                "INSTL-AMT-FREQ",
-                "INSTALLMENT-AMOUNT",
-              ) || "-",
+              "Tenure(month):",
+              getValue(loan, "REPAYMENT-TENURE", "TENURE", "TENURE-MONTH") ||
+                "-",
             ],
-            ["Tenure(month):", getValue(loan, "TENURE", "TENURE-MONTH") || "-"],
             [
               "Overdue Amt:",
-              money(getValue(loan, "OVERDUE-AMT", "OVERDUE-AMOUNT"), true),
+              money(getValue(loan, "OVERDUE-AMT", "OVERDUE-AMOUNT"), {
+                zero: true,
+              }),
             ],
-            ["Account Status:", accountStatus],
-            ["Credit Facility Status:", creditFacilityStatus],
-            ["Suit Filed/Wilful Default:", suitFiledStatus],
+            ["Status:", suitStatus],
             [
               "Settlement Amt:",
               money(getValue(loan, "SETTLEMENT-AMT", "SETTLEMENT-AMOUNT")),
@@ -794,26 +844,38 @@ const generateCrifPdf = async (apiData, creditReportId) => {
                   "TOTAL-WRITEOFF-AMT",
                   "TOTAL-WRITE-OFF-AMT",
                 ),
-                true,
+                { zero: true },
               ),
             ],
           ];
 
-          // Build rows of 3 key/value pairs
+          if (INCLUDE_EXTRA_FIELDS) {
+            const rate = getValue(loan, "INTEREST-RATE");
+            fields.push(
+              ["Interest Rate:", rate !== null ? `${rate}%` : "-"],
+              ["Obligation:", money(getValue(loan, "OBLIGATION"))],
+              ["Writeoff Date:", fmtDate(getValue(loan, "WRITE-OFF-DT"))],
+              ["Suit Filed Date:", fmtDate(getValue(loan, "SUIT-FILED-DT"))],
+              ["Remarks:", getValue(loan, "ACCOUNT-REMARKS") || "-"],
+              ["In Dispute:", getValue(loan, "ACCT-IN-DISPUTE") || "-"],
+            );
+          }
+
+          // Rows of 3 key/value pairs
           const rows = [];
           for (let i = 0; i < fields.length; i += 3) {
             rows.push(fields.slice(i, i + 3));
           }
-          const statusUpper = String(accountStatus).toUpperCase();
 
+          const statusUpper = String(status).toUpperCase();
           const stripClass = /CLOSED|SETTLED|WRITTEN/.test(statusUpper)
             ? "closed"
             : "active";
-
           const stripText = statusUpper
             .split("")
             .map((ch) => (ch === " " ? "&nbsp;" : esc(ch)))
             .join("<br/>");
+
           const history = getValue(
             loan,
             "COMBINED-PAYMENT-HISTORY",
@@ -826,7 +888,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
           <article class="account-card">
             <div class="account-heading">
               <span class="acc-index">${index + 1}</span>
-              <span class="acc-item">Account Type:<span class="acc-type">${esc(type)}</span></span>
+              <span class="acc-item">Account Type: <span class="acc-type">${esc(String(type).toUpperCase())}</span></span>
               <span class="acc-item">Credit Grantor: ${esc(grantor)}</span>
               <span class="acc-item">Account #: ${esc(accNo)}</span>
               <span class="acc-item plain">Info, as of: <span class="plain-val">${esc(infoAsOf)}</span></span>
@@ -877,7 +939,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
                   (r) => `<tr>
                     <td>${esc(r[0])}</td>
                     <td>${esc(r[1])}</td>
-                    <td>${esc(money(r[2]) === "-" ? r[2] : money(r[2]))}</td>
+                    <td>${esc(money(r[2]))}</td>
                     <td>${esc(r[3] ? fmtDate(r[3]) : "-")}</td>
                   </tr>`,
                 )
@@ -887,16 +949,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       </tbody>
     </table>
   `;
-
-  // ----------------------------------------------------------
-  // LENDER ENQUIRIES
-  // ----------------------------------------------------------
-  let enquiryItems = arr(
-    getValue(enquiryRoot, "ENQUIRY", "ENQUIRIES", "RESPONSE", "ITEM"),
-  );
-  if (!enquiryItems.length) {
-    enquiryItems = arr(getValue(report, "ENQUIRY", "INQUIRY", "ENQUIRIES"));
-  }
 
   const enquiryHtml = `
     <table class="grid-table enquiry-table">
@@ -917,11 +969,11 @@ const generateCrifPdf = async (apiData, creditReportId) => {
                 .map(
                   (e) => `
           <tr>
-            <td>${esc(getValue(e, "LENDER-NAME", "MEMBER-NAME", "CREDIT-GUARANTOR", "CREDIT-GRANTOR"))}</td>
-            <td>${esc(fmtDate(getValue(e, "DATE-OF-INQUIRY", "INQUIRY-DATE", "DATE", "DATE-OF-ENQUIRY")))}</td>
-            <td>${esc(getValue(e, "PURPOSE", "ENQUIRY-PURPOSE", "PURPOSE-TYPE"))}</td>
-            <td>${esc(getValue(e, "OWNERSHIP-TYPE", "OWNERSHIP-IND"))}</td>
-            <td>${esc(money(getValue(e, "AMOUNT", "ENQUIRY-AMOUNT", "INQUIRY-AMOUNT")))}</td>
+            <td>${esc(getValue(e, "LENDER-NAME", "MEMBER-NAME", "MEMBER", "CREDIT-GUARANTOR", "CREDIT-GRANTOR"))}</td>
+            <td>${esc(fmtDate(getValue(e, "DATE-OF-INQUIRY", "INQUIRY-DATE", "ENQUIRY-DATE", "DATE", "DATE-OF-ENQUIRY")))}</td>
+            <td>${esc(getValue(e, "PURPOSE", "INQUIRY-PURPOSE", "ENQUIRY-PURPOSE", "PURPOSE-TYPE"))}</td>
+            <td>${esc(getValue(e, "OWNERSHIP-TYPE", "OWNERSHIP-IND", "OWNERSHIP"))}</td>
+            <td>${esc(money(getValue(e, "AMOUNT", "INQUIRY-AMOUNT", "ENQUIRY-AMOUNT")))}</td>
             <td>${esc(getValue(e, "REMARK", "REMARKS"), "—")}</td>
           </tr>`,
                 )
@@ -978,52 +1030,13 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     justify-content: space-between;
     margin-bottom: 14px;
   }
-.logo {
-  width: 33%;
-}
-
-.logo > div:first-child {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  line-height: 1;
-}
-
-.logo .crif {
-  font-size: 22px;
-  font-weight: 900;
-  color: #1b2b44;
-  letter-spacing: -0.5px;
-  line-height: 1;
-}
-
-.logo .hm {
-  font-size: 11px;
-  font-weight: 800;
-  color: #1a6b9a;
-  margin-left: 0;
-  line-height: 1;
-}
-
-.logo .tag {
-  font-size: 7px;
-  font-style: italic;
-  color: #666;
-  margin-top: 3px;
-}
+  .logo { width: 33%; }
+  .logo .crif { font-size: 22px; font-weight: 900; color: #1b2b44; letter-spacing: -0.5px; }
+  .logo .hm { font-size: 11px; font-weight: 800; color: #1a6b9a; margin-left: 6px; }
+  .logo .tag { font-size: 7px; font-style: italic; color: #666; margin-top: 1px; }
   .title { width: 34%; }
-  .title h1 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 800;
-    color: #1b2b44;
-  }
-  .title .for {
-    font-size: 10px;
-    font-weight: 700;
-    color: #1b2b44;
-    margin-top: 2px;
-  }
+  .title h1 { margin: 0; font-size: 15px; font-weight: 800; color: #1b2b44; }
+  .title .for { font-size: 10px; font-weight: 700; color: #1b2b44; margin-top: 2px; }
   .meta { width: 33%; }
   .meta table { border-collapse: collapse; font-size: 7.5px; margin-left: auto; }
   .meta td { padding: 1.5px 6px; vertical-align: top; }
@@ -1050,11 +1063,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   .input-table td.val { width: 22%; }
 
   /* ---------- Generic grid tables ---------- */
-  .grid-table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-  }
+  .grid-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .grid-table th {
     background: var(--head-bg);
     color: var(--navy);
@@ -1121,7 +1130,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   .score-badge .txt { font-size: 9px; font-weight: 700; color: #cfe0e8; }
 
   .factors-title { font-size: 10px; font-weight: 800; color: #1b2b44; margin: 14px 4px 5px; }
-  .factor-bar { font-size: 9px; letter-spacing: 1px; color: #666; margin-left: 4px; }
+  .factor-bar { font-size: 9px; letter-spacing: 1px; color: #444; margin-left: 4px; }
   .tips { text-align: right; font-size: 7.5px; color: #555; margin-top: 8px; }
   .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin: 0 3px 0 10px; }
   .dot.g { background: #3aa655; }
@@ -1139,12 +1148,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     padding: 4px 6px;
   }
   .var-table { width: 100%; border-collapse: collapse; font-size: 7.5px; }
-  .var-table th {
-    text-align: left;
-    color: var(--navy);
-    font-weight: 800;
-    padding: 3px 2px 4px;
-  }
+  .var-table th { text-align: left; color: var(--navy); font-weight: 800; padding: 3px 2px 4px; }
   .var-table td { padding: 2px; vertical-align: top; }
   .right { text-align: right !important; }
 
@@ -1159,16 +1163,12 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   }
   .account-heading .acc-index { margin-right: 6px; }
   .account-heading .acc-item { margin-right: 22px; }
-  .account-heading .acc-type { color: #d2232a; margin-left: 0; }
+  .account-heading .acc-type { color: #d2232a; }
   .account-heading .plain { font-weight: 800; }
   .account-heading .plain-val { font-weight: 400; color: #222; }
 
   .account-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  .account-table td {
-    border: 1px solid var(--border);
-    padding: 3.5px 5px;
-    font-size: 8px;
-  }
+  .account-table td { border: 1px solid var(--border); padding: 3.5px 5px; font-size: 8px; }
   .account-table td.k { color: #444; width: 13%; }
   .account-table td.v { text-align: right; font-weight: 800; color: #111; width: 20%; }
   .account-table td.strip {
@@ -1184,12 +1184,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   .strip.closed { background: #8fcf8f; }
   .strip.active { background: #5aa7d9; }
 
-  .payment-heading {
-    font-weight: 800;
-    color: var(--navy);
-    font-size: 8.5px;
-    margin: 8px 0 3px 2px;
-  }
+  .payment-heading { font-weight: 800; color: var(--navy); font-size: 8.5px; margin: 8px 0 3px 2px; }
   .collateral-heading { margin: 10px 0 6px 6px; font-size: 9px; }
 
   .payment-table th, .payment-table td { font-size: 6.8px; padding: 4px 1px; }
@@ -1203,12 +1198,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   .center { text-align: center !important; }
 
   /* ---------- Disclaimer ---------- */
-  .disclaimer {
-    font-size: 7.5px;
-    line-height: 1.5;
-    color: #333;
-    margin-top: 6px;
-  }
+  .disclaimer { font-size: 7.5px; line-height: 1.5; color: #333; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -1227,7 +1217,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
 
     <div class="meta">
       <table>
-        <tr><td class="l">CHM Ref #:</td><td class="r">${esc(reportNumber)}</td></tr>
+        <tr><td class="l">CHM Ref #:</td><td class="r">${esc(chmRef)}</td></tr>
         <tr><td class="l">Application ID:</td><td class="r">${esc(applicationId)}</td></tr>
         <tr><td class="l">Date of Request:</td><td class="r">${esc(dateOfRequest)}</td></tr>
         <tr><td class="l">Date of Issue:</td><td class="r">${esc(dateOfIssue)}</td></tr>
@@ -1256,15 +1246,15 @@ const generateCrifPdf = async (apiData, creditReportId) => {
       </tr>
       <tr>
         <td class="lab">Current Address:</td>
-        <td class="val" colspan="5">${esc(address)}</td>
+        <td class="val" colspan="5">${esc(squash(address))}</td>
       </tr>
       <tr>
         <td class="lab">Other Address:</td>
-        <td class="val" colspan="5">${esc(otherAddress)}</td>
+        <td class="val" colspan="5">${esc(squash(otherAddress))}</td>
       </tr>
       <tr>
         <td class="lab">Employment Details:</td>
-        <td class="val" colspan="5">${esc(employmentText)}</td>
+        <td class="val" colspan="5">${esc(squash(employmentText))}</td>
       </tr>
     </table>
   </section>
@@ -1311,7 +1301,7 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     </div>
 
     <div class="factors-title">SCORING FACTORS</div>
-    <div class="factor-bar">|||||||||||</div>
+    <div class="factor-bar">${scoreFactors.length ? scoreFactors.map((f) => esc(f)).join(" &nbsp;|&nbsp; ") : "-"}</div>
 
     <div class="tips">
       Tips: <span class="dot g"></span>Positive impact on credit score
@@ -1387,9 +1377,20 @@ const generateCrifPdf = async (apiData, creditReportId) => {
 </html>
   `;
 
-  // ----------------------------------------------------------
-  // GENERATE PDF
-  // ----------------------------------------------------------
+  const headerLabel = applicationId
+    ? `CRIF_Credit_Report_${String(applicationId).replace(/[^a-zA-Z0-9_-]/g, "")}`
+    : "CRIF_Credit_Report";
+
+  return { html, headerLabel, esc };
+};
+
+// ------------------------------------------------------------
+// PDF GENERATION
+// ------------------------------------------------------------
+const generateCrifPdf = async (apiData, creditReportId) => {
+  const puppeteer = require("puppeteer");
+  const { html, headerLabel, esc } = buildCrifHtml(apiData, creditReportId);
+
   const uploadDir = path.join(
     process.cwd(),
     "uploads",
@@ -1403,10 +1404,6 @@ const generateCrifPdf = async (apiData, creditReportId) => {
     "_",
   );
   const filePath = path.join(uploadDir, `crif-${safeId}.pdf`);
-
-  const headerLabel = applicationId
-    ? `CRIF_Credit_Report_${String(applicationId).replace(/[^a-zA-Z0-9_-]/g, "")}`
-    : "CRIF_Credit_Report";
 
   let browser;
 
@@ -1490,4 +1487,4 @@ const generateCrifPdf = async (apiData, creditReportId) => {
   }
 };
 
-module.exports = { generateCrifPdf };
+module.exports = { generateCrifPdf, buildCrifHtml };
