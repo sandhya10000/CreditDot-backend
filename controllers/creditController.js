@@ -465,20 +465,20 @@ const checkCreditScore = async (req, res) => {
           bureau: normalizedBureau === "cibil" ? "cibil" : normalizedBureau,
         }).sort({ createdAt: -1 });
 
-        // TEMP: 15-day CIBIL restriction disabled. Uncomment to restore.
-        // if (lastReport?.createdAt) {
-        //   const diffDays =
-        //     (Date.now() - new Date(lastReport.createdAt).getTime()) /
-        //     (1000 * 60 * 60 * 24);
-        //
-        //   if (diffDays >= 0 && diffDays < 15) {
-        //     const remainingDays = Math.ceil(15 - diffDays);
-        //
-        //     return res.status(400).json({
-        //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-        //     });
-        //   }
-        // }
+        // 15-day CIBIL restriction: block re-download within 15 days
+        if (lastReport?.createdAt) {
+          const diffDays =
+            (Date.now() - new Date(lastReport.createdAt).getTime()) /
+            (1000 * 60 * 60 * 24);
+
+          if (diffDays >= 0 && diffDays < 15) {
+            const remainingDays = Math.ceil(15 - diffDays);
+
+            return res.status(400).json({
+              message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+            });
+          }
+        }
       }
 
       franchise = await Franchise.findById(req.user.franchiseId);
