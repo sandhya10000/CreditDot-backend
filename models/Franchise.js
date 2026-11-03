@@ -99,6 +99,15 @@ const franchiseSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Admin credit hold: while true, bureau and AI credits cannot be used (balances are kept)
+    creditHold: {
+      type: Boolean,
+      default: false,
+    },
+    creditHoldAt: {
+      type: Date,
+      default: null,
+    },
     //add new for aiused
     // AI Usage Tracking
     aiTotal: {
