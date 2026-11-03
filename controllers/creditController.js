@@ -491,14 +491,10 @@ const checkCreditScore = async (req, res) => {
           })
         : null;
 
+      // Blocked PANs look like a normal no-record result to the partner
       if (panBlock) {
-        const hoursLeft = Math.ceil(
-          (new Date(panBlock.blockedUntil).getTime() - Date.now()) /
-            (1000 * 60 * 60),
-        );
-
         return res.status(400).json({
-          message: `This PAN is temporarily blocked after a failed bureau check. Try again after ${hoursLeft} hours.`,
+          message: "No Data Found",
         });
       }
 
