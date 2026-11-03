@@ -25,6 +25,10 @@ const franchiseProfileSchema = Joi.object({
   phone: Joi.string()
     .pattern(/^[0-9]{10}$/)
     .required(),
+  alternatePhone: Joi.string()
+    .pattern(/^[0-9]{10}$/)
+    .allow("")
+    .optional(),
   address: Joi.object({
     street: Joi.string().allow(""),
     city: Joi.string().allow(""),

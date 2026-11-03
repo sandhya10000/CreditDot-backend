@@ -1,6 +1,6 @@
 // Digi CIBIL bureau client (VerifyHub-compatible contract).
 //
-// Provider call: POST {DIGI_BASE_URL}/api/v7/cibil-bureau-report
+// Provider call: POST {DIGI_BASE_URL}/api/v11/cibil-bureau-report
 // Headers: { accept, Content-Type, jwt-token } where jwt-token is a fresh
 // HS256 JWT per request: { timestamp: unixSec, partnerId, reqid: random }.
 // Payload carries ONLY { fullname, mobile, pan (upper), consent: "Y" };
@@ -9,7 +9,7 @@ const axios = require("axios");
 const jwt = require("jsonwebtoken");
 
 const DIGI_TIMEOUT_MS = 120000;
-const DIGI_DEFAULT_ENDPOINT = "/api/v7/cibil-bureau-report";
+const DIGI_DEFAULT_ENDPOINT = "/api/v11/cibil-bureau-report";
 
 // Fresh per-request auth token (<=5min validity contract).
 const signDigiJwt = (partnerId, secretKey) => {
@@ -59,11 +59,28 @@ const extractDigiScore = (cibilData) => {
   return null;
 };
 
-// apiData shape: { data: { cibilData, message, ... }, ... }
+// v11 returns { data: { Asset: {...} } } with the same Asset nesting the
+// template reads. Wrap it in the GetCustomerAssetsResponse envelope so
+// cibilPdfService / template get the shape they expect. Returns null when
+// no Asset is present.
+const adaptV11Asset = (asset) => {
+  if (!asset || typeof asset !== "object") return null;
+  return {
+    GetCustomerAssetsResponse: {
+      GetCustomerAssetsSuccess: {
+        Asset: asset,
+        CreditSummaryData: asset.CreditSummaryData,
+      },
+    },
+  };
+};
+
+// apiData shape: v7 { data: { cibilData, message } } or
+// v11 { data: { Asset: {...} } }
 const parseDigiResponse = (apiData) => {
   const data =
     apiData?.data && typeof apiData.data === "object" ? apiData.data : null;
-  const cibilData = data?.cibilData || null;
+  const cibilData = data?.cibilData || adaptV11Asset(data?.Asset) || null;
   return {
     hasResult: !!cibilData,
     cibilData,

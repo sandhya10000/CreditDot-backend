@@ -15,7 +15,6 @@ const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
 const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
-const digiCibilPdf = require("../utils/digiCibilPdf");
 const { generateCibilPdf } = require("../utils/cibilPdfService");
 const crifStyledPdf = require("../templates/crifReport.template");
 const experianCirPdf = require("../utils/experianCirPdf");
@@ -466,21 +465,20 @@ const checkCreditScore = async (req, res) => {
           bureau: normalizedBureau === "cibil" ? "cibil" : normalizedBureau,
         }).sort({ createdAt: -1 });
 
-        // Enable this block if the 15-day restriction is required.
-
-        if (lastReport?.createdAt) {
-          const diffDays =
-            (Date.now() - new Date(lastReport.createdAt).getTime()) /
-            (1000 * 60 * 60 * 24);
-
-          if (diffDays >= 0 && diffDays < 15) {
-            const remainingDays = Math.ceil(15 - diffDays);
-
-            return res.status(400).json({
-              message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
-            });
-          }
-        }
+        // TEMP: 15-day CIBIL restriction disabled. Uncomment to restore.
+        // if (lastReport?.createdAt) {
+        //   const diffDays =
+        //     (Date.now() - new Date(lastReport.createdAt).getTime()) /
+        //     (1000 * 60 * 60 * 24);
+        //
+        //   if (diffDays >= 0 && diffDays < 15) {
+        //     const remainingDays = Math.ceil(15 - diffDays);
+        //
+        //     return res.status(400).json({
+        //       message: `This report has already been downloaded. Try again after ${remainingDays} days.`,
+        //     });
+        //   }
+        // }
       }
 
       franchise = await Franchise.findById(req.user.franchiseId);
@@ -500,8 +498,48 @@ const checkCreditScore = async (req, res) => {
 
     // 3. Fetch report from selected bureau
     try {
-      if (isIndiconnectCibilBureau(normalizedBureau)) {
-        // CIBIL via IndiConnect
+      if (normalizedBureau === "cibil") {
+        // CIBIL via DIGIConnect v11
+        const digiCfg = await getDigiConfig();
+
+        if (!digiCfg.baseUrl || !digiCfg.partnerId || !digiCfg.secretKey) {
+          return res.status(500).json({
+            message:
+              "Digi CIBIL credentials not configured (base url / partner id / secret key)",
+          });
+        }
+
+        try {
+          response = await digiApiClient.makeCibilRequest(
+            { pan, name, mobile },
+            digiCfg,
+          );
+        } catch (digiErr) {
+          const dmsg =
+            digiErr.response?.data?.message ||
+            digiErr.message ||
+            "Digi CIBIL request failed";
+
+          console.error("DIGI ERROR status:", digiErr.response?.status ?? digiErr.code ?? "none");
+
+          return res.status(502).json({
+            message: dmsg,
+            error: digiErr.response?.data || null,
+          });
+        }
+
+        response.__digi = digiApiClient.parseDigiResponse(response.data);
+        response.__digiBureau = "digi";
+
+        if (!response.__digi.hasResult) {
+          return res.status(502).json({
+            message:
+              response.__digi.bureauMessage || "No CIBIL data returned by Digi",
+            error: null,
+          });
+        }
+      } else if (isIndiconnectCibilBureau(normalizedBureau)) {
+        // CIBIL via IndiConnect (cibil-surepass / cibil-ongrid)
         const cfg = await getIndiconnectCibilConfig();
 
         if (!cfg?.serviceKey || !cfg?.auth || !cfg?.providerCode) {
@@ -784,7 +822,9 @@ const checkCreditScore = async (req, res) => {
 
     const indiconnectBureau = response.__indiconnectBureau || null;
 
-    if (isIndiconnectCibilBureau(normalizedBureau)) {
+    if (normalizedBureau === "cibil") {
+      score = response.__digi?.score ?? null;
+    } else if (isIndiconnectCibilBureau(normalizedBureau)) {
       const parsed =
         response.__indiconnect ||
         indiconnectClient.parseCibilResponse(response.data);
@@ -886,7 +926,8 @@ const checkCreditScore = async (req, res) => {
     if (isIndiconnectCibil && !creditReport.localPath) {
       try {
         const reportId = String(creditReport._id);
-        const rawCibilData = response.__indiconnect?.cibilData;
+        const rawCibilData =
+          response.__digi?.cibilData || response.__indiconnect?.cibilData;
 
         if (!rawCibilData || typeof rawCibilData !== "object") {
           throw new Error(
@@ -2698,31 +2739,34 @@ const checkCreditScoreV2 = async (req, res) => {
       }
     }
 
-    // Digi CIBIL: render our styled PDF from the bureau JSON
-    // (Digi v7 returns cibilData, not a PDF link).
-    if (isV2DigiCibil && response.__digi && !creditReport.localPath) {
+    // Digi CIBIL: render the shared CIBIL HTML template to PDF from the
+    // bureau JSON (Digi returns cibilData, not a PDF link).
+    if (isV2DigiCibil && response.__digi?.cibilData && !creditReport.localPath) {
       try {
-        const gen = await digiCibilPdf.generateDigiCibilPdf(response.__digi, {
-          name,
-          mobile,
-          pan,
-        });
-        if (gen) {
-          const reportsDir = path.join(__dirname, "../reports");
-          if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-          }
-          const filename = `cibil_digi_report_${creditReport._id}_${Date.now()}.pdf`;
-          fs.writeFileSync(path.join(reportsDir, filename), gen.buffer);
-          creditReport.localPath = `/reports/${filename}`;
-          creditReport.pdfStatus = "ready";
-          await creditReport.save();
-          console.log(
-            `Digi V2 styled PDF generated: ${filename} (score ${gen.model.score ?? "null"})`,
-          );
+        const generated = await generateCibilPdf(
+          {
+            data: {
+              cibilData: response.__digi.cibilData,
+              verify: response.data?.verify || response.data?.data?.verify || {},
+            },
+          },
+          String(creditReport._id),
+        );
+
+        if (!generated?.success || !generated.filePath) {
+          throw new Error("CIBIL PDF service did not return a file");
         }
+
+        creditReport.localPath = generated.relativePath || generated.pdfUrl;
+        creditReport.pdfStatus = "ready";
+        await creditReport.save();
+        console.log(
+          `Digi V2 CIBIL PDF generated: ${generated.fileName} (score ${response.__digi.score ?? "null"})`,
+        );
       } catch (genErr) {
-        console.log("DIGI PDF GENERATE FAILED", genErr.message);
+        console.error("DIGI CIBIL PDF GENERATE FAILED", genErr.message);
+        creditReport.pdfStatus = "failed";
+        await creditReport.save().catch(() => {});
       }
     }
 
