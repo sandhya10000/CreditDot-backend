@@ -6,6 +6,7 @@ const Setting = require("../models/Setting");
 const Franchise = require("../models/Franchise");
 const { scopeFilter, ownsFranchise } = require("../utils/franchiseScope");
 const ReportDownload = require("../models/ReportDownload");
+const PanBlock = require("../models/PanBlock");
 const Joi = require("joi");
 const fs = require("fs");
 const path = require("path");
@@ -418,6 +419,30 @@ const getBureauConfig = (bureau) => {
   return configs[bureau] || configs.cibil;
 };
 
+// Bureau rejected the PAN/name/mobile combination: block that PAN for
+// franchise checks for PAN_BLOCK_HOURS
+const PAN_BLOCK_HOURS = 48;
+const INVALID_INPUTS_MESSAGE = /invalid id number or combination of inputs/i;
+
+const blockPanOnInvalidInputs = async (pan, message) => {
+  if (!pan || !INVALID_INPUTS_MESSAGE.test(String(message || ""))) return;
+
+  try {
+    await PanBlock.updateOne(
+      { pan: String(pan).toUpperCase() },
+      {
+        $set: {
+          reason: message,
+          blockedUntil: new Date(Date.now() + PAN_BLOCK_HOURS * 60 * 60 * 1000),
+        },
+      },
+      { upsert: true },
+    );
+  } catch (blockError) {
+    console.error("PAN block save failed:", blockError.message);
+  }
+};
+
 const checkCreditScore = async (req, res) => {
   try {
     let franchise = null;
@@ -458,6 +483,25 @@ const checkCreditScore = async (req, res) => {
 
     // 2. Franchise checks
     if (!isAdmin) {
+      // PAN temporarily blocked after the bureau rejected its inputs
+      const panBlock = pan
+        ? await PanBlock.findOne({
+            pan: String(pan).toUpperCase(),
+            blockedUntil: { $gt: new Date() },
+          })
+        : null;
+
+      if (panBlock) {
+        const hoursLeft = Math.ceil(
+          (new Date(panBlock.blockedUntil).getTime() - Date.now()) /
+            (1000 * 60 * 60),
+        );
+
+        return res.status(400).json({
+          message: `This PAN is temporarily blocked after a failed bureau check. Try again after ${hoursLeft} hours.`,
+        });
+      }
+
       if (isCibilRequest) {
         const lastReport = await CreditReport.findOne({
           mobile,
@@ -522,6 +566,8 @@ const checkCreditScore = async (req, res) => {
 
           console.error("DIGI ERROR status:", digiErr.response?.status ?? digiErr.code ?? "none");
 
+          await blockPanOnInvalidInputs(pan, dmsg);
+
           return res.status(502).json({
             message: dmsg,
             error: digiErr.response?.data || null,
@@ -532,6 +578,8 @@ const checkCreditScore = async (req, res) => {
         response.__digiBureau = "digi";
 
         if (!response.__digi.hasResult) {
+          await blockPanOnInvalidInputs(pan, response.__digi.bureauMessage);
+
           return res.status(502).json({
             message:
               response.__digi.bureauMessage || "No CIBIL data returned by Digi",
@@ -582,6 +630,8 @@ const checkCreditScore = async (req, res) => {
         );
 
         if (failReason) {
+          await blockPanOnInvalidInputs(pan, failReason);
+
           return res.status(502).json({
             message: failReason,
             error: response.__indiconnect.error || null,
@@ -632,6 +682,8 @@ const checkCreditScore = async (req, res) => {
         );
 
         if (failReason) {
+          await blockPanOnInvalidInputs(pan, failReason);
+
           return res.status(502).json({
             message: failReason,
             error: response.__indiconnect.error || null,
