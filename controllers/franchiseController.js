@@ -16,6 +16,7 @@ const {
   resolveBusinessManagerId,
 } = require("../utils/franchiseScope");
 const { assignUnassignedFranchises } = require("../utils/assignBusinessManager");
+const { fetchPanPremium, toPanDetails } = require("../utils/indiconnectPanClient");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -748,59 +749,43 @@ const fetchPanComprehensive = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
-    // Get Surepass API key from credit controller
-    const { getSurepassApiKeyValue } = require("./creditController");
-    const apiKey = await getSurepassApiKeyValue();
-
-    if (!apiKey) {
-      return res
-        .status(500)
-        .json({ message: "Surepass API key not configured" });
+    // IndiConnect PAN Verification (Premium); PAN gets its own provider code, falls back to the shared one
+    const { getIndiconnectConfig } = require("./creditController");
+    const cfg = await getIndiconnectConfig("pan");
+    console.log(cfg, "IndiConnect PAN config");
+    if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+      return res.status(500).json({
+        message:
+          "IndiConnect PAN credentials not configured (service-key / auth / provider code)",
+      });
     }
 
-    // Import the Surepass API client
-    const surepassClient = require("../utils/surepassApiClient");
+    const verify = await fetchPanPremium(panNumber.toUpperCase(), cfg);
+    const panDetails = toPanDetails(verify);
 
-    // Call Surepass PAN comprehensive API with correct parameter using rate-limited client
-    const response = await surepassClient.makePanVerificationRequest(
-      apiKey,
-      "https://kyc-api.surepass.io/api/v1/pan/pan-comprehensive",
-      { id_number: panNumber.toUpperCase() },
-    );
-
-    // Check if the API response indicates success
-    if (!response.data.success) {
+    // Same success/invalid semantics as before: only a verified PAN is saved and can approve KYC
+    if (!panDetails.success) {
       return res.status(400).json({
         message: "PAN verification failed",
-        error:
-          response.data.message || "Invalid PAN number or verification failed",
+        error: panDetails.message,
       });
     }
 
     // Update franchise with PAN details
     franchise.panNumber = panNumber.toUpperCase();
-    franchise.panDetails = response.data;
+    franchise.panDetails = panDetails;
     await franchise.save();
 
     res.json({
       message: "PAN details fetched successfully",
-      panDetails: response.data,
+      panDetails,
     });
   } catch (error) {
-    console.error("Surepass PAN comprehensive error:", error.message);
+    console.error("IndiConnect PAN verification error:", error.message);
     if (error.response) {
-      // Handle Surepass API errors specifically
-      if (error.response.status === 400) {
-        return res.status(400).json({
-          message: "Invalid PAN number or verification failed",
-          error:
-            error.response.data.message ||
-            "Please check the PAN number and try again",
-        });
-      }
-      return res.status(error.response.status).json({
+      return res.status(error.response.status === 400 ? 400 : 502).json({
         message: "Failed to fetch PAN details",
-        error: error.response.data,
+        error: error.response.data?.message || "PAN verification provider error",
       });
     }
     res.status(500).json({
@@ -1023,6 +1008,29 @@ const reassignFranchiseManager = async (req, res) => {
   }
 };
 
+// Admin-only: freeze or release a partner's bureau and AI credits (balances are not changed)
+const setCreditHold = async (req, res) => {
+  try {
+    const hold = Boolean(req.body.hold);
+    const franchise = await Franchise.findByIdAndUpdate(
+      req.params.id,
+      { $set: { creditHold: hold, creditHoldAt: hold ? new Date() : null } },
+      { new: true },
+    ).select("businessName franchiseCode credits creditHold creditHoldAt");
+    if (!franchise) {
+      return res.status(404).json({ success: false, message: "Franchise not found" });
+    }
+
+    res.json({
+      success: true,
+      message: hold ? "Credits put on hold" : "Credit hold released",
+      data: franchise,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getAllFranchisesList = async (req, res) => {
   try {
     const franchises = await Franchise.find(
@@ -1206,4 +1214,5 @@ module.exports = {
   exportFranchisesCSV,
   reassignFranchiseManager,
   assignUnassignedBusinessManagers,
+  setCreditHold,
 };

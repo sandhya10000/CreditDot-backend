@@ -1011,17 +1011,12 @@ const prepareCibilPdfData = (apiResponse, creditReportId) => {
 // GENERATE PDF
 // ============================================================
 
-const generateCibilPdf = async (apiResponse, creditReportId) => {
+// Renders an already-prepared CIBIL model (see prepareCibilPdfData for the shape)
+const renderCibilPdf = async (pdfData, creditReportId) => {
   let browser;
 
   try {
-    console.log("[CIBIL PDF] Preparing report data...");
-
-    // --------------------------------------------------------
-    // PREPARE DATA
-    // --------------------------------------------------------
-
-    const pdfData = prepareCibilPdfData(apiResponse, creditReportId);
+    console.log("[CIBIL PDF] Rendering report...");
 
     console.log("[CIBIL PDF] Accounts:", pdfData.accounts.length);
 
@@ -1229,8 +1224,13 @@ const generateCibilPdf = async (apiResponse, creditReportId) => {
 // EXPORT
 // ============================================================
 
+// Bureau JSON -> PDF (IndiConnect/Digi TrueLink shape)
+const generateCibilPdf = async (apiResponse, creditReportId) =>
+  renderCibilPdf(prepareCibilPdfData(apiResponse, creditReportId), creditReportId);
+
 module.exports = {
   generateCibilPdf,
+  renderCibilPdf,
   prepareCibilPdfData,
   getTrueLinkCreditReport,
   getCustomerAssetsSuccess,

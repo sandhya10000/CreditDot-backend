@@ -155,6 +155,15 @@ const uploadDocument = async (req, res) => {
       const limitInfo = resolveFranchiseAiLimit(franchise);
       tracker.end(`packageName: ${limitInfo.packageName || 'none'}, used: ${limitInfo.used}, limit: ${limitInfo.limit}, remaining: ${limitInfo.remaining}, isUnlimited: ${limitInfo.isUnlimited}`);
 
+      if (franchise.creditHold) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({
+          success: false,
+          code: "CREDIT_HOLD",
+          message: "Your credits are on hold. Please contact admin.",
+        });
+      }
+
       if (!limitInfo.hasActivePackage) {
         fs.unlinkSync(req.file.path);
         return res.status(403).json({
@@ -568,6 +577,14 @@ const analyzeWithClaude = async (req, res) => {
     tracker.start("limit_check");
     const limitInfo = resolveFranchiseAiLimit(franchise);
     tracker.end(`packageName: ${limitInfo.packageName || 'none'}, used: ${limitInfo.used}, limit: ${limitInfo.limit}, remaining: ${limitInfo.remaining}, isUnlimited: ${limitInfo.isUnlimited}`);
+
+    if (franchise.creditHold) {
+      return res.status(403).json({
+        success: false,
+        code: "CREDIT_HOLD",
+        message: "Your credits are on hold. Please contact admin.",
+      });
+    }
 
     if (!limitInfo.hasActivePackage) {
       return res.status(403).json({

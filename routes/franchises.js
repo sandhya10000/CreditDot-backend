@@ -21,6 +21,7 @@ const {
   exportFranchisesCSV,
   reassignFranchiseManager,
   assignUnassignedBusinessManagers,
+  setCreditHold,
 } = require("../controllers/franchiseController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -182,5 +183,10 @@ router.put(
   requireFullAdmin,
   reassignFranchiseManager,
 );
+
+// @route   PUT /api/franchises/:id/credit-hold
+// @desc    Freeze (hold: true) or release (hold: false) a partner's bureau and AI credits
+// @access  Private/Admin
+router.put("/:id/credit-hold", auth, rbac("admin"), setCreditHold);
 
 module.exports = router;

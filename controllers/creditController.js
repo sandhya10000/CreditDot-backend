@@ -14,6 +14,8 @@ const { sendCreditReportEmail } = require("../utils/emailService");
 const whatsappService = require("../utils/whatsappService");
 const googleSheetsService = require("../utils/googleSheetsService");
 const surepassClient = require("../utils/surepassApiClient");
+const finpassClient = require("../utils/finpassClient");
+const finpassCibilPdf = require("../utils/finpassCibilPdf");
 const indiconnectClient = require("../utils/indiconnectApiClient");
 const digiApiClient = require("../utils/digiApiClient");
 const { generateCibilPdf } = require("../utils/cibilPdfService");
@@ -56,11 +58,11 @@ const creditCheckSchema = Joi.object({
         "Please select a valid credit bureau (equifax, experian, cibil, crif, )",
     }),
   cibilApiType: Joi.string()
-    .valid("indiconnect", "digi", "surepass", "ongrid")
+    .valid("indiconnect", "digi", "surepass", "finpass", "ongrid")
     .optional()
     .default("indiconnect")
     .messages({
-      "any.only": "cibilApiType must be indiconnect, digi or surepass",
+      "any.only": "cibilApiType must be indiconnect, digi, surepass or finpass",
     }),
   crifApiType: Joi.string()
     .valid("indiconnect", "surepass")
@@ -152,26 +154,27 @@ const getIndiconnectConfig = async (bureau = "cibil") => {
       ? ["INDICONNECT_CRIF_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
       : bureau === "experian"
         ? ["INDICONNECT_EXPERIAN_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"]
-        : ["INDICONNECT_CIBIL_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"];
+        : bureau === "pan"
+          ? ["INDICONNECT_PAN_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE", "INDICONNECT_CRIF_PROVIDER_CODE",]
+          : ["INDICONNECT_CIBIL_PROVIDER_CODE", "INDICONNECT_PROVIDERCODE"];
   const endpointKeys =
     bureau === "crif"
       ? ["INDICONNECT_CRIF_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"]
       : bureau === "experian"
         ? ["INDICONNECT_EXPERIAN_ENDPOINT", "INDICONNECT_CRIF_ENDPOINT"]
-        : ["INDICONNECT_CIBIL_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"];
+        : bureau === "pan"
+          ? ["INDICONNECT_PAN_ENDPOINT", "INDICONNECT_CIBIL_ENDPOINT"]
+          : ["INDICONNECT_CIBIL_ENDPOINT", "INDICONNECT_EXPERIAN_ENDPOINT"];
   const settingKey =
     bureau === "crif"
       ? "indiconnect_crif_provider_code"
       : bureau === "experian"
         ? "indiconnect_experian_provider_code"
-        : "indiconnect_cibil_provider_code";
+        : bureau === "pan"
+          ? "indiconnect_pan_provider_code"
+          : "indiconnect_cibil_provider_code";
   return {
-    baseUrl: (
-      (await getIndiconnectValue(
-        "indiconnect_base_url",
-        "INDICONNECT_BASE_URL",
-      )) || "https://api.ccs.indiconnect.in"
-    ).replace(/\/$/, ""),
+    baseUrl: process.env.INDICONNECT_BASE_URL,
     serviceKey:
       (await getIndiconnectValue(
         "indiconnect_service_key",
@@ -486,9 +489,9 @@ const checkCreditScore = async (req, res) => {
       // PAN temporarily blocked after the bureau rejected its inputs
       const panBlock = pan
         ? await PanBlock.findOne({
-            pan: String(pan).toUpperCase(),
-            blockedUntil: { $gt: new Date() },
-          })
+          pan: String(pan).toUpperCase(),
+          blockedUntil: { $gt: new Date() },
+        })
         : null;
 
       // Blocked PANs look like a normal no-record result to the partner
@@ -526,6 +529,13 @@ const checkCreditScore = async (req, res) => {
       if (!franchise) {
         return res.status(404).json({
           message: "Franchise not found",
+        });
+      }
+
+      if (franchise.creditHold) {
+        return res.status(403).json({
+          code: "CREDIT_HOLD",
+          message: "Your credits are on hold. Please contact admin.",
         });
       }
 
@@ -940,6 +950,7 @@ const checkCreditScore = async (req, res) => {
         {
           _id: franchise._id,
           credits: { $gte: 1 },
+          creditHold: { $ne: true },
         },
         {
           $inc: { credits: -1 },
@@ -1214,7 +1225,7 @@ const checkCreditScore = async (req, res) => {
         if (isIndiconnectBureau) {
           creditReport.pdfStatus = "failed";
 
-          await creditReport.save().catch(() => {});
+          await creditReport.save().catch(() => { });
         }
       }
     } else if (isCibilWebReportUrl && !creditReport.localPath) {
@@ -1309,7 +1320,7 @@ const checkCreditScore = async (req, res) => {
         });
 
         creditReport.pdfStatus = "failed";
-        await creditReport.save().catch(() => {});
+        await creditReport.save().catch(() => { });
       }
     }
 
@@ -2490,6 +2501,57 @@ const checkCreditScoreV2 = async (req, res) => {
     }
 
     // =========================
+    // CIBIL -> FINPASS (admin only)
+    // =========================
+    else if (bureau === "cibil" && cibilApiType === "finpass") {
+      if (req.user?.role !== "admin") {
+        return res.status(403).json({
+          message: "Finpass CIBIL is available to admins only",
+        });
+      }
+      if (!pan) {
+        return res.status(400).json({
+          message: "PAN is required for Finpass CIBIL",
+        });
+      }
+
+      try {
+        const finpassBody = await finpassClient.fetchCibilReport({
+          pan: String(pan).toUpperCase(),
+          name,
+          mobile,
+          gender: String(gender || "").trim().toLowerCase(),
+        });
+        response = { data: finpassBody };
+        response.__finpass = finpassClient.parseCibilResponse(finpassBody);
+      } catch (finpassErr) {
+        if (finpassErr.code === "FINPASS_NOT_CONFIGURED") {
+          return res.status(500).json({
+            message: "Finpass credentials not configured (FINPASS_API_KEY / FINPASS_API_SECRET)",
+          });
+        }
+        // Raw provider error stays server-side
+        console.error(
+          "FINPASS ERROR status:",
+          finpassErr.response?.status ?? finpassErr.code ?? "none",
+          JSON.stringify(finpassErr.response?.data ?? null).slice(0, 2000),
+        );
+        return res.status(finpassErr.response?.status || 502).json({
+          success: false,
+          message:
+            finpassErr.response?.data?.message ||
+            finpassErr.message ||
+            "Finpass CIBIL check failed",
+          provider: "finpass",
+          apiType: "finpass",
+        });
+      }
+      console.log(
+        `Finpass CIBIL: score=${response.__finpass.score ?? "null"} report=${response.__finpass.reportUrl ? "yes" : "no"}`,
+      );
+    }
+
+    // =========================
     // CRIF -> INDICONNECT (default) or SUREPASS (picker)
     // =========================
     else if (bureau === "crif" && crifApiType === "surepass") {
@@ -2659,6 +2721,8 @@ const checkCreditScoreV2 = async (req, res) => {
       response.__indiconnectBureau === "experian"
     ) {
       score = response.__indiconnect.score;
+    } else if (response.__finpass) {
+      score = response.__finpass.score;
     } else {
       score =
         response?.data?.data?.score ||
@@ -2685,6 +2749,8 @@ const checkCreditScoreV2 = async (req, res) => {
       response.__indiconnectBureau === "experian"
     ) {
       reportUrl = response.__indiconnect.reportUrl;
+    } else if (response.__finpass) {
+      reportUrl = response.__finpass.reportUrl;
     } else {
       reportUrl =
         response?.data?.data?.report_url ||
@@ -2718,6 +2784,32 @@ const checkCreditScoreV2 = async (req, res) => {
     });
 
     await creditReport.save();
+
+    // Finpass CIBIL: render our styled PDF from the Finpass JSON (same template).
+    // On failure the provider's report link is downloaded below as a fallback.
+    if (
+      bureau === "cibil" &&
+      cibilApiType === "finpass" &&
+      response.__finpass?.cibilData &&
+      !creditReport.localPath
+    ) {
+      try {
+        const gen = await finpassCibilPdf.generateFinpassCibilPdf(
+          response.__finpass.cibilData,
+          response.__finpass.score,
+          String(creditReport._id),
+        );
+        if (!gen?.success || !gen.relativePath) {
+          throw new Error("CIBIL PDF service did not return a file");
+        }
+        creditReport.localPath = gen.relativePath;
+        creditReport.pdfStatus = "ready";
+        await creditReport.save();
+        console.log(`Finpass CIBIL PDF generated (score ${response.__finpass.score ?? "null"})`);
+      } catch (genErr) {
+        console.error("FINPASS CIBIL PDF GENERATE FAILED", genErr.message);
+      }
+    }
 
     // IndiConnect CIBIL: render our styled PDF from the bureau JSON — same
     // reference layout the partner panel gets (shared cibilStyledPdf).
@@ -2814,7 +2906,7 @@ const checkCreditScoreV2 = async (req, res) => {
       } catch (genErr) {
         console.error("DIGI CIBIL PDF GENERATE FAILED", genErr.message);
         creditReport.pdfStatus = "failed";
-        await creditReport.save().catch(() => {});
+        await creditReport.save().catch(() => { });
       }
     }
 
@@ -2919,11 +3011,14 @@ const checkCreditScoreV2 = async (req, res) => {
           : bureau === "experian"
             ? experianApiType
             : cibilApiType,
-      provider: isV2DigiCibil
-        ? "digi"
-        : response.__indiconnectBureau
-          ? "indiconnect"
-          : "surepass",
+      provider:
+        bureau === "cibil" && cibilApiType === "finpass"
+          ? "finpass"
+          : isV2DigiCibil
+            ? "digi"
+            : response.__indiconnectBureau
+              ? "indiconnect"
+              : "surepass",
 
       creditReport: {
         id: creditReport._id,
@@ -3064,6 +3159,12 @@ const generateExperianReport = async (req, res) => {
       if (!franchise) {
         return res.status(404).json({ message: "Franchise not found" });
       }
+      if (franchise.creditHold) {
+        return res.status(403).json({
+          code: "CREDIT_HOLD",
+          message: "Your credits are on hold. Please contact admin.",
+        });
+      }
       if (franchise.credits < 1) {
         return res.status(400).json({
           message: "Insufficient credits to generate credit report",
@@ -3138,8 +3239,7 @@ const generateExperianReport = async (req, res) => {
 
       if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
         throw new Error(
-          `Invalid PDF output: ${
-            pdfBuffer?.constructor?.name || typeof pdfBuffer
+          `Invalid PDF output: ${pdfBuffer?.constructor?.name || typeof pdfBuffer
           }`,
         );
       }
@@ -3202,7 +3302,7 @@ const generateExperianReport = async (req, res) => {
     let remainingCredits = null;
     if (req.user.role !== "admin" && franchise) {
       const charged = await Franchise.findOneAndUpdate(
-        { _id: franchise._id, credits: { $gte: 1 } },
+        { _id: franchise._id, credits: { $gte: 1 }, creditHold: { $ne: true } },
         { $inc: { credits: -1 } },
         { new: true },
       );
