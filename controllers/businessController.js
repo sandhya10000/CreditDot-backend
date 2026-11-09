@@ -5,7 +5,7 @@ const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const { validateAmcTerm } = require("./amcController");
-const { scopeFilter } = require("../utils/franchiseScope");
+const { scopeFilter, isScoped } = require("../utils/franchiseScope");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
@@ -156,6 +156,7 @@ const submitBusinessForm = async (req, res) => {
       selectedPackage,
       dob,
       gender,
+      fatherName,
       bankAccountNumber,
       ifscCode,
       documents,
@@ -250,6 +251,7 @@ const submitBusinessForm = async (req, res) => {
           }
         : undefined,
       customerName,
+      fatherName: fatherName?.trim() || undefined,
       customerEmail: customerEmail.toLowerCase(),
       customerPhone,
       panNumber: panNumber ? panNumber.toUpperCase() : undefined,
@@ -542,8 +544,8 @@ const getAllBusinessForms = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const paymentStatus = req.query.paymentStatus;
 
-    // Business Managers see all Business MIS data (no franchise scoping on this list)
-    const filter = {};
+    // Business Managers (scoped users) see only the MIS assigned to them; admins see all
+    const filter = isScoped(req) ? { assignedRm: req.user._id } : {};
 
     if (
       paymentStatus &&
@@ -581,16 +583,31 @@ const getAllBusinessForms = async (req, res) => {
 
     const skip = (page - 1) * limit;
 
-    const businessForms = await BusinessForm.find(filter)
+    // Sorting: whitelisted fields only; default is newest first
+    const SORT_FIELDS = {
+      createdAt: "createdAt",
+      customerId: "customerId",
+      customerName: "customerName",
+    };
+    const sortField = SORT_FIELDS[req.query.sortBy] || "createdAt";
+    const sortDir = req.query.sortOrder === "asc" ? 1 : -1;
+    const sort = { [sortField]: sortDir, _id: sortDir };
+
+    let query = BusinessForm.find(filter)
       .populate(
         "selectedPackage",
         "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
       .populate("franchiseId", "businessName franchiseCode")
       .populate("assignedRm", "name staffCode")
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit);
+    // Numeric-aware, case-insensitive text order so CD9 < CD10 and "adam" < "Bob"
+    if (sortField !== "createdAt") {
+      query = query.collation({ locale: "en", numericOrdering: true, strength: 2 });
+    }
+    const businessForms = await query;
 
     res.json({
       total,
