@@ -2028,13 +2028,24 @@ const getAllCreditReports = async (req, res) => {
       })
       .populate({
         path: "franchiseId",
-        select: "businessName",
+        select: "businessName franchiseCode",
       })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .allowDiskUse(true)
       .lean();
+
+    // Where the report came from: franchise code, "Admin" (admin user, no franchise)
+    // or "Website" (public report, no user and no franchise)
+    const reportsWithSource = reports.map((r) => ({
+      ...r,
+      createdFrom: r.franchiseId?.franchiseCode
+        ? r.franchiseId.franchiseCode
+        : r.userId
+          ? "Admin"
+          : "Website",
+    }));
 
     const total = await CreditReport.countDocuments(filter);
 
@@ -2043,7 +2054,7 @@ const getAllCreditReports = async (req, res) => {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      reports,
+      reports: reportsWithSource,
     });
   } catch (error) {
     return res.status(500).json({

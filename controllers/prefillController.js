@@ -77,8 +77,20 @@ const prefillByMobile = async (req, res) => {
 };
 const savePrefillFailure = async (req, res) => {
   try {
-    const { message, mobile, statusCode } = req.body;
+    const {
+      source = "prefill",
+      bureau,
+      name,
+      pan,
+      message,
+      mobile,
+      statusCode,
+    } = req.body;
     const log = new prefillFailedLog({
+      source,
+      bureau: bureau || null,
+      name: name || null,
+      pan: pan ? String(pan).toUpperCase() : null,
       message,
       mobile,
       statusCode,
@@ -109,7 +121,7 @@ const getPrefillFailedLog = async (req, res) => {
     const skip = (page - 1) * limit;
     const failedReports = await prefillFailedLog
       .find()
-      .populate("franchiseId", "name")
+      .populate("franchiseId", "name franchiseCode")
       .populate("userId", "name")
 
       .sort({ createdAt: -1 })
