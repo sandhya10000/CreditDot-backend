@@ -1079,18 +1079,13 @@ const sendFranchiseCopiesToManagerAndAdmin = async (req, user, franchise, tempPa
 
 const createFranchiseUser = async (req, res) => {
   try {
-    const { name, email, phone, assignedPackages, role, subRole } = req.body;
+    const { name, email, assignedPackages, role, subRole } = req.body;
 
     // Admin staff must be created from the Staff page so they get a role's permissions
     if (role === "admin") {
       return res.status(400).json({
         message: "Staff accounts are created from the Staff page and assigned a role",
       });
-    }
-
-    // Phone is required: partner WhatsApp messages are sent to this number
-    if (!/^\d{10}$/.test(String(phone || ""))) {
-      return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
     }
 
     // Default values
@@ -1145,7 +1140,6 @@ const createFranchiseUser = async (req, res) => {
         ownerName: name,
         email: normalizedEmail,
 
-        phone,
         franchiseCode: null, // <-- add this
         // Business Manager who owns this partner (creator, or admin's pick)
         // Explicit pick (or a BM creating their own partner) wins; otherwise next in rotation

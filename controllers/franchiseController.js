@@ -1033,9 +1033,11 @@ const setCreditHold = async (req, res) => {
 
 const getAllFranchisesList = async (req, res) => {
   try {
+    // Used by the Business MIS franchise picker: needs code/contact for search and the
+    // address for auto-fill. Deleted franchises are excluded so they can't be picked.
     const franchises = await Franchise.find(
-      { ...franchiseScope(req) },
-      " _id businessName ownerName",
+      { ...franchiseScope(req), isDeleted: { $ne: true } },
+      "_id businessName ownerName franchiseCode email phone panNumber address",
     );
     res.status(200).json({
       success: true,

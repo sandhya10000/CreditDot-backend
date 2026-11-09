@@ -219,6 +219,16 @@ const businessFormSchema = new mongoose.Schema(
       enum: ["Male", "Female", "Other"],
     },
 
+    // Optional personal details (imported from Business MIS spreadsheet)
+    fatherName: {
+      type: String,
+      trim: true,
+    },
+    profession: {
+      type: String,
+      trim: true,
+    },
+
     bankAccountNumber: {
       type: String,
     },

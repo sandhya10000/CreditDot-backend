@@ -427,15 +427,15 @@ const getBureauConfig = (bureau) => {
 const PAN_BLOCK_HOURS = 48;
 const INVALID_INPUTS_MESSAGE = /invalid id number or combination of inputs/i;
 
-const blockPanOnInvalidInputs = async (pan, message) => {
-  if (!pan || !INVALID_INPUTS_MESSAGE.test(String(message || ""))) return;
+const savePanBlock = async (pan, reason) => {
+  if (!pan) return;
 
   try {
     await PanBlock.updateOne(
       { pan: String(pan).toUpperCase() },
       {
         $set: {
-          reason: message,
+          reason,
           blockedUntil: new Date(Date.now() + PAN_BLOCK_HOURS * 60 * 60 * 1000),
         },
       },
@@ -444,6 +444,19 @@ const blockPanOnInvalidInputs = async (pan, message) => {
   } catch (blockError) {
     console.error("PAN block save failed:", blockError.message);
   }
+};
+
+const blockPanOnInvalidInputs = async (pan, message) => {
+  if (!INVALID_INPUTS_MESSAGE.test(String(message || ""))) return;
+  await savePanBlock(pan, message);
+};
+
+// CIBIL / Equifax "no record" / "no data" outcome: lock the PAN for 48h
+const NO_RECORD_MESSAGE = /no\s*(bureau|cibil|equifax)?\s*record\s*found|no\s*data\s*found/i;
+
+const blockPanOnNoRecord = async (pan, message) => {
+  if (!NO_RECORD_MESSAGE.test(String(message || ""))) return;
+  await savePanBlock(pan, message);
 };
 
 const checkCreditScore = async (req, res) => {
@@ -573,6 +586,7 @@ const checkCreditScore = async (req, res) => {
           console.error("DIGI ERROR status:", digiErr.response?.status ?? digiErr.code ?? "none");
 
           await blockPanOnInvalidInputs(pan, dmsg);
+          await blockPanOnNoRecord(pan, dmsg);
 
           return res.status(502).json({
             message: dmsg,
@@ -584,6 +598,11 @@ const checkCreditScore = async (req, res) => {
         response.__digiBureau = "digi";
 
         if (!response.__digi.hasResult) {
+          // Digi returned an empty cibilData envelope = no bureau record
+          await savePanBlock(
+            pan,
+            response.__digi.bureauMessage || "No CIBIL record found",
+          );
           await blockPanOnInvalidInputs(pan, response.__digi.bureauMessage);
 
           return res.status(502).json({
@@ -637,6 +656,7 @@ const checkCreditScore = async (req, res) => {
 
         if (failReason) {
           await blockPanOnInvalidInputs(pan, failReason);
+          await blockPanOnNoRecord(pan, failReason);
 
           return res.status(502).json({
             message: failReason,
@@ -802,6 +822,14 @@ const checkCreditScore = async (req, res) => {
       if (!response || typeof response !== "object") {
         throw new Error("Credit bureau returned an invalid response");
       }
+
+      // Equifax (Surepass) success envelope carrying a no-record / no-data message
+      if (normalizedBureau === "equifax") {
+        await blockPanOnNoRecord(
+          pan,
+          response.data?.message || response.data?.data?.message,
+        );
+      }
     } catch (apiError) {
       console.error("CREDIT BUREAU API ERROR:", {
         bureau: normalizedBureau,
@@ -819,6 +847,14 @@ const checkCreditScore = async (req, res) => {
       }
 
       const errorData = apiError?.response?.data;
+
+      // Equifax (Surepass) error envelope carrying "No Data Found" / "No Record Found"
+      if (normalizedBureau === "equifax") {
+        await blockPanOnNoRecord(
+          pan,
+          errorData?.message || apiError.message,
+        );
+      }
 
       if (
         errorData?.message_code === "balance_exhausted" ||
@@ -1331,6 +1367,14 @@ const checkCreditScore = async (req, res) => {
         /no\s*record\s*found/i.test(
           response.__indiconnect?.bureauMessage || "",
         ));
+
+    // CIBIL no-record (IndiConnect bureauStatus 2): lock the PAN for 48h
+    if (noCibilRecord) {
+      await savePanBlock(
+        pan,
+        response.__indiconnect?.bureauMessage || "No CIBIL record found",
+      );
+    }
 
     const responsePayload = {
       message: noCibilRecord
@@ -1984,13 +2028,24 @@ const getAllCreditReports = async (req, res) => {
       })
       .populate({
         path: "franchiseId",
-        select: "businessName",
+        select: "businessName franchiseCode",
       })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .allowDiskUse(true)
       .lean();
+
+    // Where the report came from: franchise code, "Admin" (admin user, no franchise)
+    // or "Website" (public report, no user and no franchise)
+    const reportsWithSource = reports.map((r) => ({
+      ...r,
+      createdFrom: r.franchiseId?.franchiseCode
+        ? r.franchiseId.franchiseCode
+        : r.userId
+          ? "Admin"
+          : "Website",
+    }));
 
     const total = await CreditReport.countDocuments(filter);
 
@@ -1999,7 +2054,7 @@ const getAllCreditReports = async (req, res) => {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      reports,
+      reports: reportsWithSource,
     });
   } catch (error) {
     return res.status(500).json({

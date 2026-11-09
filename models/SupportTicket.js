@@ -69,6 +69,20 @@ const supportSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    // Optional reference shown in the admin ticket modal
+    referenceId: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: null,
+    },
+    // Admin-only notes, never shown to the franchise
+    internalNotes: {
+      type: String,
+      trim: true,
+      maxlength: 2000,
+      default: "",
+    },
     attachments: [attachmentSchema],
     lastActivityAt: {
       type: Date,

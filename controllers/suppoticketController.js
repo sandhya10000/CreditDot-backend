@@ -58,6 +58,7 @@ const createTicket = async (req, res) => {
       subject: req.body.subject,
       category: req.body.category,
       message: req.body.message,
+      referenceId: req.body.referenceId?.trim() || null,
       attachments: toAttachments(req.files),
     });
 
@@ -171,12 +172,26 @@ const getAllTickets = async (req, res) => {
     const [tickets, total] = await Promise.all([
       SupportTicket.find(filter)
         .populate("user", "name email")
+        .populate("franchiseId", "name franchiseCode")
         .populate("assignedTo", "name")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       SupportTicket.countDocuments(filter),
     ]);
+
+    // Reply counts for the "Open conversation (N)" menu label
+    const replyCounts = await TicketReply.aggregate([
+      { $match: { ticket: { $in: tickets.map((t) => t._id) } } },
+      { $group: { _id: "$ticket", count: { $sum: 1 } } },
+    ]);
+    const countByTicket = new Map(
+      replyCounts.map((r) => [String(r._id), r.count]),
+    );
+    tickets.forEach((t) => {
+      t.replyCount = countByTicket.get(String(t._id)) || 0;
+    });
 
     res.json({
       success: true,
@@ -238,6 +253,9 @@ const updateTicketMeta = async (req, res) => {
         return fail(res, 400, `Priority must be one of: ${PRIORITIES.join(", ")}`);
       }
       update.priority = req.body.priority;
+    }
+    if (req.body.internalNotes !== undefined) {
+      update.internalNotes = String(req.body.internalNotes || "").slice(0, 2000);
     }
     if (req.body.assignment === "me") update.assignedTo = req.user._id;
     if (req.body.assignment === "none") update.assignedTo = null;
