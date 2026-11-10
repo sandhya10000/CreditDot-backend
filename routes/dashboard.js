@@ -1,5 +1,10 @@
 const express = require("express");
 const {
+  createWhiteLabelOrder,
+  verifyWhiteLabelPayment,
+  getWhiteLabelStatus,
+} = require("../controllers/whiteLabelController");
+const {
   getFranchiseDashboard,
   getFranchiseLeads,
   createLead,
@@ -70,5 +75,35 @@ router.post("/referrals", auth, rbac("franchise_user"), createReferral);
 // @desc    Get franchise payouts
 // @access  Private/Franchise User
 router.get("/payouts", auth, rbac("franchise_user"), getFranchisePayouts);
+
+// @route   GET /api/dashboard/white-label/status
+// @desc    White Label branding status and current request
+// @access  Private/Franchise User
+router.get(
+  "/white-label/status",
+  auth,
+  rbac("franchise_user"),
+  getWhiteLabelStatus,
+);
+
+// @route   POST /api/dashboard/white-label/order
+// @desc    Create ₹10,000 Razorpay order for White Label Reports (Platinum/Diamond only)
+// @access  Private/Franchise User
+router.post(
+  "/white-label/order",
+  auth,
+  rbac("franchise_user"),
+  createWhiteLabelOrder,
+);
+
+// @route   POST /api/dashboard/white-label/verify
+// @desc    Verify Razorpay payment and activate White Label Reports
+// @access  Private/Franchise User
+router.post(
+  "/white-label/verify",
+  auth,
+  rbac("franchise_user"),
+  verifyWhiteLabelPayment,
+);
 
 module.exports = router;

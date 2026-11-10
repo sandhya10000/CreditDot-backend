@@ -51,6 +51,14 @@ const franchiseSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    // Custom branded report (White Label, ₹10,000) status
+    brandingStatus: {
+      type: String,
+      enum: ["not_purchased", "paid", "onboarding", "active"],
+      default: "not_purchased",
+    },
+    brandingPaidAt: { type: Date, default: null },
+    brandingAmount: { type: Number, default: null },
     // Optional second mobile number
     alternatePhone: {
       type: String,

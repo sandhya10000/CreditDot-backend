@@ -1,5 +1,9 @@
 const express = require("express");
 const {
+  listWhiteLabelPartners,
+  getWhiteLabelPartnerReports,
+} = require("../controllers/whiteLabelAdminController");
+const {
   getDashboardStats,
   getRecentActivities,
   getAllUsers,
@@ -178,6 +182,15 @@ router.get(
 // @desc    Get all credit reports
 // @access  Private/Admin
 router.get("/credit-reports", auth, rbac("admin"), getAllCreditReportsAdmin);
+
+// White-Labeled Reports (partners who paid for White Label)
+router.get("/white-label/partners", auth, rbac("admin"), listWhiteLabelPartners);
+router.get(
+  "/white-label/partners/:partnerId/reports",
+  auth,
+  rbac("admin"),
+  getWhiteLabelPartnerReports,
+);
 
 // @route   GET /api/admin/franchises/credits
 // @desc    Get all franchises with credit information
