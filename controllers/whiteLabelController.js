@@ -6,7 +6,12 @@ const Transaction = require("../models/Transaction");
 const CustomBrandedRequest = require("../models/CustomBrandedRequest");
 
 // White Label Reports: one-time ₹10,000 via Razorpay, only for Platinum/Diamond partners
-const WHITE_LABEL_PRICE_INR = 10000;
+const WHITE_LABEL_BASE_INR = 10000;
+const WHITE_LABEL_GST_PERCENT = 18;
+// Total charged including GST: 10,000 + 18% = 11,800
+const WHITE_LABEL_PRICE_INR = Math.round(
+  WHITE_LABEL_BASE_INR * (1 + WHITE_LABEL_GST_PERCENT / 100),
+);
 const ELIGIBLE_TIERS = ["Platinum", "Diamond"];
 
 const razorpay = new Razorpay({
@@ -224,6 +229,8 @@ const getWhiteLabelStatus = async (req, res) => {
       brandingStatus: franchise.brandingStatus || "not_purchased",
       brandingPaidAt: franchise.brandingPaidAt,
       request: request && request.paymentStatus === "Paid" ? request : null,
+      basePrice: WHITE_LABEL_BASE_INR,
+      gstPercent: WHITE_LABEL_GST_PERCENT,
       price: WHITE_LABEL_PRICE_INR,
     });
   } catch (error) {

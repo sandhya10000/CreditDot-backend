@@ -459,6 +459,51 @@ const blockPanOnNoRecord = async (pan, message) => {
   await savePanBlock(pan, message);
 };
 
+// Fallback: download the provider's PDF and validate it. Returns "/reports/<file>" or null.
+const downloadProviderPdf = async (reportUrl, reportId) => {
+  if (!reportUrl) return null;
+  let localFilePath;
+  try {
+    const reportsDir = path.join(__dirname, "../reports");
+    if (!fs.existsSync(reportsDir)) {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    const filename = `credit_report_${reportId}_${Date.now()}.pdf`;
+    localFilePath = path.join(reportsDir, filename);
+
+    const pdfResponse = await axios({
+      method: "GET",
+      url: reportUrl,
+      responseType: "stream",
+      timeout: 30000,
+    });
+
+    const writer = fs.createWriteStream(localFilePath);
+    await new Promise((resolve, reject) => {
+      pdfResponse.data.on("error", reject);
+      writer.on("error", reject);
+      writer.on("finish", resolve);
+      pdfResponse.data.pipe(writer);
+    });
+
+    if (!isValidPdf(localFilePath)) {
+      throw new Error("Downloaded report is not a valid PDF");
+    }
+    return `/reports/${filename}`;
+  } catch (err) {
+    console.error("PROVIDER PDF DOWNLOAD ERROR:", err.message);
+    if (localFilePath && fs.existsSync(localFilePath)) {
+      try {
+        fs.unlinkSync(localFilePath);
+      } catch (cleanupErr) {
+        console.error("PROVIDER PDF CLEANUP ERROR:", cleanupErr.message);
+      }
+    }
+    return null;
+  }
+};
+
 const checkCreditScore = async (req, res) => {
   try {
     let franchise = null;
@@ -562,52 +607,70 @@ const checkCreditScore = async (req, res) => {
     // 3. Fetch report from selected bureau
     try {
       if (normalizedBureau === "cibil") {
-        // CIBIL via DIGIConnect v11
-        const digiCfg = await getDigiConfig();
-
-        if (!digiCfg.baseUrl || !digiCfg.partnerId || !digiCfg.secretKey) {
-          return res.status(500).json({
-            message:
-              "Digi CIBIL credentials not configured (base url / partner id / secret key)",
+        // CIBIL via Finpass (replaces Digi for partner CIBIL)
+        if (!pan) {
+          return res.status(400).json({
+            message: "PAN is required for CIBIL",
           });
         }
 
+        const normalizedGender = String(gender || "").trim().toLowerCase();
+        if (!["male", "female"].includes(normalizedGender)) {
+          return res.status(400).json({
+            message: "Gender (male or female) is required for CIBIL",
+          });
+        }
+
+        let finpassBody;
         try {
-          response = await digiApiClient.makeCibilRequest(
-            { pan, name, mobile },
-            digiCfg,
+          finpassBody = await finpassClient.fetchCibilReport({
+            pan: String(pan).toUpperCase(),
+            name,
+            mobile,
+            gender: normalizedGender,
+          });
+        } catch (finpassErr) {
+          if (finpassErr.code === "FINPASS_NOT_CONFIGURED") {
+            return res.status(500).json({
+              message:
+                "Finpass credentials not configured (FINPASS_API_KEY / FINPASS_API_SECRET)",
+            });
+          }
+
+          const fmsg =
+            finpassErr.response?.data?.message ||
+            finpassErr.message ||
+            "Finpass CIBIL request failed";
+
+          console.error(
+            "FINPASS ERROR status:",
+            finpassErr.response?.status ?? finpassErr.code ?? "none",
           );
-        } catch (digiErr) {
-          const dmsg =
-            digiErr.response?.data?.message ||
-            digiErr.message ||
-            "Digi CIBIL request failed";
 
-          console.error("DIGI ERROR status:", digiErr.response?.status ?? digiErr.code ?? "none");
-
-          await blockPanOnInvalidInputs(pan, dmsg);
-          await blockPanOnNoRecord(pan, dmsg);
+          await blockPanOnInvalidInputs(pan, fmsg);
+          await blockPanOnNoRecord(pan, fmsg);
 
           return res.status(502).json({
-            message: dmsg,
-            error: digiErr.response?.data || null,
+            message: fmsg,
+            error: finpassErr.response?.data || null,
           });
         }
 
-        response.__digi = digiApiClient.parseDigiResponse(response.data);
-        response.__digiBureau = "digi";
+        response = { data: finpassBody };
+        response.__finpass = finpassClient.parseCibilResponse(finpassBody);
 
-        if (!response.__digi.hasResult) {
-          // Digi returned an empty cibilData envelope = no bureau record
-          await savePanBlock(
-            pan,
-            response.__digi.bureauMessage || "No CIBIL record found",
-          );
-          await blockPanOnInvalidInputs(pan, response.__digi.bureauMessage);
+        const hasResult =
+          response.__finpass.score != null &&
+          Object.keys(response.__finpass.cibilData || {}).length > 0;
+
+        if (!hasResult) {
+          // No bureau record: block the PAN and charge nothing
+          const nmsg = "No CIBIL record found";
+          await savePanBlock(pan, nmsg);
+          await blockPanOnInvalidInputs(pan, nmsg);
 
           return res.status(502).json({
-            message:
-              response.__digi.bureauMessage || "No CIBIL data returned by Digi",
+            message: nmsg,
             error: null,
           });
         }
@@ -917,7 +980,8 @@ const checkCreditScore = async (req, res) => {
     const indiconnectBureau = response.__indiconnectBureau || null;
 
     if (normalizedBureau === "cibil") {
-      score = response.__digi?.score ?? null;
+      score = response.__finpass?.score ?? null;
+      reportUrl = response.__finpass?.reportUrl || null;
     } else if (isIndiconnectCibilBureau(normalizedBureau)) {
       const parsed =
         response.__indiconnect ||
@@ -1018,31 +1082,41 @@ const checkCreditScore = async (req, res) => {
 
     // 8. Generate CIBIL PDF synchronously
     // Do NOT run the old setImmediate/background renderer as well.
-    if (isIndiconnectCibil && !creditReport.localPath) {
+    const isFinpassCibil = normalizedBureau === "cibil";
+
+    if ((isIndiconnectCibil || isFinpassCibil) && !creditReport.localPath) {
       try {
         const reportId = String(creditReport._id);
-        const rawCibilData =
-          response.__digi?.cibilData || response.__indiconnect?.cibilData;
+        const rawCibilData = isFinpassCibil
+          ? response.__finpass?.cibilData
+          : response.__indiconnect?.cibilData;
 
         if (!rawCibilData || typeof rawCibilData !== "object") {
-          throw new Error(
-            "CIBIL data is missing from response.__indiconnect.cibilData",
-          );
+          throw new Error("CIBIL data is missing from the bureau response");
         }
 
         console.log("[CIBIL PDF] Starting generation:", {
           creditReportId: reportId,
+          source: isFinpassCibil ? "finpass" : "indiconnect",
           cibilDataKeys: Object.keys(rawCibilData),
         });
 
-        const cibilPdfInput = {
-          data: {
-            cibilData: rawCibilData,
-            verify: response.data?.verify || response.data?.data?.verify || {},
-          },
-        };
-
-        const generated = await generateCibilPdf(cibilPdfInput, reportId);
+        const generated = isFinpassCibil
+          ? await finpassCibilPdf.generateFinpassCibilPdf(
+              rawCibilData,
+              score,
+              reportId,
+            )
+          : await generateCibilPdf(
+              {
+                data: {
+                  cibilData: rawCibilData,
+                  verify:
+                    response.data?.verify || response.data?.data?.verify || {},
+                },
+              },
+              reportId,
+            );
 
         if (!generated?.success) {
           throw new Error("CIBIL PDF service returned success=false");
@@ -1101,7 +1175,15 @@ const checkCreditScore = async (req, res) => {
           stack: pdfError.stack,
         });
 
-        creditReport.pdfStatus = "failed";
+        // Finpass: fall back to the provider's own PDF link
+        const fallbackPath = isFinpassCibil
+          ? await downloadProviderPdf(reportUrl, String(creditReport._id))
+          : null;
+
+        if (fallbackPath) {
+          creditReport.localPath = fallbackPath;
+        }
+        creditReport.pdfStatus = fallbackPath ? "ready" : "failed";
 
         await creditReport.save().catch((saveError) => {
           console.error(
