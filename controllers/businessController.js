@@ -1,5 +1,6 @@
 const axios = require("axios");
 const BusinessForm = require("../models/BusinessForm");
+const FranchiseCounter = require("../models/FranchiseCounter");
 const CustomerPackage = require("../models/CustomerPackage");
 const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
@@ -17,6 +18,14 @@ const resolveAssignableRmId = async (requestedId) => {
   const managers = await getEligibleManagers();
   const match = managers.find((m) => String(m._id) === String(requestedId));
   return match ? match._id : null;
+};
+
+// Business Manager that owns a franchise (null if none or franchise missing)
+const rmOfFranchise = async (franchiseId) => {
+  if (!franchiseId || !mongoose.Types.ObjectId.isValid(franchiseId)) return null;
+  const franchise = await Franchise.findById(franchiseId).select("businessManager").lean();
+  if (!franchise?.businessManager) return null;
+  return resolveAssignableRmId(franchise.businessManager);
 };
 
 // Escapes user input so it is matched literally in a regex
@@ -239,7 +248,10 @@ const submitBusinessForm = async (req, res) => {
           phone: consultantPhone?.trim() || undefined,
           email: consultantEmail?.trim().toLowerCase() || undefined,
         },
-        assignedRm: (await resolveAssignableRmId(assignedRm)) || null,
+        assignedRm:
+          (await resolveAssignableRmId(assignedRm)) ||
+          (await rmOfFranchise(franchiseId || req.user.franchiseId)) ||
+          null,
       }),
       businessDetails: isBusinessCustomer
         ? {
@@ -544,8 +556,19 @@ const getAllBusinessForms = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const paymentStatus = req.query.paymentStatus;
 
-    // Business Managers (scoped users) see only the MIS assigned to them; admins see all
-    const filter = isScoped(req) ? { assignedRm: req.user._id } : {};
+    // Business Managers (scoped users) see MIS assigned to them or from their own franchises; admins see all
+    const filter = {};
+    if (isScoped(req)) {
+      const ownedFranchiseIds = await Franchise.find({ businessManager: req.user._id }).distinct("_id");
+      filter.$and = [
+        {
+          $or: [
+            { assignedRm: req.user._id },
+            { franchiseId: { $in: ownedFranchiseIds } },
+          ],
+        },
+      ];
+    }
 
     if (
       paymentStatus &&
@@ -835,6 +858,37 @@ const uploadDocBusiness = async (req, res) => {
   }
 };
 
+// Numeric max of existing CD<n> IDs (legacy IDs included; 0 if none). Used only to seed the counter.
+async function getMaxCustomerSeq() {
+  const [row] = await BusinessForm.aggregate([
+    { $match: { customerId: { $regex: /^CD\d+$/ } } },
+    { $project: { n: { $toInt: { $substrCP: ["$customerId", 2, 100] } } } },
+    { $group: { _id: null, max: { $max: "$n" } } },
+  ]);
+  return row?.max || 0;
+}
+
+// Atomic, persistent counter: CD492, CD493, ... Never reset by restarts.
+async function nextCustomerSeq() {
+  const COUNTER_ID = "customerId";
+  const exists = await FranchiseCounter.exists({ _id: COUNTER_ID });
+  if (!exists) {
+    const seed = await getMaxCustomerSeq();
+    try {
+      await FranchiseCounter.create({ _id: COUNTER_ID, seq: seed });
+    } catch (err) {
+      // Another request seeded it concurrently; that is fine.
+      if (err.code !== 11000) throw err;
+    }
+  }
+  const counter = await FranchiseCounter.findOneAndUpdate(
+    { _id: COUNTER_ID },
+    { $inc: { seq: 1 } },
+    { new: true },
+  );
+  return counter.seq;
+}
+
 async function assignCustomerId(businessForm) {
   try {
     // Already assigned
@@ -842,25 +896,8 @@ async function assignCustomerId(businessForm) {
       return businessForm.customerId;
     }
 
-    // Find latest customer ID
-    const lastCustomer = await BusinessForm.findOne({
-      customerId: { $exists: true, $ne: null, $ne: "" },
-    })
-      .sort({ customerId: -1 })
-      .select("customerId")
-      .lean();
-
-    let nextNumber = 1;
-
-    if (lastCustomer?.customerId) {
-      const match = lastCustomer.customerId.match(/^CUST-(\d+)$/);
-
-      if (match) {
-        nextNumber = parseInt(match[1], 10) + 1;
-      }
-    }
-
-    const customerId = `CUST-${String(nextNumber).padStart(4, "0")}`;
+    const nextNumber = await nextCustomerSeq();
+    const customerId = `CD${nextNumber}`;
 
     businessForm.customerId = customerId;
 
