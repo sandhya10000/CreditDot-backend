@@ -2,17 +2,15 @@ const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const Joi = require("joi");
 const Franchise = require("../models/Franchise");
-const Transaction = require("../models/Transaction");
 const CustomBrandedRequest = require("../models/CustomBrandedRequest");
 
-// White Label Reports: one-time ₹10,000 via Razorpay, only for Platinum/Diamond partners
+// White Label Reports: one-time ₹10,000 + GST via Razorpay, open to all franchise partners
 const WHITE_LABEL_BASE_INR = 10000;
 const WHITE_LABEL_GST_PERCENT = 18;
 // Total charged including GST: 10,000 + 18% = 11,800
 const WHITE_LABEL_PRICE_INR = Math.round(
   WHITE_LABEL_BASE_INR * (1 + WHITE_LABEL_GST_PERCENT / 100),
 );
-const ELIGIBLE_TIERS = ["Platinum", "Diamond"];
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -39,34 +37,11 @@ const contactSchema = Joi.object({
     .messages({ "any.invalid": "Mobile must be a valid 10-digit number" }),
 });
 
-// Looks up the partner's franchise and checks Platinum/Diamond eligibility
+// Looks up the partner's franchise. White Label is open to all franchise partners.
 const getEligibleFranchise = async (userId) => {
-  const franchise = await Franchise.findOne({ userId }).populate(
-    "assignedPackages",
-    "name",
-  );
-  if (!franchise) return { franchise: null, eligible: false };
-
-  const latestPaid = await Transaction.findOne({
-    franchiseId: franchise._id,
-    status: "paid",
-  })
-    .sort({ createdAt: -1 })
-    .populate("packageId", "name");
-
-  const tierNames = [
-    ...(franchise.assignedPackages || []).map((p) => p.name),
-    latestPaid?.packageId?.name,
-  ].filter(Boolean);
-
-  return {
-    franchise,
-    eligible: tierNames.some((name) => ELIGIBLE_TIERS.includes(name)),
-  };
+  const franchise = await Franchise.findOne({ userId });
+  return { franchise, eligible: Boolean(franchise) };
 };
-
-const notEligibleMessage =
-  "White Label Reports are only available for Platinum and Diamond partners. Upgrade your package to continue.";
 
 // POST /api/dashboard/white-label/order
 // Body: { name, email, mobile } — creates a Razorpay order and an Unpaid request
@@ -84,10 +59,6 @@ const createWhiteLabelOrder = async (req, res) => {
     if (!franchise) {
       return res.status(404).json({ message: "Franchise not found" });
     }
-    if (!eligible) {
-      return res.status(403).json({ message: notEligibleMessage });
-    }
-
     // One paid white-label request per partner
     const alreadyPaid = await CustomBrandedRequest.findOne({
       partnerId: req.user.id,
