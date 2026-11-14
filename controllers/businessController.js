@@ -752,29 +752,44 @@ const updateBusinessForm = async (req, res) => {
   try {
     const { customerId } = req.params;
 
-    const {
-      customerEmail,
-      customerPhone,
-      panNumber,
-      aadharNumber,
-      dob,
-      gender,
-    } = req.body;
+    // Only fields the client actually sent are written, so partial edits don't
+    // blank out the rest of the record.
+    const EDITABLE_FIELDS = [
+      "customerName",
+      "customerEmail",
+      "customerPhone",
+      "panNumber",
+      "aadharNumber",
+      "dob",
+      "gender",
+      "fullAddress",
+      "city",
+      "state",
+      "pincode",
+    ];
+    const updates = {};
+    for (const field of EDITABLE_FIELDS) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (typeof updates.customerName === "string") {
+      updates.customerName = updates.customerName.trim();
+      if (!updates.customerName) {
+        return res.status(400).json({
+          success: false,
+          message: "Customer name cannot be empty",
+        });
+      }
+    }
 
     const updatedCustomer = await BusinessForm.findOneAndUpdate(
       { customerId, ...(await scopeFilter(req)) },
-      {
-        $set: {
-          customerEmail,
-          customerPhone,
-          panNumber,
-          aadharNumber,
-          dob,
-          gender,
-        },
-      },
+      { $set: updates },
       {
         new: true,
+        runValidators: true,
       },
     );
 

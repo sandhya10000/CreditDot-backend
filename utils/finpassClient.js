@@ -10,8 +10,14 @@ const getFinpassConfig = () => ({
   apiSecret: process.env.FINPASS_API_SECRET,
 });
 
-// Requests a CIBIL report only (bureaus: ["cibil"])
-const fetchCibilReport = async ({ pan, name, mobile, gender }) => {
+// Bureau keys Finpass accepts in the `bureaus` array (our internal names)
+const FINPASS_BUREAUS = ["cibil", "crif", "experian", "equifax"];
+
+// Requests one bureau's report (default CIBIL) from Finpass
+const fetchBureauReport = async ({ pan, name, mobile, gender, bureau = "cibil" }) => {
+  if (!FINPASS_BUREAUS.includes(bureau)) {
+    throw new Error(`Finpass does not support bureau: ${bureau}`);
+  }
   const cfg = getFinpassConfig();
   if (!cfg.apiKey || !cfg.apiSecret) {
     const err = new Error("Finpass credentials not configured");
@@ -27,7 +33,7 @@ const fetchCibilReport = async ({ pan, name, mobile, gender }) => {
       mobile_number: mobile,
       consent: "Y",
       gender,
-      bureaus: ["cibil"],
+      bureaus: [bureau],
     },
     {
       headers: {
@@ -41,25 +47,31 @@ const fetchCibilReport = async ({ pan, name, mobile, gender }) => {
   return data;
 };
 
-// Pulls score, report link and the raw CIBIL data out of the Finpass response.
-// Shape: body.data.results.cibil.{ credit_report_link, data: { credit_score, credit_report: [...] } }
-const parseCibilResponse = (body) => {
+// Pulls score, report link and the raw bureau data out of the Finpass response.
+// Shape: body.data.results.<bureau>.{ credit_report_link, data: { credit_score, credit_report: [...] } }
+const parseBureauResponse = (body, bureau = "cibil") => {
   const root = body?.data ?? body ?? {};
-  const cibilSection = root.results?.cibil ?? root.cibil ?? null;
-  const cibilData = cibilSection?.data ?? {};
-  const report = Array.isArray(cibilData.credit_report) ? cibilData.credit_report[0] : null;
+  const section = root.results?.[bureau] ?? root[bureau] ?? null;
+  const bureauData = section?.data ?? {};
+  const report = Array.isArray(bureauData.credit_report) ? bureauData.credit_report[0] : null;
 
   const rawScore =
-    cibilData.credit_score ?? report?.scores?.[0]?.score ?? cibilSection?.score ?? null;
+    bureauData.credit_score ?? report?.scores?.[0]?.score ?? section?.score ?? null;
   const score = rawScore == null || rawScore === "" ? null : Number(rawScore) || null;
 
-  const reportUrl = cibilSection?.credit_report_link ?? root.pdf_url ?? null;
+  const reportUrl = section?.credit_report_link ?? root.pdf_url ?? null;
 
-  return { score, reportUrl, cibilData };
+  return { score, reportUrl, cibilData: bureauData };
 };
+
+// CIBIL-only wrappers kept for the existing CIBIL call sites
+const fetchCibilReport = (params) => fetchBureauReport({ ...params, bureau: "cibil" });
+const parseCibilResponse = (body) => parseBureauResponse(body, "cibil");
 
 module.exports = {
   getFinpassConfig,
   fetchCibilReport,
+  fetchBureauReport,
   parseCibilResponse,
+  parseBureauResponse,
 };

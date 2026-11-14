@@ -21,6 +21,10 @@ const remarkSchema = new mongoose.Schema(
       name: String,
 
       role: String,
+
+      // Set when a staff member (not the super admin) wrote the remark
+      staffCode: { type: String, default: null },
+      roleName: { type: String, default: null },
     },
   },
   {

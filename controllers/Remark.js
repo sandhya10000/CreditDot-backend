@@ -17,6 +17,8 @@ const addCustomerRemarks = async (req, res) => {
         userId: req.user.id,
         name: req.user.name,
         role: req.user.role,
+        staffCode: req.user.staffCode || null,
+        roleName: req.user.staffRoleName || null,
       },
     });
     res.status(200).json({

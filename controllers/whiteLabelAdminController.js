@@ -72,4 +72,14 @@ const getWhiteLabelPartnerReports = async (req, res) => {
   res.status(200).json({ reports: [] });
 };
 
-module.exports = { listWhiteLabelPartners, getWhiteLabelPartnerReports };
+// GET /api/admin/white-label/reports?page=&limit=
+// Placeholder: partner-generated white-label reports are not persisted yet.
+const listWhiteLabelReports = async (req, res) => {
+  res.status(200).json({ reports: [], total: 0 });
+};
+
+module.exports = {
+  listWhiteLabelPartners,
+  getWhiteLabelPartnerReports,
+  listWhiteLabelReports,
+};

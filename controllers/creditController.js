@@ -65,18 +65,25 @@ const creditCheckSchema = Joi.object({
       "any.only": "cibilApiType must be indiconnect, digi, surepass or finpass",
     }),
   crifApiType: Joi.string()
-    .valid("indiconnect", "surepass")
+    .valid("indiconnect", "surepass", "finpass")
     .optional()
     .default("indiconnect")
     .messages({
-      "any.only": "crifApiType must be indiconnect or surepass",
+      "any.only": "crifApiType must be indiconnect, surepass or finpass",
     }),
   experianApiType: Joi.string()
-    .valid("indiconnect", "surepass")
+    .valid("indiconnect", "surepass", "finpass")
     .optional()
     .default("indiconnect")
     .messages({
-      "any.only": "experianApiType must be indiconnect or surepass",
+      "any.only": "experianApiType must be indiconnect, surepass or finpass",
+    }),
+  equifaxApiType: Joi.string()
+    .valid("surepass", "finpass")
+    .optional()
+    .default("surepass")
+    .messages({
+      "any.only": "equifaxApiType must be surepass or finpass",
     }),
   // Fields for all bureaus
   pan: Joi.string().optional(),
@@ -2106,7 +2113,8 @@ const getAllCreditReports = async (req, res) => {
       )
       .populate({
         path: "userId",
-        select: "name email",
+        select: "name email role subRole staffCode staffRole",
+        populate: { path: "staffRole", select: "name" },
       })
       .populate({
         path: "franchiseId",
@@ -2118,16 +2126,37 @@ const getAllCreditReports = async (req, res) => {
       .allowDiskUse(true)
       .lean();
 
-    // Where the report came from: franchise code, "Admin" (admin user, no franchise)
-    // or "Website" (public report, no user and no franchise)
-    const reportsWithSource = reports.map((r) => ({
-      ...r,
-      createdFrom: r.franchiseId?.franchiseCode
-        ? r.franchiseId.franchiseCode
-        : r.userId
-          ? "Admin"
-          : "Website",
-    }));
+    // Where the report came from:
+    // - franchise code when generated from a franchise panel
+    // - employee role name + employee name/staff code when a staff member generated it
+    // - "Admin" when a super admin generated it
+    // - "Website" for public reports (no user and no franchise)
+    const reportsWithSource = reports.map((r) => {
+      const creator = r.userId;
+      const isEmployee =
+        !r.franchiseId && creator?.role === "admin" && Boolean(creator.staffRole || creator.staffCode);
+
+      let createdFrom = "Website";
+      if (r.franchiseId?.franchiseCode) {
+        createdFrom = r.franchiseId.franchiseCode;
+      } else if (isEmployee) {
+        createdFrom = creator.staffRole?.name || creator.subRole || "Staff";
+      } else if (creator) {
+        createdFrom = "Admin";
+      }
+
+      return {
+        ...r,
+        createdFrom,
+        createdByEmployee: isEmployee
+          ? {
+              name: creator.name,
+              staffCode: creator.staffCode || null,
+              roleName: creator.staffRole?.name || null,
+            }
+          : null,
+      };
+    });
 
     const total = await CreditReport.countDocuments(filter);
 
@@ -2428,6 +2457,7 @@ const checkCreditScoreV2 = async (req, res) => {
       cibilApiType = "indiconnect",
       crifApiType = "indiconnect",
       experianApiType = "indiconnect",
+      equifaxApiType = "surepass",
       pan,
       dob,
       gender,
@@ -2685,6 +2715,57 @@ const checkCreditScoreV2 = async (req, res) => {
       }
       console.log(
         `Finpass CIBIL: score=${response.__finpass.score ?? "null"} report=${response.__finpass.reportUrl ? "yes" : "no"}`,
+      );
+    }
+
+    // =========================
+    // CRIF / EXPERIAN / EQUIFAX -> FINPASS (admin picker)
+    // =========================
+    else if (
+      (bureau === "crif" && crifApiType === "finpass") ||
+      (bureau === "experian" && experianApiType === "finpass") ||
+      (bureau === "equifax" && equifaxApiType === "finpass")
+    ) {
+      if (req.user?.role !== "admin") {
+        return res.status(403).json({
+          message: "Finpass is available to admins only",
+        });
+      }
+      if (!pan) {
+        return res.status(400).json({
+          message: `PAN is required for Finpass ${bureau.toUpperCase()}`,
+        });
+      }
+
+      try {
+        const finpassBody = await finpassClient.fetchBureauReport({
+          bureau,
+          pan: String(pan).toUpperCase(),
+          name,
+          mobile,
+          gender: String(gender || "").trim().toLowerCase(),
+        });
+        response = { data: finpassBody };
+        response.__finpass = finpassClient.parseBureauResponse(finpassBody, bureau);
+      } catch (finpassErr) {
+        if (finpassErr.code === "FINPASS_NOT_CONFIGURED") {
+          return res.status(500).json({
+            message: "Finpass credentials not configured (FINPASS_API_KEY / FINPASS_API_SECRET)",
+            provider: "finpass",
+            apiType: "finpass",
+          });
+        }
+        return res.status(finpassErr.response?.status || 502).json({
+          message:
+            finpassErr.response?.data?.message ||
+            finpassErr.message ||
+            `Finpass ${bureau.toUpperCase()} check failed`,
+          provider: "finpass",
+          apiType: "finpass",
+        });
+      }
+      console.log(
+        `Finpass ${bureau.toUpperCase()}: score=${response.__finpass.score ?? "null"} report=${response.__finpass.reportUrl ? "yes" : "no"}`,
       );
     }
 
@@ -3147,9 +3228,11 @@ const checkCreditScoreV2 = async (req, res) => {
           ? crifApiType
           : bureau === "experian"
             ? experianApiType
-            : cibilApiType,
+            : bureau === "equifax"
+              ? equifaxApiType
+              : cibilApiType,
       provider:
-        bureau === "cibil" && cibilApiType === "finpass"
+        response.__finpass
           ? "finpass"
           : isV2DigiCibil
             ? "digi"
