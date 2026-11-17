@@ -6,7 +6,7 @@ const Franchise = require("../models/Franchise");
 const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const { validateAmcTerm } = require("./amcController");
-const { scopeFilter, isScoped } = require("../utils/franchiseScope");
+const { scopeFilter, isScoped, ownsFranchise } = require("../utils/franchiseScope");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
@@ -229,7 +229,7 @@ const submitBusinessForm = async (req, res) => {
     // Create business form entry
     const businessForm = new BusinessForm({
       ...(amcTerm && { amc: amcTerm }),
-      ...(["in_progress", "closed", "pending"].includes(workStatus) && { workStatus }),
+      ...(["newly_logged", "in_progress", "closed", "pending"].includes(workStatus) && { workStatus }),
       // customerId: null,
       //Admin case franchiseId from body
       //Franchise login case req.user.franchiseId
@@ -519,6 +519,59 @@ const getBusinessUnreadCounts = async (req, res) => {
   }
 };
 
+// Dashboard counts for Business MIS: logged today / this month (IST), and work status pending / closed
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const getBusinessMisCounts = async (req, res) => {
+  try {
+    // Same visibility as the Business MIS list: scoped users see their own franchises / assigned MIS
+    let scope = {};
+    if (isScoped(req)) {
+      const ownedFranchiseIds = await Franchise.find({ businessManager: req.user._id }).distinct("_id");
+      scope = {
+        $or: [{ assignedRm: req.user._id }, { franchiseId: { $in: ownedFranchiseIds } }],
+      };
+    }
+
+    const ist = new Date(Date.now() + IST_OFFSET_MS);
+    const y = ist.getUTCFullYear();
+    const m = ist.getUTCMonth();
+    const d = ist.getUTCDate();
+    const todayStart = new Date(Date.UTC(y, m, d) - IST_OFFSET_MS);
+    const monthStart = new Date(Date.UTC(y, m, 1) - IST_OFFSET_MS);
+
+    // Follow-up dates are YYYY-MM-DD strings (IST calendar day); week runs Monday to Sunday
+    const dayString = (date) => date.toISOString().slice(0, 10);
+    const todayKey = dayString(new Date(Date.UTC(y, m, d)));
+    const mondayOffset = (ist.getUTCDay() + 6) % 7;
+    const weekStartKey = dayString(new Date(Date.UTC(y, m, d - mondayOffset)));
+    const weekEndKey = dayString(new Date(Date.UTC(y, m, d - mondayOffset + 6)));
+
+    const [loggedToday, loggedThisMonth, pending, closed, followUpToday, followUpThisWeek] =
+      await Promise.all([
+        BusinessForm.countDocuments({ ...scope, createdAt: { $gte: todayStart } }),
+        BusinessForm.countDocuments({ ...scope, createdAt: { $gte: monthStart } }),
+        BusinessForm.countDocuments({ ...scope, workStatus: "pending" }),
+        BusinessForm.countDocuments({ ...scope, workStatus: "closed" }),
+        BusinessForm.countDocuments({ ...scope, nextFollowUpDate: todayKey }),
+        BusinessForm.countDocuments({
+          ...scope,
+          nextFollowUpDate: { $gte: weekStartKey, $lte: weekEndKey },
+        }),
+      ]);
+
+    res.json({
+      loggedToday,
+      loggedThisMonth,
+      pending,
+      closed,
+      followUpToday,
+      followUpThisWeek,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 // Called when an admin opens the individual or business Business MIS list
 const markBusinessFormsListRead = async (req, res) => {
   try {
@@ -753,11 +806,14 @@ const updateBusinessForm = async (req, res) => {
     const { customerId } = req.params;
 
     // Only fields the client actually sent are written, so partial edits don't
-    // blank out the rest of the record.
+    // blank out the rest of the record. Workflow fields (work status, AMC, RM,
+    // payment) have their own endpoints and are not editable here.
     const EDITABLE_FIELDS = [
       "customerName",
       "customerEmail",
       "customerPhone",
+      "whatsappNumber",
+      "fatherName",
       "panNumber",
       "aadharNumber",
       "dob",
@@ -766,6 +822,12 @@ const updateBusinessForm = async (req, res) => {
       "city",
       "state",
       "pincode",
+      "language",
+      "occupation",
+      "monthlyIncome",
+      "bankAccountNumber",
+      "ifscCode",
+      "clientIssues",
     ];
     const updates = {};
     for (const field of EDITABLE_FIELDS) {
@@ -784,21 +846,77 @@ const updateBusinessForm = async (req, res) => {
       }
     }
 
-    const updatedCustomer = await BusinessForm.findOneAndUpdate(
-      { customerId, ...(await scopeFilter(req)) },
-      { $set: updates },
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
+    if (typeof updates.clientIssues === "string") {
+      updates.clientIssues = updates.clientIssues.trim().slice(0, 1000);
+    }
 
-    if (!updatedCustomer) {
+    // Optional referral details (individual customers)
+    const { consultant } = req.body;
+    if (consultant && typeof consultant === "object") {
+      for (const key of ["name", "phone", "email"]) {
+        if (consultant[key] !== undefined) {
+          updates[`consultant.${key}`] = String(consultant[key] ?? "").trim();
+        }
+      }
+    }
+
+    // Business details (business customers); only the fields sent are changed
+    const { businessDetails } = req.body;
+    if (businessDetails && typeof businessDetails === "object") {
+      for (const key of BusinessForm.BUSINESS_DETAIL_FIELDS) {
+        if (businessDetails[key] !== undefined) {
+          updates[`businessDetails.${key}`] = String(businessDetails[key] ?? "").trim();
+        }
+      }
+    }
+
+    // Franchise link: "" / null unlinks. Scoped managers may only link franchises they own.
+    if (req.body.franchiseId !== undefined) {
+      const franchiseId = req.body.franchiseId || null;
+      if (franchiseId) {
+        if (!mongoose.Types.ObjectId.isValid(franchiseId)) {
+          return res.status(400).json({ success: false, message: "Invalid franchise" });
+        }
+        if (!(await ownsFranchise(req, franchiseId))) {
+          return res.status(403).json({ success: false, message: "You can only link your own franchises" });
+        }
+        if (!(await Franchise.exists({ _id: franchiseId }))) {
+          return res.status(400).json({ success: false, message: "Franchise not found" });
+        }
+      }
+      updates.franchiseId = franchiseId;
+    }
+
+    // Customer package: "" / null clears it; otherwise it must be an active package
+    if (req.body.selectedPackage !== undefined) {
+      const packageId = req.body.selectedPackage || null;
+      if (packageId) {
+        const pkg = mongoose.Types.ObjectId.isValid(packageId)
+          ? await CustomerPackage.findById(packageId)
+          : null;
+        if (!pkg || !pkg.isActive) {
+          return res.status(400).json({ success: false, message: "Invalid or inactive package selected" });
+        }
+      }
+      updates.selectedPackage = packageId;
+    }
+
+    // Load and save (instead of findOneAndUpdate) so the model's validation,
+    // including the business-details check, runs on every edit
+    const customer = await BusinessForm.findOne({
+      customerId,
+      ...(await scopeFilter(req)),
+    });
+
+    if (!customer) {
       return res.status(404).json({
         success: false,
         message: "Customer not found",
       });
     }
+
+    customer.set(updates);
+    const updatedCustomer = await customer.save();
 
     res.status(200).json({
       success: true,
@@ -806,7 +924,8 @@ const updateBusinessForm = async (req, res) => {
       data: updatedCustomer,
     });
   } catch (error) {
-    res.status(500).json({
+    const isValidationError = error.name === "ValidationError";
+    res.status(isValidationError ? 400 : 500).json({
       success: false,
       message: error.message,
     });
@@ -1000,6 +1119,7 @@ module.exports = {
   deleteBusinessForm,
   assignCustomerId,
   getBusinessUnreadCounts,
+  getBusinessMisCounts,
   markBusinessFormRead,
   markBusinessFormsListRead,
 };

@@ -17,6 +17,7 @@ const {
   lookupConsultant,
   assignBusinessRm,
   getBusinessUnreadCounts,
+  getBusinessMisCounts,
   markBusinessFormRead,
   markBusinessFormsListRead,
 } = require("../controllers/businessController");
@@ -115,6 +116,10 @@ router.get("/all", auth, rbac("admin"), getAllBusinessForms);
 // @route   GET /api/business/unread-counts
 // @desc    Paid business forms not yet opened by an admin (Business MIS badges)
 router.get("/unread-counts", auth, rbac("admin"), getBusinessUnreadCounts);
+
+// @route   GET /api/business/mis-counts
+// @desc    Logged today / this month and pending / closed counts for the credit analyst dashboard
+router.get("/mis-counts", auth, rbac("admin"), getBusinessMisCounts);
 
 // @route   PUT /api/business/admin/business-forms/mark-read?customerType=individual|business
 // @desc    Marks every unread paid form of one type as seen (opening the Business MIS list)
