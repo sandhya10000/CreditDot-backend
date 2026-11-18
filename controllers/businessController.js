@@ -931,24 +931,27 @@ const updateBusinessForm = async (req, res) => {
     });
   }
 };
-// controller — admin can delete only pending (unpaid) business; paid records are protected
+// controller — admins and staff with the business permission can delete any
+// business form, paid or not, so corrupted entries can be removed from MIS
 const deleteBusinessForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existing = await BusinessForm.findOne({
-      _id: id,
-      ...(await scopeFilter(req)),
-    });
+    // Same visibility as the MIS list: scoped managers may delete entries
+    // assigned to them or belonging to their own franchises
+    const filter = { _id: id };
+    if (isScoped(req)) {
+      const ownedIds = await Franchise.find({ businessManager: req.user._id }).distinct("_id");
+      filter.$or = [
+        { assignedRm: req.user._id },
+        { franchiseId: { $in: ownedIds } },
+      ];
+    }
+
+    const existing = await BusinessForm.findOne(filter);
 
     if (!existing) {
       return res.status(404).json({ message: "Business form not found" });
-    }
-
-    if (existing.paymentStatus === "paid") {
-      return res
-        .status(400)
-        .json({ message: "Paid business cannot be deleted" });
     }
 
     await BusinessForm.findByIdAndDelete(id);
