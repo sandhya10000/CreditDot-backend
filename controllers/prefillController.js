@@ -38,7 +38,7 @@ const prefillByMobile = async (req, res) => {
     ) {
       return res.status(503).json({
         success: false,
-        message: "Service is temporarily unavailable. Please try again later.",
+        message: "Credit check is temporarily unavailable due to a provider issue. Please try again later or contact CreditDost support.",
       });
     }
     if (apiError.code === "ETIMEDOUT" || apiError.code === "ECONNABORTED") {

@@ -304,7 +304,7 @@ const runExperianSoftPull = async ({
       ed?.message_code === "balance_exhausted" ||
       ed?.message === "API Balance Exhausted. Please recharge."
     ) {
-      fail(503, "Service is temporarily unavailable. Please try again later.");
+      fail(503, "Credit check is temporarily unavailable due to a provider issue. Please try again later or contact CreditDost support.");
     }
     if (apiError.response) {
       fail(
@@ -947,7 +947,7 @@ const checkCreditScore = async (req, res) => {
         return res.status(503).json({
           success: false,
           message:
-            "Service is temporarily unavailable. Please try again later.",
+            "Credit check is temporarily unavailable due to a provider issue. Please try again later or contact CreditDost support.",
         });
       }
 
@@ -1659,7 +1659,7 @@ const checkCreditScorePublic = async (req, res) => {
         return res.status(503).json({
           success: false,
           message:
-            "Service is temporarily unavailable. Please try again later.",
+            "Credit check is temporarily unavailable due to a provider issue. Please try again later or contact CreditDost support.",
         });
       }
 
