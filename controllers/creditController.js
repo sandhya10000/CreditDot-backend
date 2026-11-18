@@ -466,6 +466,14 @@ const blockPanOnNoRecord = async (pan, message) => {
   await savePanBlock(pan, message);
 };
 
+// Partner CIBIL request that failed to produce a report (bureau rejection,
+// provider error, or PDF generation failure): lock the PAN for 48h.
+// Platform-side errors (config, timeouts, network, rate limits, exhausted
+// balance) must not call this.
+const blockPanOnCibilFailure = async (pan, message) => {
+  await savePanBlock(pan, message || "CIBIL report failed");
+};
+
 // Fallback: download the provider's PDF and validate it. Returns "/reports/<file>" or null.
 const downloadProviderPdf = async (reportUrl, reportId) => {
   if (!reportUrl) return null;
@@ -656,6 +664,9 @@ const checkCreditScore = async (req, res) => {
 
           await blockPanOnInvalidInputs(pan, fmsg);
           await blockPanOnNoRecord(pan, fmsg);
+          if (!isAdmin && finpassErr.response && finpassErr.response.status !== 429) {
+            await blockPanOnCibilFailure(pan, fmsg);
+          }
 
           return res.status(502).json({
             message: fmsg,
@@ -727,6 +738,9 @@ const checkCreditScore = async (req, res) => {
         if (failReason) {
           await blockPanOnInvalidInputs(pan, failReason);
           await blockPanOnNoRecord(pan, failReason);
+          if (!isAdmin) {
+            await blockPanOnCibilFailure(pan, failReason);
+          }
 
           return res.status(502).json({
             message: failReason,
@@ -959,6 +973,14 @@ const checkCreditScore = async (req, res) => {
             "Too many requests to credit bureau. Please try again later.",
           error: "RATE_LIMIT_EXCEEDED",
         });
+      }
+
+      // Bureau answered with a failure for a partner CIBIL request: lock the PAN
+      if (apiError.response && isCibilRequest && !isAdmin) {
+        await blockPanOnCibilFailure(
+          pan,
+          errorData?.message || apiError.message,
+        );
       }
 
       if (apiError.response) {
@@ -1463,6 +1485,11 @@ const checkCreditScore = async (req, res) => {
         pan,
         response.__indiconnect?.bureauMessage || "No CIBIL record found",
       );
+    }
+
+    // Partner CIBIL report fetched but PDF failed to generate: lock the PAN for 48h
+    if (!isAdmin && isCibilRequest && creditReport.pdfStatus === "failed") {
+      await blockPanOnCibilFailure(pan, "CIBIL report PDF generation failed");
     }
 
     const responsePayload = {
