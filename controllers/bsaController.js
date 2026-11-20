@@ -116,12 +116,15 @@ async function executeStatementJob(docId, pdfBuffer, originalFileName, password 
     doc = await BankStatementAnalysis.findById(docId);
     if (!doc) return;
 
+    console.log(`[bsa][${docId}] Step 1/7: Starting statement extraction & reconciliation for file: "${originalFileName}"...`);
+
     // 1. Extraction and Reconciliation Gate
     let extractionResult;
     try {
       extractionResult = await pipelineExtractor.extractAndReconcile(pdfBuffer, { allowPartial: true, password });
+      console.log(`[bsa][${docId}] Step 1/7: Extraction & Reconciliation PASSED. Transactions extracted: ${extractionResult?.data?.transactions?.length || 0}`);
     } catch (err) {
-      console.log(`[bsa] Extraction stopped for doc ${docId}:`, err.message);
+      console.error(`[bsa][${docId}] Step 1/7 FAILED: Extraction stopped -`, err.message);
       doc.status = 'Failed';
       doc.failureReason = err.userMessage || err.message || 'We could not extract transactions from this bank statement.';
       doc.errorCode = err.code || 'RECONCILIATION_FAILED';
@@ -133,6 +136,7 @@ async function executeStatementJob(docId, pdfBuffer, originalFileName, password 
     const extractedData = extractionResult.data;
 
     // Transition to Finalizing
+    console.log(`[bsa][${docId}] Step 2/7: Profiling statement metadata (Bank: ${extractedData.bankName || 'Unknown'}, Pages: ${extractedData.pageCount || 1})...`);
     doc.status = 'Finalizing';
     doc.pageCount = extractedData.pageCount || extractionResult.stats?.pageCount || 1;
     doc.accountHolderName = extractedData.accountHolderName || extractedData.accountProfile?.holderName || null;
@@ -148,19 +152,26 @@ async function executeStatementJob(docId, pdfBuffer, originalFileName, password 
     await doc.save();
 
     // 2. Classification
+    console.log(`[bsa][${docId}] Step 3/7: Classifying transactions...`);
     const classifiedTxs = await classifyTransactions(
       extractedData.transactions,
       extractedData.accountHolderName,
       { useClaudeFallback: false }
     );
+    console.log(`[bsa][${docId}] Step 3/7: Classification complete.`);
 
     // 3. Analytics Engine
+    console.log(`[bsa][${docId}] Step 4/7: Computing underwriting analytics & risk score...`);
     const analytics = computeBankAnalytics(extractedData, classifiedTxs);
+    console.log(`[bsa][${docId}] Step 4/7: Analytics computed. Score: ${analytics?.scorecard?.score || 'N/A'}`);
 
     // 4. Qualitative Narrative (via Claude Haiku or deterministic fallback)
+    console.log(`[bsa][${docId}] Step 5/7: Generating qualitative underwriting narrative...`);
     const narrative = await generateNarrative(analytics);
+    console.log(`[bsa][${docId}] Step 5/7: Narrative complete.`);
 
     // 5. HTML Rendering
+    console.log(`[bsa][${docId}] Step 6/7: Rendering report HTML template...`);
     const html = renderBankStatementReportHtml({
       extractedData,
       analytics,
@@ -177,13 +188,15 @@ async function executeStatementJob(docId, pdfBuffer, originalFileName, password 
     });
 
     // 6. PDF Generation (Headless Puppeteer)
+    console.log(`[bsa][${docId}] Step 7/7: Compiling PDF via Puppeteer...`);
     let pdfBufferGenerated;
     try {
       pdfBufferGenerated = await pipelinePdf.generatePdfFromHtml(html);
+      console.log(`[bsa][${docId}] Step 7/7: PDF generated successfully (${pdfBufferGenerated.length} bytes).`);
     } catch (pdfErr) {
-      console.error(`[bsa] PDF generation failed for doc ${docId}:`, pdfErr.message);
+      console.error(`[bsa][${docId}] Step 7/7 FAILED: PDF generation failed -`, pdfErr.message);
       doc.status = 'Failed';
-      doc.failureReason = 'Report PDF generation encountered an error.';
+      doc.failureReason = `Report PDF generation error: ${pdfErr.message}`;
       doc.errorCode = 'PDF_GENERATION_FAILED';
       doc.failedAt = new Date();
       await doc.save();

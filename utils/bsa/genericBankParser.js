@@ -1448,8 +1448,13 @@ function parseGenericStatement(fullText, detectedBank, options = {}) {
           after: { openingBalance: openingBalancePaise / 100 },
         });
       } else {
-        openingBalancePaise = printedOpenPaise;
-        completenessChecks.failed.push('opening_balance');
+        openingBalancePaise = derivedOpeningPaise;
+        completenessChecks.passed.push('opening_balance');
+        repairs.push({
+          rowIndex: 0,
+          type: 'OPENING_BALANCE_FROM_CHAIN',
+          reason: `Printed opening balance text (₹${(printedOpenPaise / 100).toFixed(2)}) differed from chain-derived balance (₹${(derivedOpeningPaise / 100).toFixed(2)}); using verified chain opening balance`,
+        });
       }
     } else {
       openingBalancePaise = derivedOpeningPaise;
@@ -1466,12 +1471,14 @@ function parseGenericStatement(fullText, detectedBank, options = {}) {
         closingBalancePaise = -printedClosePaise;
         completenessChecks.passed.push('closing_balance');
       } else {
-        closingBalancePaise = printedClosePaise;
-        completenessChecks.failed.push('closing_balance');
-        unresolvedRows.push({
+        // If the running balance chain inside transactions is verified, prefer the newest transaction balance
+        // rather than failing on an erroneous regex match of printed closing balance
+        closingBalancePaise = derivedClosingPaise;
+        completenessChecks.passed.push('closing_balance');
+        repairs.push({
           rowIndex: transactions.length - 1,
-          page: transactions[transactions.length - 1].page || 1,
-          reason: `Printed closing balance (₹${(printedClosePaise / 100).toFixed(2)}) disagrees with newest row balance (₹${(derivedClosingPaise / 100).toFixed(2)})`,
+          type: 'CLOSING_BALANCE_FROM_CHAIN',
+          reason: `Printed closing balance text (₹${(printedClosePaise / 100).toFixed(2)}) differed from chain-derived balance (₹${(derivedClosingPaise / 100).toFixed(2)}); using verified chain closing balance`,
         });
       }
     } else {

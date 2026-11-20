@@ -36,6 +36,23 @@ function cleanupOldChromeProfiles() {
 // Run cleanup immediately on module load
 cleanupOldChromeProfiles();
 
+function findSystemChrome() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ].filter(Boolean);
+
+  for (const cand of candidates) {
+    if (fs.existsSync(cand)) {
+      return cand;
+    }
+  }
+  return null;
+}
+
 let sharedBrowser = null;
 let launchPromise = null;
 
@@ -44,15 +61,17 @@ async function getSharedBrowser() {
     return sharedBrowser;
   }
   if (!launchPromise) {
-    const tempDir = path.join(__dirname, '..', 'temp');
-    if (!fs.existsSync(tempDir)) {
-      try { fs.mkdirSync(tempDir, { recursive: true }); } catch (e) {}
+    const systemChrome = findSystemChrome();
+    // Use OS temp dir outside project directory so nodemon never tries to watch it
+    const osTemp = os.tmpdir();
+    let userDataDir;
+    try {
+      userDataDir = fs.mkdtempSync(path.join(osTemp, 'cd-bsa-chrome-'));
+    } catch (e) {
+      userDataDir = undefined;
     }
-    const userDataDir = fs.existsSync(tempDir)
-      ? fs.mkdtempSync(path.join(tempDir, 'bsa-chrome-pool-'))
-      : undefined;
 
-    launchPromise = puppeteer.launch({
+    const launchOptions = {
       headless: 'new',
       userDataDir,
       args: [
@@ -63,7 +82,13 @@ async function getSharedBrowser() {
         '--no-first-run',
         '--disable-extensions'
       ]
-    }).then((b) => {
+    };
+
+    if (systemChrome) {
+      launchOptions.executablePath = systemChrome;
+    }
+
+    launchPromise = puppeteer.launch(launchOptions).then((b) => {
       sharedBrowser = b;
       launchPromise = null;
       return b;

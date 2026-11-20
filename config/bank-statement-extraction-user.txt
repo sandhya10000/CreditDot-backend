@@ -1,0 +1,1 @@
+Transcribe every transaction row on the attached pages (pages {{startPage}} to {{endPage}} of {{totalPages}}). Balance after the last row of the previous batch: {{prevBalance}} (null for the first batch). Call submit_statement_rows.

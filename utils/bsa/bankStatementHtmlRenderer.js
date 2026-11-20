@@ -14,10 +14,19 @@ let cachedLogoBase64 = null;
 function getLogoBase64() {
   if (cachedLogoBase64 === null) {
     try {
-      const logoPath = path.join(__dirname, '..', 'LOGO_1.png');
-      if (fs.existsSync(logoPath)) {
-        cachedLogoBase64 = fs.readFileSync(logoPath).toString('base64');
-      } else {
+      const candidates = [
+        path.join(__dirname, 'cred.png'),
+        path.join(__dirname, '..', '..', 'LOGO_1.png'),
+        path.join(__dirname, '..', 'LOGO_1.png'),
+        path.join(__dirname, '..', '..', 'Creditdost-frontend', 'public', 'images', 'cred.png'),
+      ];
+      for (const logoPath of candidates) {
+        if (fs.existsSync(logoPath)) {
+          cachedLogoBase64 = fs.readFileSync(logoPath).toString('base64');
+          break;
+        }
+      }
+      if (!cachedLogoBase64) {
         cachedLogoBase64 = '';
       }
     } catch (e) {
@@ -190,7 +199,7 @@ function renderBankStatementReportHtml(arg1, arg2, arg3 = {}) {
   // SECTION 1: HEADER
   const logoBase64 = getLogoBase64();
   const logoImgHtml = logoBase64
-    ? `<img src="data:image/png;base64,${logoBase64}" alt="CreditDost" style="height:48px;max-width:180px;object-fit:contain;display:block;" />`
+    ? `<img src="data:image/png;base64,${logoBase64}" alt="CreditDost" style="height:36px;max-width:160px;object-fit:contain;display:block;" />`
     : `<div style="font-size:24px;font-weight:800;color:#2563eb;letter-spacing:-0.5px;">CreditDost</div>`;
 
   return `<!DOCTYPE html>

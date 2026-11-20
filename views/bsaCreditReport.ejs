@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Credit Intelligence Report — CreditDost</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm 10mm 15mm 10mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .page-container {
+      width: 100%;
+      page-break-after: always;
+    }
+    .page-container:last-child {
+      page-break-after: avoid;
+    }
+
+    /* Header */
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.5px;
+    }
+    .brand-subtitle {
+      font-size: 10px;
+      font-weight: 600;
+      color: #3b82f6;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .report-meta {
+      text-align: right;
+      font-size: 9px;
+      color: #64748b;
+    }
+
+    /* Section Cards */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #0f172a;
+      margin: 14px 0 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-left: 3px solid #3b82f6;
+      padding-left: 8px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 10px;
+    }
+    .card-label {
+      font-size: 9px;
+      color: #64748b;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 3px;
+    }
+    .card-value {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .card-sub {
+      font-size: 8.5px;
+      color: #64748b;
+      margin-top: 3px;
+    }
+
+    /* Score Box */
+    .score-card {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .score-number {
+      font-size: 38px;
+      font-weight: 800;
+      line-height: 1;
+      color: #38bdf8;
+    }
+    .score-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+    .badge-excellent { background: #15803d; color: white; }
+    .badge-good { background: #0284c7; color: white; }
+    .badge-fair { background: #d97706; color: white; }
+    .badge-poor { background: #b91c1c; color: white; }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5px;
+      margin-top: 6px;
+    }
+    th {
+      background: #f1f5f9;
+      color: #475569;
+      text-transform: uppercase;
+      font-size: 8px;
+      font-weight: 700;
+      text-align: left;
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+    }
+    td {
+      padding: 5px 8px;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+    }
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+
+    /* Badges */
+    .pill {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .pill-green { background: #dcfce7; color: #166534; }
+    .pill-amber { background: #fef3c7; color: #92400e; }
+    .pill-red { background: #fee2e2; color: #991b1b; }
+
+    /* Narrative Text */
+    .narrative-box {
+      background: #f8fafc;
+      border-left: 3px solid #0284c7;
+      padding: 8px 12px;
+      border-radius: 0 4px 4px 0;
+      font-size: 10px;
+      color: #334155;
+      margin-bottom: 8px;
+    }
+
+    /* SVG Chart */
+    .chart-container {
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+
+    .conditions-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 9.5px;
+      color: #334155;
+    }
+    .conditions-list li {
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== PAGE 1: EXECUTIVE DASHBOARD & RISK SCORECARD ==================== -->
+  <div class="page-container">
+    <div class="header-bar">
+      <div>
+        <div class="brand-title">Credit Intelligence Report</div>
+        <div class="brand-subtitle">Bank Statement Analyzer · CreditDost</div>
+      </div>
+      <div class="report-meta">
+        <div><strong>Date:</strong> <%= reportDate %></div>
+        <div><strong>Report ID:</strong> <%= reportId %></div>
+        <div><strong>Bank:</strong> <%= account.bankName || 'Automated Analysis' %></div>
+      </div>
+    </div>
+
+    <!-- Borrower & Statement Overview -->
+    <div class="grid-3" style="margin-bottom: 12px;">
+      <div class="card">
+        <div class="card-label">Account Holder</div>
+        <div class="card-value" style="font-size: 12px;"><%= account.accountHolderName || 'N/A' %></div>
+        <div class="card-sub">A/C: <%= account.accountNumberMasked || 'N/A' %></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Audited Period</div>
+        <div class="card-value" style="font-size: 12px;"><%= statementPeriod.from || 'Start' %> to <%= statementPeriod.to || 'End' %></div>
+        <div class="card-sub"><%= summary.totalCalendarDays || 0 %> Calendar Days</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Overall Risk Verdict</div>
+        <div class="card-value" style="font-size: 12px; color: <%= scorecard.scoreBand === 'EXCELLENT' ? '#16a34a' : (scorecard.scoreBand === 'GOOD' ? '#0284c7' : '#dc2626') %>;">
+          <%= scorecard.ratingLabel %>
+        </div>
+        <div class="card-sub"><%= scorecard.scoreBand %> RISK BAND</div>
+      </div>
+    </div>
+
+    <!-- Credit Scorecard Banner -->
+    <div class="score-card">
+      <div>
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.85;">Credit Underwriting Score</div>
+        <div class="score-number"><%= scorecard.score %><span style="font-size: 18px; color: #94a3b8;"> / 1000</span></div>
+        <span class="score-badge <%= scorecard.scoreBand === 'EXCELLENT' ? 'badge-excellent' : (scorecard.scoreBand === 'GOOD' ? 'badge-good' : (scorecard.scoreBand === 'FAIR' ? 'badge-fair' : 'badge-poor')) %>">
+          <%= scorecard.scoreBand %>
+        </span>
+      </div>
+      <div style="text-align: right; max-width: 320px;">
+        <div style="font-size: 10.5px; line-height: 1.4; opacity: 0.95;">
+          <%= narrative.executiveUnderwritingSummary %>
+        </div>
+      </div>
+    </div>
+
+    <!-- Income Reality Check (KPIs) -->
+    <div class="section-title">1. Income Reality Check & Cashflow Stability</div>
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-label">Genuine Monthly Income</div>
+        <div class="card-value">₹<%= Number(summary.monthlyGenuineIncome || 0).toLocaleString('en-IN') %></div>
+        <div class="card-sub">Net of self/loans/reversals</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Income Stability (CV)</div>
+        <div class="card-value"><%= ((summary.incomeStabilityCv || 0) * 100).toFixed(1) %>%</div>
+        <div class="card-sub"><%= (summary.incomeStabilityCv || 0) <= 0.30 ? 'High Stability (≤30%)' : 'Moderate Volatility' %></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Detected Monthly EMIs</div>
+        <div class="card-value">₹<%= Number(summary.totalMonthlyEmi || 0).toLocaleString('en-IN') %></div>
+        <div class="card-sub"><%= obligations.length %> Active Mandate(s)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Debt Servicing (FOIR)</div>
+        <div class="card-value" style="color: <%= (summary.foir || 0) <= 40 ? '#16a34a' : ((summary.foir || 0) <= 60 ? '#d97706' : '#dc2626') %>;">
+          <%= summary.foir !== null && summary.foir !== undefined ? summary.foir + '%' : 'N/A' %>
+        </div>
+        <div class="card-sub">Threshold Cap: 50%</div>
+      </div>
+    </div>
+
+    <!-- Liquidity & EOD Balances -->
+    <div class="section-title">2. Liquidity Cushion & EOD Profile</div>
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-label">Average EOD Balance</div>
+        <div class="card-value">₹<%= Number(eod.avgEod || 0).toLocaleString('en-IN') %></div>
+        <div class="card-sub">Daily Average</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Minimum EOD Balance</div>
+        <div class="card-value" style="color: <%= (eod.minEod || 0) < 0 ? '#dc2626' : '#0f172a' %>;">
+          ₹<%= Number(eod.minEod || 0).toLocaleString('en-IN') %>
+        </div>
+        <div class="card-sub"><%= (eod.minEod || 0) < 0 ? 'Overdrawn Warning' : 'Lowest Cushion' %></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Days Balance &lt; ₹1,000</div>
+        <div class="card-value" style="color: <%= (eod.pctDaysBelow1k || 0) > 30 ? '#dc2626' : '#0f172a' %>;">
+          <%= eod.pctDaysBelow1k || 0 %>%
+        </div>
+        <div class="card-sub"><%= eod.daysBelow1k || 0 %> Calendar Days</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Repayment Bounces</div>
+        <div class="card-value" style="color: <%= (bounces.length > 0) ? '#dc2626' : '#16a34a' %>;">
+          <%= bounces.length %>
+        </div>
+        <div class="card-sub">Return / Bounce Charges</div>
+      </div>
+    </div>
+
+    <!-- Monthly Vector Chart (SVG) -->
+    <div class="section-title">3. Monthly Inflow vs Outflow Velocity</div>
+    <div class="chart-container">
+      <%- monthlyChartSvg %>
+    </div>
+  </div>
+
+  <!-- ==================== PAGE 2: FORENSIC AUDIT, SCORECARD & LENDER CONDITIONS ==================== -->
+  <div class="page-container">
+    <div class="header-bar">
+      <div>
+        <div class="brand-title">Credit Intelligence Report</div>
+        <div class="brand-subtitle">Forensic Audit & Risk Scorecard Breakdown</div>
+      </div>
+      <div class="report-meta">
+        <div><strong>Page 2</strong> of 2</div>
+      </div>
+    </div>
+
+    <!-- Borrower Behavioral Persona -->
+    <div class="section-title">4. Behavioral Persona & Qualitative Underwriting Observations</div>
+    <div class="narrative-box">
+      <strong>Borrower Persona:</strong> <%= narrative.borrowerBehavioralPersona %>
+    </div>
+    <div class="narrative-box" style="border-left-color: #d97706;">
+      <strong>AML & Fund Movement:</strong> <%= narrative.amlObservations %>
+    </div>
+
+    <!-- Granular Risk Scorecard Breakdown -->
+    <div class="section-title">5. Underwriting Scorecard Factor Breakdown</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 25%;">Evaluation Factor</th>
+          <th style="width: 45%;">Finding & Audit Evidence</th>
+          <th style="width: 15%;">Impact Level</th>
+          <th style="width: 15%; text-align: right;">Points Delta</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% scorecard.auditTrail.forEach(function(item) { %>
+          <tr>
+            <td><strong><%= item.factor %></strong></td>
+            <td><%= item.finding %></td>
+            <td>
+              <span class="pill <%= item.level === 'GREEN' ? 'pill-green' : (item.level === 'AMBER' ? 'pill-amber' : 'pill-red') %>">
+                <%= item.level %>
+              </span>
+            </td>
+            <td style="text-align: right; font-weight: 700; color: <%= item.point_delta >= 0 ? '#16a34a' : '#dc2626' %>;">
+              <%= item.point_delta >= 0 ? '+' + item.point_delta : item.point_delta %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+
+    <!-- Detected Recurring Loan Mandates (EMIs) -->
+    <div class="section-title">6. Detected Recurring Loans & Fixed Obligations</div>
+    <% if (obligations && obligations.length > 0) { %>
+      <table>
+        <thead>
+          <tr>
+            <th>Lender / Mandate Institution</th>
+            <th>Monthly EMI</th>
+            <th>Frequency</th>
+            <th>Confidence Level</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% obligations.forEach(function(o) { %>
+            <tr>
+              <td><strong><%= o.lenderName %></strong></td>
+              <td>₹<%= Number(o.monthlyEmi || 0).toLocaleString('en-IN') %></td>
+              <td><%= o.frequencyDays %> Days</td>
+              <td><%= o.confidence %></td>
+              <td><span class="pill pill-amber">ACTIVE EMI</span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } else { %>
+      <div style="font-size: 10px; color: #64748b; padding: 6px 0;">No recurring loan EMIs or active NACH mandates detected in this statement period.</div>
+    <% } %>
+
+    <!-- Circular / Rotation Money Analysis -->
+    <div class="section-title">7. Circular Money & Rapid Turnover Audit (Within 48 Hours)</div>
+    <% if (circularEvents && circularEvents.length > 0) { %>
+      <table>
+        <thead>
+          <tr>
+            <th>Inflow Date & Amount</th>
+            <th>Outflow Date & Amount</th>
+            <th>Turnaround</th>
+            <th>Confidence</th>
+            <th>Classification</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% circularEvents.slice(0, 5).forEach(function(c) { %>
+            <tr>
+              <td><%= c.inflowDate %> (₹<%= Number(c.inflowAmount).toLocaleString('en-IN') %>)</td>
+              <td><%= c.outflowDate %> (₹<%= Number(c.outflowAmount).toLocaleString('en-IN') %>)</td>
+              <td><%= c.turnaroundHours %> Hours</td>
+              <td><%= c.confidenceScore %>%</td>
+              <td><span class="pill pill-red"><%= c.status %></span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } else { %>
+      <div style="font-size: 10px; color: #166534; padding: 6px 0;">✓ Zero suspicious round-trip cycling or rapid pass-through fund movements observed.</div>
+    <% } %>
+
+    <!-- Key Underwriting & Lender Conditions -->
+    <div class="section-title">8. Mandatory Underwriting & Lender Sanction Conditions</div>
+    <div class="card" style="background: #ffffff; border-color: #cbd5e1;">
+      <ul class="conditions-list">
+        <% narrative.keyLenderConditions.forEach(function(cond) { %>
+          <li><%= cond %></li>
+        <% }); %>
+      </ul>
+    </div>
+  </div>
+
+</body>
+</html>
+
