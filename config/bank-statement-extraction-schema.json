@@ -1,0 +1,52 @@
+{
+  "name": "submit_statement_rows",
+  "description": "Submit the transcribed transaction rows exactly as printed.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "schema_version": { "type": "string", "enum": ["3.0"] },
+      "bank_name": { "type": "string" },
+      "statement_order": { "type": "string", "enum": ["ascending", "descending", "unknown"] },
+      "account_header": {
+        "type": "object",
+        "properties": {
+          "account_holder_name": { "type": ["string", "null"] },
+          "account_number": { "type": ["string", "null"] },
+          "bank_name": { "type": ["string", "null"] },
+          "ifsc": { "type": ["string", "null"] },
+          "period_start": { "type": ["string", "null"] },
+          "period_end": { "type": ["string", "null"] },
+          "account_type": { "type": ["string", "null"] }
+        }
+      },
+      "transactions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "serial": { "type": ["integer", "string", "null"] },
+            "date": { "type": "string" },
+            "narration": { "type": "string" },
+            "debit": { "type": ["number", "string"] },
+            "credit": { "type": ["number", "string"] },
+            "balance": { "type": ["number", "string"] },
+            "page": { "type": ["integer", "string"] }
+          },
+          "required": ["serial", "date", "narration", "debit", "credit", "balance", "page"]
+        }
+      },
+      "uncertain_rows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "index": { "type": "integer" },
+            "reason": { "type": "string" }
+          },
+          "required": ["index", "reason"]
+        }
+      }
+    },
+    "required": ["schema_version", "bank_name", "statement_order", "transactions", "uncertain_rows"]
+  }
+}

@@ -224,6 +224,8 @@ app.use("/api/packages", require("./routes/packages"));
 app.use("/api/customer-packages", require("./routes/customerPackages"));
 app.use("/api/payments", require("./routes/payments"));
 app.use("/api/credit", require("./routes/credit"));
+app.use("/api/bsa", require("./routes/bsa"));
+app.use("/api/v1/bsa", require("./routes/bankStatementRoutes"));
 app.use("/api/leads", require("./routes/leads"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/business", require("./routes/business"));
