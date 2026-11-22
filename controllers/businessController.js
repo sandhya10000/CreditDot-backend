@@ -7,8 +7,7 @@ const CreditReport = require("../models/CreditReport");
 const User = require("../models/User");
 const { validateAmcTerm } = require("./amcController");
 const { scopeFilter, isScoped, ownsFranchise } = require("../utils/franchiseScope");
-const Razorpay = require("razorpay");
-const crypto = require("crypto");
+const cashfree = require("../utils/cashfree");
 const mongoose = require("mongoose");
 const { getEligibleManagers } = require("../utils/assignBusinessManager");
 
@@ -37,11 +36,6 @@ const {
 const googleSheetsService = require("../utils/googleSheetsService");
 const Transaction = require("../models/Transaction");
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
 
 // Validation for business form submission
 const validateBusinessForm = (data) => {
@@ -333,30 +327,49 @@ const submitBusinessForm = async (req, res) => {
       });
     }
 
-    // Create Razorpay order
+    // Create Cashfree order
     const basePrice = customerPackage.price;
     const gstAmount =
       (customerPackage.price * (customerPackage.gstPercentage || 0)) / 100;
-    const totalPriceWithGST = basePrice + gstAmount;
+    const totalPriceWithGST = Math.round((basePrice + gstAmount) * 100) / 100;
 
-    const options = {
-      amount: totalPriceWithGST * 100, // amount in paise
-      currency: "INR",
-      receipt: `receipt_${businessForm._id}`,
-      payment_capture: 1,
-    };
+    // Cashfree requires a phone: the customer's, else the partner's
+    const phone =
+      cashfree.normalizePhone(customerPhone) ||
+      cashfree.normalizePhone(
+        (await User.findById(req.user._id).select("phone").lean())?.phone,
+      );
+    if (!phone) {
+      return res.status(400).json({
+        message: "A valid 10-digit phone number is required for payment",
+      });
+    }
 
-    const order = await razorpay.orders.create(options);
+    const orderId = cashfree.generateOrderId("BIZ");
+    const order = await cashfree.createOrder({
+      orderId,
+      amount: totalPriceWithGST,
+      customer: {
+        id: businessForm._id,
+        name: customerName,
+        email: customerEmail,
+        phone,
+      },
+      returnPath: "/franchise/business",
+      note: `Business form: ${customerPackage.name}`,
+    });
 
     // Update business form with order ID
-    businessForm.razorpayOrderId = order.id;
+    businessForm.paymentGateway = "cashfree";
+    businessForm.cashfreeOrderId = orderId;
     await businessForm.save();
 
     res.json({
       message: "Business form submitted successfully",
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
+      orderId,
+      paymentSessionId: order.payment_session_id,
+      amount: totalPriceWithGST,
+      currency: "INR",
       businessFormId: businessForm._id,
     });
   } catch (error) {
@@ -364,73 +377,115 @@ const submitBusinessForm = async (req, res) => {
   }
 };
 
-// Verify payment and update business form
+// Marks a business form paid and runs the post-payment steps (customer ID, sheet, emails).
+// Idempotent: only the caller that flips paymentStatus to "paid" runs the side effects,
+// so verify, webhook and reconcile can all call it safely.
+const fulfillBusinessForm = async (businessFormId, { paymentId } = {}) => {
+  const claimed = await BusinessForm.findOneAndUpdate(
+    { _id: businessFormId, paymentStatus: { $ne: "paid" } },
+    { $set: { paymentStatus: "paid", ...(paymentId && { cashfreePaymentId: paymentId }) } },
+    { new: true },
+  );
+
+  const businessForm = await BusinessForm.findById(businessFormId).populate(
+    "selectedPackage",
+    "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+  );
+  if (!claimed) return { businessForm, alreadyPaid: true };
+
+  //Generare Customer ID only after successfuul payment
+  await assignCustomerId(businessForm);
+  await businessForm.save();
+
+  // Sync with Google Sheets to update payment status (Business Login tab only)
+  try {
+    await googleSheetsService.initialize();
+    await googleSheetsService.syncBusinessLoginData(); // Sync updated payment status
+  } catch (syncError) {
+    console.error(
+      "Failed to sync business login data with Google Sheets:",
+      syncError,
+    );
+  }
+
+  // Send email notifications
+  try {
+    const franchise = await Franchise.findById(businessForm.franchiseId);
+    const recipients = await getBusinessLoginRecipients(franchise);
+    for (const recipient of recipients) {
+      await sendBusinessFormSubmissionEmail(recipient, businessForm, franchise);
+    }
+  } catch (emailError) {
+    console.error(
+      "Failed to send business form submission email:",
+      emailError,
+    );
+  }
+
+  return { businessForm, alreadyPaid: false };
+};
+
+// Expected charge for a business form (package price + its GST)
+const businessFormAmount = (form) => {
+  const pkg = form.selectedPackage;
+  if (!pkg || pkg.price == null) return null;
+  const gst = (pkg.price * (pkg.gstPercentage || 0)) / 100;
+  return Math.round((pkg.price + gst) * 100) / 100;
+};
+
+// Checks a business form order with Cashfree and fulfils it if paid. Used by webhook + reconcile.
+const settleBusinessFormOrder = async (orderId) => {
+  const form = await BusinessForm.findOne({ cashfreeOrderId: orderId }).populate(
+    "selectedPackage",
+    "price gstPercentage",
+  );
+  if (!form || form.paymentStatus === "paid") return form;
+
+  const { paid, cfPaymentId } = await cashfree.confirmOrderPaid(
+    orderId,
+    businessFormAmount(form),
+  );
+  if (!paid) return form;
+
+  const result = await fulfillBusinessForm(form._id, { paymentId: cfPaymentId });
+  return result.businessForm;
+};
+
+// Verify payment and update business form. Body: { orderId, businessFormId }
+// Cashfree has no client-side signature, so the order status is read from Cashfree.
 const verifyPayment = async (req, res) => {
   try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      businessFormId,
-    } = req.body;
+    const { orderId, businessFormId } = req.body || {};
+    if (!orderId || !businessFormId) {
+      return res.status(400).json({ message: "orderId and businessFormId are required" });
+    }
 
-    // Find the business form with populated selected package
     const businessForm = await BusinessForm.findById(businessFormId).populate(
       "selectedPackage",
-      "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+      "price gstPercentage",
     );
-    if (!businessForm) {
+    if (!businessForm || businessForm.cashfreeOrderId !== orderId) {
       return res.status(404).json({ message: "Business form not found" });
     }
 
-    // Verify payment signature
-    const hmac = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET);
-    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
-    const generatedSignature = hmac.digest("hex");
-
-    if (generatedSignature !== razorpay_signature) {
-      businessForm.paymentStatus = "failed";
-      await businessForm.save();
-      return res.status(400).json({ message: "Payment verification failed" });
+    if (businessForm.paymentStatus === "paid") {
+      const result = await fulfillBusinessForm(businessForm._id);
+      return res.json({ message: "Payment verified successfully", businessForm: result.businessForm });
     }
 
-    // Update business form with payment details
-    businessForm.paymentStatus = "paid";
-    businessForm.razorpayPaymentId = razorpay_payment_id;
-    businessForm.razorpaySignature = razorpay_signature;
-    await assignCustomerId(businessForm);
-    //Generare Customer ID only after successfuul payment
-
-    await businessForm.save();
-
-    // Sync with Google Sheets to update payment status (Business Login tab only)
-    try {
-      await googleSheetsService.initialize();
-      await googleSheetsService.syncBusinessLoginData(); // Sync updated payment status
-    } catch (syncError) {
-      console.error(
-        "Failed to sync business login data with Google Sheets:",
-        syncError,
-      );
+    const { paid, status, cfPaymentId } = await cashfree.confirmOrderPaid(
+      orderId,
+      businessFormAmount(businessForm),
+    );
+    if (!paid) {
+      return res.status(400).json({ message: "Payment not completed", status });
     }
 
-    // Send email notifications
-    try {
-      const franchise = await Franchise.findById(businessForm.franchiseId);
-      const recipients = await getBusinessLoginRecipients(franchise);
-      for (const recipient of recipients) {
-        await sendBusinessFormSubmissionEmail(recipient, businessForm, franchise);
-      }
-    } catch (emailError) {
-      console.error(
-        "Failed to send business form submission email:",
-        emailError,
-      );
-    }
+    const result = await fulfillBusinessForm(businessForm._id, { paymentId: cfPaymentId });
 
     res.json({
       message: "Payment verified successfully",
-      businessForm,
+      businessForm: result.businessForm,
     });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -1121,6 +1176,8 @@ module.exports = {
   getBusinessFormsByFranchise,
   deleteBusinessForm,
   assignCustomerId,
+  fulfillBusinessForm,
+  settleBusinessFormOrder,
   getBusinessUnreadCounts,
   getBusinessMisCounts,
   markBusinessFormRead,

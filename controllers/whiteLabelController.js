@@ -1,21 +1,15 @@
-const crypto = require("crypto");
-const Razorpay = require("razorpay");
+const cashfree = require("../utils/cashfree");
 const Joi = require("joi");
 const Franchise = require("../models/Franchise");
 const CustomBrandedRequest = require("../models/CustomBrandedRequest");
 
-// White Label Reports: one-time ₹10,000 + GST via Razorpay, open to all franchise partners
+// White Label Reports: one-time ₹10,000 + GST via Cashfree, open to all franchise partners
 const WHITE_LABEL_BASE_INR = 10000;
 const WHITE_LABEL_GST_PERCENT = 18;
 // Total charged including GST: 10,000 + 18% = 11,800
 const WHITE_LABEL_PRICE_INR = Math.round(
   WHITE_LABEL_BASE_INR * (1 + WHITE_LABEL_GST_PERCENT / 100),
 );
-
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
 
 // Keep the last 10 digits so "+91 98765 43210" becomes a valid mobile
 const normalizeMobile = (value) =>
@@ -44,7 +38,7 @@ const getEligibleFranchise = async (userId) => {
 };
 
 // POST /api/dashboard/white-label/order
-// Body: { name, email, mobile } — creates a Razorpay order and an Unpaid request
+// Body: { name, email, mobile } — creates a Cashfree order and an Unpaid request
 const createWhiteLabelOrder = async (req, res) => {
   try {
     const { value: contact, error: contactError } = contactSchema.validate(
@@ -71,15 +65,17 @@ const createWhiteLabelOrder = async (req, res) => {
       });
     }
 
-    const order = await razorpay.orders.create({
-      amount: WHITE_LABEL_PRICE_INR * 100,
-      currency: "INR",
-      receipt: `wl_${Date.now()}`,
-      payment_capture: 1,
-    });
-
     const email = contact.email.toLowerCase();
     const mobile = contact.mobile;
+
+    const orderId = cashfree.generateOrderId("WL");
+    const order = await cashfree.createOrder({
+      orderId,
+      amount: WHITE_LABEL_PRICE_INR,
+      customer: { id: req.user.id, name: contact.name, email, phone: mobile },
+      returnPath: "/franchise/white-label-reports",
+      note: "White Label Reports",
+    });
 
     // Reuse the partner's unpaid row if they retry, so Unpaid rows don't pile up
     let request = await CustomBrandedRequest.findOne({
@@ -89,7 +85,8 @@ const createWhiteLabelOrder = async (req, res) => {
     if (request) {
       request.email = email;
       request.phone = mobile;
-      request.orderId = order.id;
+      request.orderId = orderId;
+      request.paymentMethod = "CASHFREE";
       request.amount = WHITE_LABEL_PRICE_INR;
       request.status = "Pending";
       await request.save();
@@ -98,21 +95,20 @@ const createWhiteLabelOrder = async (req, res) => {
         partnerId: req.user.id,
         email,
         phone: mobile,
-        orderId: order.id,
+        orderId,
         amount: WHITE_LABEL_PRICE_INR,
-        paymentMethod: "RAZORPAY",
+        paymentMethod: "CASHFREE",
         paymentStatus: "Unpaid",
         status: "Pending",
       });
     }
 
     res.status(200).json({
-      orderId: order.id,
-      keyId: process.env.RAZORPAY_KEY_ID,
-      amount: order.amount,
-      currency: order.currency,
+      orderId,
+      paymentSessionId: order.payment_session_id,
+      amount: WHITE_LABEL_PRICE_INR,
+      currency: "INR",
       requestId: request.requestId,
-      prefill: { name: contact.name, email, contact: mobile },
     });
   } catch (error) {
     console.error("White label order error:", error);
@@ -122,19 +118,63 @@ const createWhiteLabelOrder = async (req, res) => {
   }
 };
 
+// Marks a white-label request paid and activates branding for the partner.
+// Idempotent: only the caller that flips paymentStatus to "Paid" updates the franchise.
+const markWhiteLabelPaid = async (requestId, { paymentId } = {}) => {
+  const request = await CustomBrandedRequest.findOneAndUpdate(
+    { _id: requestId, paymentStatus: { $ne: "Paid" } },
+    {
+      $set: {
+        paymentId: paymentId || null,
+        paymentStatus: "Paid",
+        paymentMethod: "CASHFREE",
+        amount: WHITE_LABEL_PRICE_INR,
+        status: "Active",
+      },
+    },
+    { new: true },
+  );
+  if (!request) {
+    return { request: await CustomBrandedRequest.findById(requestId), alreadyPaid: true };
+  }
+
+  await Franchise.updateOne(
+    { userId: request.partnerId },
+    {
+      $set: {
+        brandingStatus: "paid",
+        brandingPaidAt: new Date(),
+        brandingAmount: WHITE_LABEL_PRICE_INR,
+      },
+    },
+  );
+  return { request, alreadyPaid: false };
+};
+
+// Checks a white-label order with Cashfree and activates it if paid. Used by webhook.
+const settleWhiteLabelOrder = async (orderId) => {
+  const request = await CustomBrandedRequest.findOne({ orderId });
+  if (!request || request.paymentStatus === "Paid") return request;
+
+  const { paid, cfPaymentId } = await cashfree.confirmOrderPaid(orderId, WHITE_LABEL_PRICE_INR);
+  if (!paid) return request;
+
+  const result = await markWhiteLabelPaid(request._id, { paymentId: cfPaymentId });
+  return result.request;
+};
+
 // POST /api/dashboard/white-label/verify
-// Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature }
+// Body: { orderId } — status is read from Cashfree (no client-side signature)
 // Idempotent: a retry after success returns the paid request.
 const verifyWhiteLabelPayment = async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
-      req.body || {};
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    const { orderId } = req.body || {};
+    if (!orderId) {
       return res.status(400).json({ message: "Payment details are required." });
     }
 
     const request = await CustomBrandedRequest.findOne({
-      orderId: razorpay_order_id,
+      orderId,
       partnerId: req.user.id,
     });
     if (!request) {
@@ -147,35 +187,17 @@ const verifyWhiteLabelPayment = async (req, res) => {
       });
     }
 
-    const expected = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-    if (expected !== razorpay_signature) {
-      return res
-        .status(400)
-        .json({ message: "Payment signature verification failed." });
+    const { paid, status, cfPaymentId } = await cashfree.confirmOrderPaid(
+      orderId,
+      WHITE_LABEL_PRICE_INR,
+    );
+    if (!paid) {
+      return res.status(400).json({ message: "Payment not completed.", status });
     }
 
-    request.paymentId = razorpay_payment_id;
-    request.paymentStatus = "Paid";
-    request.paymentMethod = "RAZORPAY";
-    request.amount = WHITE_LABEL_PRICE_INR;
-    request.status = "Active";
-    await request.save();
+    const result = await markWhiteLabelPaid(request._id, { paymentId: cfPaymentId });
 
-    await Franchise.updateOne(
-      { userId: req.user.id },
-      {
-        $set: {
-          brandingStatus: "paid",
-          brandingPaidAt: new Date(),
-          brandingAmount: WHITE_LABEL_PRICE_INR,
-        },
-      },
-    );
-
-    res.status(200).json({ message: "Payment verified successfully.", data: request });
+    res.status(200).json({ message: "Payment verified successfully.", data: result.request });
   } catch (error) {
     console.error("White label verify error:", error);
     res.status(500).json({ message: "Payment verification failed." });
@@ -214,4 +236,6 @@ module.exports = {
   createWhiteLabelOrder,
   verifyWhiteLabelPayment,
   getWhiteLabelStatus,
+  markWhiteLabelPaid,
+  settleWhiteLabelOrder,
 };

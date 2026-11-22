@@ -37,7 +37,19 @@ const transactionSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['razorpay', 'paypal', 'stripe', 'bank_transfer', 'admin_recharge'],
+    enum: ['razorpay', 'cashfree', 'paypal', 'stripe', 'bank_transfer', 'admin_recharge'],
+  },
+  // Gateway that processed this order (older records are Razorpay)
+  gateway: {
+    type: String,
+    enum: ['razorpay', 'cashfree'],
+    default: 'razorpay',
+  },
+  cfOrderId: {
+    type: String,
+  },
+  cfPaymentId: {
+    type: String,
   },
   razorpayOrderId: {
     type: String,

@@ -1,5 +1,6 @@
-const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const cashfree = require("../utils/cashfree");
+const { generateOrderId, normalizePhone } = cashfree;
 const Transaction = require("../models/Transaction");
 const Package = require("../models/Package");
 const Franchise = require("../models/Franchise");
@@ -19,135 +20,101 @@ const {
 const BusinessForm = require("../models/BusinessForm");
 const ManualPayment = require("../models/ManualPayment");
 const { applyLinkStatus } = require("./manualPaymentController");
-const { assignCustomerId } = require("./businessController");
+const { assignCustomerId, settleBusinessFormOrder } = require("./businessController");
+const { settleWhiteLabelOrder } = require("./whiteLabelController");
 
-// Initialize Razorpay instance
-console.log("Initializing Razorpay with key_id:", process.env.RAZORPAY_KEY_ID);
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Frontend pages Cashfree may send the buyer back to after a redirect-based payment
+const RETURN_PATHS = ["/franchise/payment", "/franchise/upgrade-package", "/packages"];
 
-// Create order
+// Create order (Cashfree)
 const createOrder = async (req, res) => {
   try {
-    console.log("Create order request body:", req.body);
-    const { packageId } = req.body;
+    const { packageId, returnPath } = req.body;
     const userId = req.user.id; // Get user ID from authenticated user
-    console.log("User ID from request:", userId);
 
     // Validate user
     const user = await User.findById(userId);
     if (!user) {
-      console.log("User not found for ID:", userId);
       return res.status(404).json({ message: "User not found" });
     }
-    console.log("User found:", user.email);
 
     // Validate package
     const pkg = await Package.findById(packageId);
     if (!pkg || !pkg.isActive) {
-      console.log("Package not found or inactive for ID:", packageId);
       return res.status(404).json({ message: "Package not found or inactive" });
     }
-    console.log("Package found:", pkg.name);
+
+    // Cashfree requires a customer phone on every order
+    let phone = normalizePhone(user.phone);
+    if (!phone) {
+      const franchise = await Franchise.findOne({ userId: user._id }).select("phone");
+      phone = normalizePhone(franchise?.phone);
+    }
+    if (!phone) {
+      return res.status(400).json({
+        message: "A valid 10-digit phone number is required for payment. Please update your profile.",
+      });
+    }
 
     const GST_RATE = 18;
 
     const baseAmount = pkg.price;
     const gstAmount = (baseAmount * GST_RATE) / 100;
-    const totalAmount = baseAmount + gstAmount;
-    // Create Razorpay order
-    const options = {
-      amount: Math.round(totalAmount * 100), // Amount in paise
-      currency: "INR",
-      receipt: `receipt_order_${Date.now()}`,
-      payment_capture: 1,
-    };
-    console.log("Creating Razorpay order with options:", options);
+    const totalAmount = Math.round((baseAmount + gstAmount) * 100) / 100;
 
-    const order = await razorpay.orders.create(options);
-    console.log("Razorpay order created:", order.id);
+    const orderId = generateOrderId("PKG");
+    const order = await cashfree.createOrder({
+      orderId,
+      amount: totalAmount,
+      customer: { id: user._id, name: user.name, email: user.email, phone },
+      returnPath: RETURN_PATHS.includes(returnPath) ? returnPath : RETURN_PATHS[0],
+      note: `Package: ${pkg.name}`,
+    });
 
     // Save transaction
     const transaction = new Transaction({
       userId: user._id,
       packageId: pkg._id,
-      orderId: order.id,
+      orderId,
+      cfOrderId: order.cf_order_id ? String(order.cf_order_id) : undefined,
       amount: totalAmount,
       currency: "INR",
       status: "created",
+      gateway: "cashfree",
+      paymentMethod: "cashfree",
     });
-    console.log("Saving transaction:", transaction);
-
     await transaction.save();
-    console.log("Transaction saved successfully");
 
     res.json({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
+      orderId,
+      paymentSessionId: order.payment_session_id,
+      amount: totalAmount,
+      currency: "INR",
       transactionId: transaction._id,
     });
   } catch (error) {
     console.error("Error in createOrder:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(500).json({ message: "Could not start payment", error: error.message });
   }
 };
 
-// Verify payment
-const verifyPayment = async (req, res) => {
-  try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
-      req.body;
-
-    // Verify signature
-    const hmac = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET);
-    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
-    const generated_signature = hmac.digest("hex");
-
-    // DEBUG LOGS - ADD HERE
-    console.log("===== RAZORPAY PAYMENT VERIFICATION =====");
-    console.log("Order ID:", razorpay_order_id);
-    console.log("Payment ID:", razorpay_payment_id);
-    console.log("Received Signature:", razorpay_signature);
-    console.log("Generated Signature:", generated_signature);
-    console.log("Signature Match:", generated_signature === razorpay_signature);
-    console.log(
-      "RAZORPAY_KEY_SECRET exists:",
-      !!process.env.RAZORPAY_KEY_SECRET,
-    );
-    console.log("==========================================");
-    if (generated_signature !== razorpay_signature) {
-      return res.status(400).json({ message: "Payment verification failed" });
-    }
-
-    // Update transaction
-    const transaction = await Transaction.findOne({
-      orderId: razorpay_order_id,
-    });
-    console.log("Transaction found:", !!transaction);
-
-    if (!transaction) {
-      console.log("Transaction NOT FOUND for orderId:", razorpay_order_id);
-
-      return res.status(404).json({
-        message: "Transaction not found",
-      });
-    }
-
-    console.log("Transaction ID:", transaction._id);
-    console.log("Transaction User ID:", transaction.userId);
-    console.log("Transaction Package ID:", transaction.packageId);
-    console.log("Transaction Status:", transaction.status);
-
-    transaction.paymentId = razorpay_payment_id;
-    transaction.status = "paid";
-    transaction.razorpayOrderId = razorpay_order_id;
-    transaction.razorpayPaymentId = razorpay_payment_id;
-    transaction.razorpaySignature = razorpay_signature;
-
-    await transaction.save();
+// Applies a paid package purchase: credits, packages, referral, agreement, emails.
+// Idempotent: only the caller that flips the transaction to "paid" runs the side effects,
+// so verify, webhook and reconcile can all call it safely.
+const fulfillPackageTransaction = async (transactionId, { paymentId } = {}) => {
+  const transaction = await Transaction.findOneAndUpdate(
+    { _id: transactionId, status: { $ne: "paid" } },
+    {
+      $set: {
+        status: "paid",
+        ...(paymentId && { paymentId, cfPaymentId: paymentId }),
+      },
+    },
+    { new: true },
+  );
+  if (!transaction) {
+    return { transaction: await Transaction.findById(transactionId), alreadyPaid: true };
+  }
 
     // Update franchise credits and package access
     const franchise = await Franchise.findOne({ userId: transaction.userId });
@@ -294,9 +261,55 @@ const verifyPayment = async (req, res) => {
       }
     }
 
+  return { transaction, alreadyPaid: false };
+};
+
+// Checks a package order with Cashfree and fulfils it if paid. Used by webhook + reconcile.
+const settlePackageOrder = async (orderId) => {
+  const transaction = await Transaction.findOne({ orderId, gateway: "cashfree" });
+  if (!transaction || transaction.status === "paid") return transaction;
+
+  const { paid, cfPaymentId } = await cashfree.confirmOrderPaid(orderId, transaction.amount);
+  if (!paid) return transaction;
+
+  const result = await fulfillPackageTransaction(transaction._id, { paymentId: cfPaymentId });
+  return result.transaction;
+};
+
+// Verify payment (Cashfree). Body: { orderId }
+// Cashfree has no client-side signature, so the order status is read from Cashfree.
+const verifyPayment = async (req, res) => {
+  try {
+    const { orderId } = req.body || {};
+    if (!orderId) {
+      return res.status(400).json({ message: "orderId is required" });
+    }
+
+    const transaction = await Transaction.findOne({ orderId, userId: req.user.id });
+    if (!transaction) {
+      return res.status(404).json({ message: "Transaction not found" });
+    }
+
+    if (transaction.status === "paid") {
+      return res.json({ message: "Payment verified successfully", transaction });
+    }
+    if (transaction.gateway !== "cashfree") {
+      return res.status(400).json({ message: "Payment verification failed" });
+    }
+
+    const { paid, status, cfPaymentId } = await cashfree.confirmOrderPaid(
+      orderId,
+      transaction.amount,
+    );
+    if (!paid) {
+      return res.status(400).json({ message: "Payment not completed", status });
+    }
+
+    const result = await fulfillPackageTransaction(transaction._id, { paymentId: cfPaymentId });
+
     res.json({
       message: "Payment verified successfully",
-      transaction,
+      transaction: result.transaction,
     });
   } catch (error) {
     console.error("Error in verifyPayment:", error);
@@ -315,7 +328,7 @@ const isTempPassword = async (hashedPassword) => {
   }
 };
 
-// Webhook handler for Razorpay
+// Webhook handler for Razorpay (legacy: only finishes orders/links created before the Cashfree switch)
 const handleWebhook = async (req, res) => {
   try {
     // Verify webhook signature
@@ -394,8 +407,69 @@ const handleWebhook = async (req, res) => {
   }
 };
 
+// Routes a Cashfree order to its flow by order ID prefix (see generateOrderId callers)
+const settleCashfreeOrder = async (orderId) => {
+  if (!orderId) return;
+  if (orderId.startsWith("PKG_")) return settlePackageOrder(orderId);
+  if (orderId.startsWith("BIZ_")) return settleBusinessFormOrder(orderId);
+  if (orderId.startsWith("WL_")) return settleWhiteLabelOrder(orderId);
+  console.log("Cashfree webhook: unknown order prefix", orderId);
+};
+
+// POST /api/payments/cashfree/webhook
+const handleCashfreeWebhook = async (req, res) => {
+  const signature = req.headers["x-webhook-signature"];
+  const timestamp = req.headers["x-webhook-timestamp"];
+  if (!cashfree.verifyWebhookSignature(req.rawBody, timestamp, signature)) {
+    return res.status(401).json({ message: "Webhook signature verification failed" });
+  }
+
+  const { type, data } = req.body || {};
+  try {
+    switch (type) {
+      case "PAYMENT_SUCCESS_WEBHOOK":
+        // Each flow re-checks the order with Cashfree before fulfilling
+        await settleCashfreeOrder(data?.order?.order_id);
+        break;
+
+      case "PAYMENT_FAILED_WEBHOOK":
+      case "PAYMENT_USER_DROPPED_WEBHOOK":
+        // A failed attempt does not close the order; the buyer can retry on the same order
+        console.log(`Cashfree ${type}:`, data?.order?.order_id);
+        break;
+
+      case "PAYMENT_LINK_EVENT": {
+        const linkId = data?.link_id;
+        const doc = linkId ? await ManualPayment.findOne({ cashfreeLinkId: linkId }) : null;
+        if (doc) {
+          const paymentId = data?.order?.transaction_id
+            ? String(data.order.transaction_id)
+            : undefined;
+          await applyLinkStatus(doc, String(data.link_status || "").toLowerCase(), paymentId);
+          console.log(`Cashfree webhook: ManualPayment ${doc._id} -> ${data.link_status}`);
+        } else {
+          console.log("Cashfree webhook: no ManualPayment for link", linkId);
+        }
+        break;
+      }
+
+      default:
+        console.log("Cashfree webhook: unhandled event", type);
+    }
+
+    res.json({ message: "Webhook received" });
+  } catch (error) {
+    // 500 makes Cashfree retry; every handler above is idempotent
+    console.error("Cashfree webhook error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   createOrder,
   verifyPayment,
   handleWebhook,
+  handleCashfreeWebhook,
+  fulfillPackageTransaction,
+  settlePackageOrder,
 };

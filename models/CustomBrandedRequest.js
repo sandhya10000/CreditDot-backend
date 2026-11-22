@@ -27,7 +27,7 @@ const customBrandedRequestSchema = new mongoose.Schema(
     amount: { type: Number, default: null },
     paymentMethod: {
       type: String,
-      enum: ["WALLET", "RAZORPAY"],
+      enum: ["WALLET", "RAZORPAY", "CASHFREE"],
       default: null,
     },
     paymentStatus: {
