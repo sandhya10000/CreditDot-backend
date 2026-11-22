@@ -4,7 +4,8 @@ const manualPaymentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     mobile: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
+    // Optional: customers are identified by mobile
+    email: { type: String, trim: true, lowercase: true, default: "" },
     city: { type: String, trim: true, default: "" },
     amount: { type: Number, required: true, min: 1 },
     remarks: { type: String, trim: true, default: "" },

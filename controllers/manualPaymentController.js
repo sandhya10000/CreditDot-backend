@@ -11,8 +11,8 @@ const ownScope = (req) => (isScoped(req) ? { createdBy: req.user._id } : {});
 
 const LINK_VALIDITY_SECONDS = 24 * 60 * 60;
 
-// Legacy: links created before the Cashfree switch still finish on Razorpay.
-// Created lazily so the server starts even after the Razorpay keys are removed.
+// Admin picks the gateway per link (Razorpay or Cashfree). Older links are Razorpay.
+// Created lazily so the server starts even if the Razorpay keys are missing.
 let razorpayClient = null;
 const legacyRazorpay = () => {
   if (!razorpayClient) {
@@ -35,8 +35,10 @@ const createSchema = Joi.object({
     .pattern(/^[6-9]\d{9}$/)
     .required()
     .messages({ "string.pattern.base": "Mobile must be a valid 10-digit number" }),
-  email: Joi.string().trim().email().required(),
-  city: Joi.string().trim().max(100).allow("", null),
+  // Optional: the customer is identified by mobile
+  email: Joi.string().trim().email().allow("", null),
+  gateway: Joi.string().valid("razorpay", "cashfree").default("razorpay"),
+  city:Joi.string().trim().max(100).allow("", null),
   amount: Joi.number().min(1).max(1000000).required(),
   remarks: Joi.string().trim().max(500).allow("", null),
 });
@@ -52,30 +54,53 @@ const createManualPayment = async (req, res) => {
     }
 
     const expireBy = new Date(Date.now() + LINK_VALIDITY_SECONDS * 1000);
-    const linkId = `MP_${new mongoose.Types.ObjectId()}`;
+    const email = value.email || "";
+    const purpose = value.remarks || "Credit Dost payment";
 
-    const link = await cashfree.createLink({
-      linkId,
-      amount: value.amount,
-      purpose: value.remarks || "Credit Dost payment",
-      customer: {
-        name: value.name,
-        phone: value.mobile,
-        email: value.email,
-      },
-      expiresAt: expireBy,
-    });
+    let linkFields;
+    if (value.gateway === "cashfree") {
+      const linkId = `MP_${new mongoose.Types.ObjectId()}`;
+      const link = await cashfree.createLink({
+        linkId,
+        amount: value.amount,
+        purpose,
+        customer: { name: value.name, phone: value.mobile, email: email || undefined },
+        expiresAt: expireBy,
+      });
+      linkFields = {
+        gateway: "cashfree",
+        cashfreeLinkId: link.link_id || linkId,
+        shortUrl: link.link_url,
+      };
+    } else {
+      const link = await legacyRazorpay().paymentLink.create({
+        amount: Math.round(value.amount * 100),
+        currency: "INR",
+        description: purpose,
+        customer: {
+          name: value.name,
+          contact: value.mobile,
+          ...(email && { email }),
+        },
+        notify: { sms: false, email: false },
+        reminder_enable: false,
+        expire_by: Math.floor(expireBy.getTime() / 1000),
+      });
+      linkFields = {
+        gateway: "razorpay",
+        razorpayLinkId: link.id,
+        shortUrl: link.short_url,
+      };
+    }
 
     const doc = await ManualPayment.create({
       name: value.name,
       mobile: value.mobile,
-      email: value.email,
+      email,
       city: value.city || "",
       amount: value.amount,
       remarks: value.remarks || "",
-      gateway: "cashfree",
-      cashfreeLinkId: link.link_id || linkId,
-      shortUrl: link.link_url,
+      ...linkFields,
       expireBy,
       createdBy: req.user?.id,
     });
@@ -86,7 +111,11 @@ const createManualPayment = async (req, res) => {
     });
   } catch (error) {
     console.error("Create manual payment error:", error);
-    res.status(500).json({ message: "Failed to create payment link", error: error.message });
+    // Razorpay SDK errors carry the reason in error.error.description
+    res.status(500).json({
+      message: "Failed to create payment link",
+      error: error.error?.description || error.message,
+    });
   }
 };
 

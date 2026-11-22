@@ -1105,7 +1105,7 @@ const sendManualPaymentConfirmationEmail = async ({
       <p>A manual payment link has been paid.</p>
       <p><strong>Customer:</strong> ${escapeHtml(payment.name)}</p>
       <p><strong>Mobile:</strong> ${escapeHtml(payment.mobile)}</p>
-      <p><strong>Email:</strong> ${escapeHtml(payment.email)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(payment.email || "-")}</p>
       <p><strong>City:</strong> ${escapeHtml(payment.city || "-")}</p>
       <p><strong>Amount:</strong> ₹${escapeHtml(String(payment.amount))}</p>
       <p><strong>Remarks:</strong> ${escapeHtml(payment.remarks || "-")}</p>
