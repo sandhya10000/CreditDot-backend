@@ -1,5 +1,6 @@
-const Razorpay = require("razorpay");
 const Joi = require("joi");
+const mongoose = require("mongoose");
+const cashfree = require("../utils/cashfree");
 const ManualPayment = require("../models/ManualPayment");
 const User = require("../models/User");
 const { sendManualPaymentConfirmationEmail } = require("../utils/emailService");
@@ -10,10 +11,22 @@ const ownScope = (req) => (isScoped(req) ? { createdBy: req.user._id } : {});
 
 const LINK_VALIDITY_SECONDS = 24 * 60 * 60;
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Admin picks the gateway per link (Razorpay or Cashfree). Older links are Razorpay.
+// Created lazily so the server starts even if the Razorpay keys are missing.
+let razorpayClient = null;
+const legacyRazorpay = () => {
+  if (!razorpayClient) {
+    const Razorpay = require("razorpay");
+    razorpayClient = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+  }
+  return razorpayClient;
+};
+
+const isCashfree = (doc) => doc.gateway === "cashfree";
+const linkIdOf = (doc) => (isCashfree(doc) ? doc.cashfreeLinkId : doc.razorpayLinkId);
 
 const createSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100).required(),
@@ -22,8 +35,10 @@ const createSchema = Joi.object({
     .pattern(/^[6-9]\d{9}$/)
     .required()
     .messages({ "string.pattern.base": "Mobile must be a valid 10-digit number" }),
-  email: Joi.string().trim().email().required(),
-  city: Joi.string().trim().max(100).allow("", null),
+  // Optional: the customer is identified by mobile
+  email: Joi.string().trim().email().allow("", null),
+  gateway: Joi.string().valid("razorpay", "cashfree").default("razorpay"),
+  city:Joi.string().trim().max(100).allow("", null),
   amount: Joi.number().min(1).max(1000000).required(),
   remarks: Joi.string().trim().max(500).allow("", null),
 });
@@ -38,32 +53,55 @@ const createManualPayment = async (req, res) => {
       return res.status(400).json({ message: error.details[0].message });
     }
 
-    const expireBy = Math.floor(Date.now() / 1000) + LINK_VALIDITY_SECONDS;
+    const expireBy = new Date(Date.now() + LINK_VALIDITY_SECONDS * 1000);
+    const email = value.email || "";
+    const purpose = value.remarks || "Credit Dost payment";
 
-    const link = await razorpay.paymentLink.create({
-      amount: Math.round(value.amount * 100),
-      currency: "INR",
-      description: value.remarks || "Credit Dost payment",
-      customer: {
-        name: value.name,
-        contact: value.mobile,
-        email: value.email,
-      },
-      notify: { sms: false, email: false },
-      reminder_enable: false,
-      expire_by: expireBy,
-    });
+    let linkFields;
+    if (value.gateway === "cashfree") {
+      const linkId = `MP_${new mongoose.Types.ObjectId()}`;
+      const link = await cashfree.createLink({
+        linkId,
+        amount: value.amount,
+        purpose,
+        customer: { name: value.name, phone: value.mobile, email: email || undefined },
+        expiresAt: expireBy,
+      });
+      linkFields = {
+        gateway: "cashfree",
+        cashfreeLinkId: link.link_id || linkId,
+        shortUrl: link.link_url,
+      };
+    } else {
+      const link = await legacyRazorpay().paymentLink.create({
+        amount: Math.round(value.amount * 100),
+        currency: "INR",
+        description: purpose,
+        customer: {
+          name: value.name,
+          contact: value.mobile,
+          ...(email && { email }),
+        },
+        notify: { sms: false, email: false },
+        reminder_enable: false,
+        expire_by: Math.floor(expireBy.getTime() / 1000),
+      });
+      linkFields = {
+        gateway: "razorpay",
+        razorpayLinkId: link.id,
+        shortUrl: link.short_url,
+      };
+    }
 
     const doc = await ManualPayment.create({
       name: value.name,
       mobile: value.mobile,
-      email: value.email,
+      email,
       city: value.city || "",
       amount: value.amount,
       remarks: value.remarks || "",
-      razorpayLinkId: link.id,
-      shortUrl: link.short_url,
-      expireBy: new Date(expireBy * 1000),
+      ...linkFields,
+      expireBy,
       createdBy: req.user?.id,
     });
 
@@ -73,7 +111,11 @@ const createManualPayment = async (req, res) => {
     });
   } catch (error) {
     console.error("Create manual payment error:", error);
-    res.status(500).json({ message: "Failed to create payment link", error: error.message });
+    // Razorpay SDK errors carry the reason in error.error.description
+    res.status(500).json({
+      message: "Failed to create payment link",
+      error: error.error?.description || error.message,
+    });
   }
 };
 
@@ -121,7 +163,9 @@ const listManualPayments = async (req, res) => {
   }
 };
 
-// Shared status mapping: Razorpay link status -> our status.
+// Shared status mapping: gateway link status (lowercased) -> our status.
+// Razorpay and Cashfree both lowercase to: paid, partially_paid, expired, cancelled
+// (Cashfree "ACTIVE" / Razorpay "created" mean no change).
 // Never downgrades a paid link.
 const applyLinkStatus = async (doc, linkStatus, paymentId) => {
   if (doc.status === "paid") return doc;
@@ -143,7 +187,9 @@ const applyLinkStatus = async (doc, linkStatus, paymentId) => {
       {
         status: "paid",
         paidAt: doc.paidAt || new Date(),
-        ...(paymentId && { razorpayPaymentId: paymentId }),
+        ...(paymentId && {
+          [isCashfree(doc) ? "cashfreePaymentId" : "razorpayPaymentId"]: paymentId,
+        }),
       },
       { new: true },
     );
@@ -156,7 +202,7 @@ const applyLinkStatus = async (doc, linkStatus, paymentId) => {
   doc.status = mapped;
   if (mapped === "partially_paid") {
     doc.paidAt = doc.paidAt || new Date();
-    if (paymentId) doc.razorpayPaymentId = paymentId;
+    if (paymentId) doc[isCashfree(doc) ? "cashfreePaymentId" : "razorpayPaymentId"] = paymentId;
   }
   await doc.save();
   return doc;
@@ -190,18 +236,43 @@ const sendPaymentConfirmations = async (doc) => {
   });
 };
 
+// Current link status + payment ID from whichever gateway created the link
+const fetchLinkState = async (doc) => {
+  if (isCashfree(doc)) {
+    const link = await cashfree.getLink(doc.cashfreeLinkId);
+    const status = String(link.link_status || "").toLowerCase();
+    let paymentId;
+    if (status === "paid" || status === "partially_paid") {
+      try {
+        const orders = await cashfree.getLinkOrders(doc.cashfreeLinkId);
+        const paidOrder = (orders || []).find((o) => o.order_status === "PAID");
+        if (paidOrder) {
+          const payments = await cashfree.getOrderPayments(paidOrder.order_id);
+          const success = (payments || []).find((pm) => pm.payment_status === "SUCCESS");
+          if (success?.cf_payment_id) paymentId = String(success.cf_payment_id);
+        }
+      } catch (error) {
+        console.error(`Cashfree link payment lookup failed for ${doc.cashfreeLinkId}:`, error.message);
+      }
+    }
+    return { status, paymentId };
+  }
+
+  const link = await legacyRazorpay().paymentLink.fetch(doc.razorpayLinkId);
+  return { status: link.status, paymentId: link.payments?.[0]?.payment_id };
+};
+
 // POST /api/admin/manual-payments/:id/refresh
-// Pulls the current status from Razorpay. Used when a webhook was missed.
+// Pulls the current status from the gateway. Used when a webhook was missed.
 const refreshManualPayment = async (req, res) => {
   try {
     const doc = await ManualPayment.findOne({ _id: req.params.id, ...ownScope(req) });
     if (!doc) return res.status(404).json({ message: "Payment not found" });
 
-    const link = await razorpay.paymentLink.fetch(doc.razorpayLinkId);
-    const paymentId = link.payments?.[0]?.payment_id;
-    await applyLinkStatus(doc, link.status, paymentId);
+    const { status, paymentId } = await fetchLinkState(doc);
+    const updated = await applyLinkStatus(doc, status, paymentId);
 
-    res.json({ payment: doc });
+    res.json({ payment: updated || doc });
   } catch (error) {
     console.error("Refresh manual payment error:", error);
     res.status(500).json({ message: "Failed to refresh status", error: error.message });
@@ -217,7 +288,11 @@ const cancelManualPayment = async (req, res) => {
       return res.status(400).json({ message: `Cannot cancel a ${doc.status} payment link` });
     }
 
-    await razorpay.paymentLink.cancel(doc.razorpayLinkId);
+    if (isCashfree(doc)) {
+      await cashfree.cancelLink(doc.cashfreeLinkId);
+    } else {
+      await legacyRazorpay().paymentLink.cancel(doc.razorpayLinkId);
+    }
     doc.status = "cancelled";
     await doc.save();
 
@@ -228,7 +303,7 @@ const cancelManualPayment = async (req, res) => {
   }
 };
 
-// Background sync: checks open links with Razorpay so status updates even if a webhook is missed.
+// Background sync: checks open links with the gateway so status updates even if a webhook is missed.
 // Same logic as the manual Refresh button, applied to every open link.
 let syncRunning = false;
 const syncOpenManualPayments = async () => {
@@ -241,11 +316,10 @@ const syncOpenManualPayments = async () => {
 
     for (const doc of open) {
       try {
-        const link = await razorpay.paymentLink.fetch(doc.razorpayLinkId);
-        const paymentId = link.payments?.[0]?.payment_id;
-        await applyLinkStatus(doc, link.status, paymentId);
+        const { status, paymentId } = await fetchLinkState(doc);
+        await applyLinkStatus(doc, status, paymentId);
       } catch (error) {
-        console.error(`Manual payment sync failed for ${doc.razorpayLinkId}:`, error.message);
+        console.error(`Manual payment sync failed for ${linkIdOf(doc)}:`, error.message);
       }
     }
   } catch (error) {

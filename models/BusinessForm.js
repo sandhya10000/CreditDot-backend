@@ -204,6 +204,18 @@ const businessFormSchema = new mongoose.Schema(
     razorpaySignature: {
       type: String,
     },
+    // New payments use Cashfree; Razorpay fields are kept for older forms
+    paymentGateway: {
+      type: String,
+      enum: ["razorpay", "cashfree"],
+    },
+    cashfreeOrderId: {
+      type: String,
+      index: true,
+    },
+    cashfreePaymentId: {
+      type: String,
+    },
     message: {
       type: String,
       required: false,

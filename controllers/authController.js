@@ -551,6 +551,48 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const changePasswordSchema = Joi.object({
+  currentPassword: Joi.string().required(),
+  newPassword: Joi.string().min(6).max(128).required(),
+});
+
+// Change own password while logged in (used by staff from the admin panel header)
+// Wrong current password returns 400, not 401: the frontend logs users out on any 401.
+const changePassword = async (req, res) => {
+  try {
+    const { value, error } = changePasswordSchema.validate(req.body || {});
+    if (error) {
+      return res.status(400).json({ message: error.details[0].message });
+    }
+    if (value.currentPassword === value.newPassword) {
+      return res
+        .status(400)
+        .json({ message: "New password must be different from the current password" });
+    }
+
+    // auth middleware strips the password hash, so load it again
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isMatch = await user.comparePassword(value.currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    user.password = value.newPassword; // hashed by the pre-save hook
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.json({ message: "Password changed successfully" });
+  } catch (error) {
+    console.error("Change password error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -559,4 +601,5 @@ module.exports = {
   forgotPassword,
   requestPasswordReset,
   resetPassword,
+  changePassword,
 };

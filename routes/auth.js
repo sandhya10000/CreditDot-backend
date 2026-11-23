@@ -1,5 +1,5 @@
 const express = require('express');
-const { register, login, logout, getProfile, forgotPassword, requestPasswordReset, resetPassword } = require('../controllers/authController');
+const { register, login, logout, getProfile, forgotPassword, requestPasswordReset, resetPassword, changePassword } = require('../controllers/authController');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -28,6 +28,11 @@ router.post('/request-password-reset', requestPasswordReset);
 // @desc    Reset password with token
 // @access  Public
 router.post('/reset-password', resetPassword);
+
+// @route   POST /api/auth/change-password
+// @desc    Change own password (requires current password)
+// @access  Private
+router.post('/change-password', auth, changePassword);
 
 // @route   POST /api/auth/logout
 // @desc    Logout user
