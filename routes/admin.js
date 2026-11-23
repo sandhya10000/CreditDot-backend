@@ -356,4 +356,13 @@ router.delete(
   deleteCreditRepairEnquiry
 );
 
+// ==========================================
+// Bank Statement Analyzer (Admin Routes)
+// ==========================================
+const bsaController = require("../controllers/bsaController");
+
+router.get("/bsa-reports", auth, rbac("admin"), bsaController.getAllBankStatementAnalyses);
+router.get("/bsa-reports/:id/report", auth, rbac("admin"), bsaController.adminDownloadReport);
+router.get("/bsa-reports/:id/original-statement", auth, rbac("admin"), bsaController.adminDownloadOriginalStatement);
+
 module.exports = router;

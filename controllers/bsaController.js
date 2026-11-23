@@ -15,6 +15,9 @@ const pipelinePdf = require('../utils/bsa/pdfGenerator');
 const REPORT_DIR = path.join(__dirname, '..', 'reports', 'bsa');
 fs.mkdirSync(REPORT_DIR, { recursive: true });
 
+const UPLOAD_DIR = path.join(__dirname, '..', 'reports', 'bsa-uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 // Concurrency queue for background BSA jobs
 const MAX_CONCURRENT_JOBS = parseInt(process.env.BSA_MAX_CONCURRENT_JOBS, 10) || 2;
 let activeJobCount = 0;
@@ -303,11 +306,21 @@ exports.analyze = async (req, res) => {
       });
     }
 
+    // Save uploaded statement copy for admin review/auditing
+    const originalSaveName = `statement_${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const originalSavePath = path.join(UPLOAD_DIR, originalSaveName);
+    try {
+      fs.writeFileSync(originalSavePath, fileBuffer);
+    } catch (saveErr) {
+      console.warn('[bsa] Could not save original statement copy:', saveErr.message);
+    }
+
     // Create DB entry in Processing state
     const doc = await BankStatementAnalysis.create({
       userId,
       fileName: req.file.originalname,
       status: 'Processing',
+      originalStatementPath: fs.existsSync(originalSavePath) ? originalSaveName : null,
     });
 
     // Enqueue background analysis
@@ -419,5 +432,210 @@ exports.downloadReport = async (req, res) => {
   } catch (err) {
     console.error('[bsa] downloadReport error:', err.message);
     return res.status(500).json({ success: false, message: 'Could not download report' });
+  }
+};
+
+// GET /api/admin/bsa-reports?page&limit&search&partnerSearch&status&startDate&endDate
+exports.getAllBankStatementAnalyses = async (req, res) => {
+  try {
+    const User = require('../models/User');
+    const Franchise = require('../models/Franchise');
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const search = String(req.query.search || '').trim();
+    const partnerSearch = String(req.query.partnerSearch || '').trim();
+    const status = String(req.query.status || 'All');
+    const { startDate, endDate } = req.query;
+
+    const query = {};
+    if (search) {
+      const rx = { $regex: search, $options: 'i' };
+      query.$or = [{ fileName: rx }, { accountHolderName: rx }, { bankName: rx }];
+    }
+
+    if (partnerSearch) {
+      const rxPartner = { $regex: partnerSearch, $options: 'i' };
+      // Search Franchise by franchiseCode or ownerName or businessName
+      const matchingFranchises = await Franchise.find({
+        $or: [
+          { franchiseCode: rxPartner },
+          { ownerName: rxPartner },
+          { businessName: rxPartner },
+          { email: rxPartner },
+        ],
+      }).select('userId').lean();
+      const franchiseUserIds = matchingFranchises.map((f) => f.userId);
+
+      // Also search User by name or email
+      const matchingUsers = await User.find({
+        $or: [{ name: rxPartner }, { email: rxPartner }],
+      }).select('_id').lean();
+      const directUserIds = matchingUsers.map((u) => u._id);
+
+      const allUserIds = [...new Set([...franchiseUserIds, ...directUserIds])];
+      query.userId = { $in: allUserIds };
+    }
+
+    if (status && status !== 'All') {
+      query.status = status;
+    }
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
+    const [total, rows] = await Promise.all([
+      BankStatementAnalysis.countDocuments(query),
+      BankStatementAnalysis.find(query)
+        .populate('userId', 'name email phone')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    // Attach franchise codes for partners
+    const userIds = rows.map((r) => r.userId?._id).filter(Boolean);
+    const franchises = await Franchise.find({ userId: { $in: userIds } })
+      .select('userId franchiseCode businessName ownerName')
+      .lean();
+    const franchiseMap = new Map();
+    franchises.forEach((f) => {
+      franchiseMap.set(String(f.userId), f);
+    });
+
+    const data = rows.map((r) => {
+      const userIdStr = r.userId?._id ? String(r.userId._id) : String(r.userId || '');
+      const franchise = franchiseMap.get(userIdStr);
+      return {
+        id: r._id,
+        status: r.status,
+        fileName: r.fileName,
+        accountHolderName: r.accountHolderName,
+        bankName: r.bankName,
+        accountNumberMasked: r.accountNumberMasked,
+        statementFrom: r.statementFrom,
+        statementTo: r.statementTo,
+        pageCount: r.pageCount,
+        failureReason: r.failureReason,
+        errorCode: r.errorCode,
+        createdAt: r.createdAt,
+        hasOriginalStatement: Boolean(r.originalStatementPath),
+        userId: {
+          _id: r.userId?._id || r.userId,
+          name: franchise?.ownerName || r.userId?.name || 'Partner',
+          email: franchise?.email || r.userId?.email || '',
+          partner_id: franchise?.franchiseCode || '—',
+          businessName: franchise?.businessName || '',
+        },
+      };
+    });
+
+    return res.json({
+      success: true,
+      data,
+      total,
+      page,
+      pages: Math.max(Math.ceil(total / limit), 1),
+    });
+  } catch (err) {
+    console.error('[bsa] admin list error:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not fetch bank statement reports' });
+  }
+};
+
+// GET /api/admin/bsa-reports/:id/report
+exports.adminDownloadReport = async (req, res) => {
+  try {
+    const doc = await BankStatementAnalysis.findById(req.params.id).select('status localPath').lean();
+    if (!doc || doc.status !== 'Success' || !doc.localPath) {
+      return res.status(404).json({ success: false, message: 'Report not found' });
+    }
+
+    const absPdfPath = path.join(REPORT_DIR, path.basename(doc.localPath));
+    if (!fs.existsSync(absPdfPath)) {
+      const htmlPath = path.join(REPORT_DIR, `${String(doc._id)}.html`);
+      if (fs.existsSync(htmlPath)) {
+        try {
+          const htmlContent = fs.readFileSync(htmlPath, 'utf8');
+          const regeneratedPdf = await pipelinePdf.generatePdfFromHtml(htmlContent);
+          fs.writeFileSync(absPdfPath, regeneratedPdf);
+        } catch (genErr) {
+          console.error('[bsa] PDF regeneration failed:', genErr.message);
+          return res.status(500).json({ success: false, message: 'Report PDF could not be generated.' });
+        }
+      } else {
+        return res.status(404).json({ success: false, message: 'Report file is missing.' });
+      }
+    }
+
+    const stat = fs.statSync(absPdfPath);
+    const isDownload = String(req.query.download || '') === '1';
+    const dispositionType = isDownload ? 'attachment' : 'inline';
+    const downloadName = `creditdost-bank-statement-${doc._id}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `${dispositionType}; filename="${downloadName}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length');
+
+    const stream = fs.createReadStream(absPdfPath);
+    stream.on('error', (streamErr) => {
+      console.error('[bsa] admin stream error:', streamErr.message);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, message: 'Error streaming report file' });
+      }
+    });
+    return stream.pipe(res);
+  } catch (err) {
+    console.error('[bsa] admin download error:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not download the report.' });
+  }
+};
+
+// GET /api/admin/bsa-reports/:id/original-statement
+exports.adminDownloadOriginalStatement = async (req, res) => {
+  try {
+    const doc = await BankStatementAnalysis.findById(req.params.id)
+      .select('originalStatementPath fileName')
+      .lean();
+    if (!doc || !doc.originalStatementPath) {
+      return res.status(404).json({ success: false, message: 'Original uploaded statement file is not available for this record.' });
+    }
+    const absPath = path.join(UPLOAD_DIR, path.basename(doc.originalStatementPath));
+    if (!fs.existsSync(absPath)) {
+      return res.status(404).json({ success: false, message: 'Original statement file is missing from disk.' });
+    }
+
+    const stat = fs.statSync(absPath);
+    const isDownload = String(req.query.download || '') === '1';
+    const dispositionType = isDownload ? 'attachment' : 'inline';
+    const downloadName = doc.fileName || `original-statement-${doc._id}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `${dispositionType}; filename="${downloadName}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length');
+
+    const stream = fs.createReadStream(absPath);
+    stream.on('error', (streamErr) => {
+      console.error('[bsa] admin stream original error:', streamErr.message);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, message: 'Error streaming original statement file' });
+      }
+    });
+    return stream.pipe(res);
+  } catch (err) {
+    console.error('[bsa] admin download original statement error:', err.message);
+    return res.status(500).json({ success: false, message: 'Could not fetch original statement file.' });
   }
 };

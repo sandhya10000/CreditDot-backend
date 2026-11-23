@@ -17,6 +17,7 @@ const bankStatementAnalysisSchema = new mongoose.Schema(
     // Generated PDF and HTML paths (private, served via auth-checked endpoint)
     localPath: { type: String, default: null },
     htmlPath: { type: String, default: null },
+    originalStatementPath: { type: String, default: null },
 
     accountHolderName: { type: String, default: null },
     bankName: { type: String, default: null },
