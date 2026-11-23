@@ -74,6 +74,7 @@ const ROUTE_RULES = [
   [/^\/api\/admin\/business|^\/api\/(all|amc)(\/|$)|^\/api\/business/, "business"],
   [/^\/api\/franchise\/(?!reward)/, "business"],
   [/^\/api\/digital-agreements/, "business"],
+  [/^\/api\/admin\/bsa-reports/, "ai_analysis"],
   [/^\/api\/ai-analysis/, "ai_analysis"],
   [/^\/api\/admin\/white-label\/partners/, "white_label_partners"],
   [/^\/api\/admin\/white-label\/reports/, "white_label_reports"],
