@@ -20,23 +20,26 @@ FIELD RULES
   continuation of the previous row from the earlier page: ignore it.
 - debit / credit: plain numbers in rupees with two decimals, no commas, no
   currency symbols. Indian grouping "1,52,053.40" -> 152053.40. Blank, "-"
-  or "—" -> 0. Take the side from the COLUMN the amount is printed in
-  (Withdrawal/Debit/Dr vs Deposit/Credit/Cr), not from the narration. If the
-  statement has one amount column with a Dr/Cr marker, use the marker. A row
-  has exactly one non-zero side.
+  or "—" -> 0. Take the side from the COLUMN the amount is printed in:
+  * In standard bank statements: Withdrawal/Debit/Dr vs Deposit/Credit/Cr.
+  * In loan/NBFC statements: "Increased By Rs." is Debit (amount added to debt/due), "Decreased By Rs." is Credit (repayment/payment received). Also include other fees/charges in Debit if they increase liability.
+  If the statement has one amount column with a Dr/Cr marker, use the marker. A row has at least one amount.
 - balance: the running balance printed on that row, after the transaction.
   Plain number, no commas. If the balance is marked "Dr" (overdrawn) make it
   negative; "Cr" is positive.
+  * NOTE: If the statement does NOT have an explicit "Balance" column (e.g. loan ledger / SOA with only Increased By / Decreased By), compute the running balance as: previous balance + Increased By - Decreased By (starting from 0 or the previous balance provided).
 - page: the page number within the attached document (1-based).
 - statement_order: "ascending" if oldest first, "descending" if newest
   first, as printed. Never reorder rows yourself.
 
 SELF-CHECK BEFORE SUBMITTING
-For consecutive rows, previous balance + credit - debit must equal this
-row's balance. If a row fails, re-read that row from the page and fix
-misread digits or a wrong column. If it still fails, keep exactly what is
-printed and list it in "uncertain_rows" with a short reason. For the first
-row of this batch, use the previous balance given in the user message when
+For statements with a running balance column: For consecutive rows, previous balance + credit - debit must equal this row's balance.
+If a statement has no printed balance column, compute the cumulative running balance from the transaction amounts.
+If a row fails:
+1. Re-read that row from the page and fix misread digits or a wrong column.
+2. Check if a transaction row between consecutive serial numbers was skipped (ensure all printed rows are included).
+3. If it still fails, keep exactly what is printed and list it in "uncertain_rows" with a short reason.
+For the first row of this batch, use the previous balance given in the user message when
 it is provided. Never change a printed balance to make the math work.
 
 OUTPUT

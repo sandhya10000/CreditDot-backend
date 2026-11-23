@@ -27,12 +27,12 @@
             "serial": { "type": ["integer", "string", "null"] },
             "date": { "type": "string" },
             "narration": { "type": "string" },
-            "debit": { "type": ["number", "string"] },
-            "credit": { "type": ["number", "string"] },
-            "balance": { "type": ["number", "string"] },
+            "debit": { "type": ["number", "string", "null"] },
+            "credit": { "type": ["number", "string", "null"] },
+            "balance": { "type": ["number", "string", "null"] },
             "page": { "type": ["integer", "string"] }
           },
-          "required": ["serial", "date", "narration", "debit", "credit", "balance", "page"]
+          "required": ["date", "narration", "page"]
         }
       },
       "uncertain_rows": {
