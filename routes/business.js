@@ -208,6 +208,7 @@ router.delete(
   "/admin/business-forms/:id",
   auth,
   rbac("admin"),
+  requireFullAdmin,
   deleteBusinessForm,
 );
 // @route GET /api/business/customer/${customerId}
