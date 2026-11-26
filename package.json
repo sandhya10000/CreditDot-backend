@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "test": "jest",
     "seed": "node seed.js",
-    "seed-referral": "node seedReferralSettings.js"
+    "seed-referral": "node seedReferralSettings.js",
+    "sync:staging": "node scripts/syncProdToStaging.js"
   },
   "keywords": [],
   "author": "",

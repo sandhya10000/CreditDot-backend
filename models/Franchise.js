@@ -116,6 +116,25 @@ const franchiseSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Blacklist (Admin / Business Manager): while true the partner cannot log in or use the portal
+    isBlacklisted: {
+      type: Boolean,
+      default: false,
+    },
+    blacklistReason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    blacklistedAt: {
+      type: Date,
+      default: null,
+    },
+    blacklistedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     //add new for aiused
     // AI Usage Tracking
     aiTotal: {

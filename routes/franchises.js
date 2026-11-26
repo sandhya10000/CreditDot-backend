@@ -3,6 +3,7 @@ const {
   getFranchiseProfile,
   updateFranchiseProfile,
   getAllFranchises,
+  getFranchiseCounts,
   getFranchiseList,
   getFranchiseById,
   updateFranchise,
@@ -22,6 +23,7 @@ const {
   reassignFranchiseManager,
   assignUnassignedBusinessManagers,
   setCreditHold,
+  setBlacklist,
 } = require("../controllers/franchiseController");
 const auth = require("../middleware/auth");
 const rbac = require("../middleware/rbac");
@@ -54,6 +56,11 @@ router.get("/export-csv", auth, rbac("admin"), exportFranchisesCSV);
 // @access  Private/Admin
 router.get("/list", auth, rbac("admin"), getFranchiseList);
 router.get("/", auth, rbac("admin"), getAllFranchises);
+
+// @route   GET /api/franchises/counts
+// @desc    Tab counts for the admin Franchises page (Active / Pending / Deleted)
+// @access  Private/Admin
+router.get("/counts", auth, rbac("admin"), getFranchiseCounts);
 
 // @route   GET /api/franchises/certificate
 // @desc    Generate certificate data
@@ -188,5 +195,10 @@ router.put(
 // @desc    Freeze (hold: true) or release (hold: false) a partner's bureau and AI credits
 // @access  Private/Admin
 router.put("/:id/credit-hold", auth, rbac("admin"), setCreditHold);
+
+// @route   PUT /api/franchises/:id/blacklist
+// @desc    Blacklist a partner ({ blacklisted: true, reason }) or lift it ({ blacklisted: false })
+// @access  Private/Full Admin or Business Manager (own partners only; checked in the controller)
+router.put("/:id/blacklist", auth, rbac("admin"), setBlacklist);
 
 module.exports = router;

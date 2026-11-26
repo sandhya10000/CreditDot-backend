@@ -90,10 +90,24 @@ const permissionForRoute = (fullPath) => {
   return rule ? rule[1] : null;
 };
 
+// Every section a role may hold: all of them, or only the scopable ones for a Business Manager
+const allSectionsFor = (limitToOwnFranchises) =>
+  limitToOwnFranchises ? [...SCOPABLE_KEYS] : [...PERMISSION_KEYS];
+
+// Sections a role actually grants. Full-access roles get every section, including
+// ones added after the role was saved. Staff & role management stays full-admin only.
+const rolePermissions = (role) => {
+  if (!role) return [];
+  if (role.fullAccess) return allSectionsFor(role.limitToOwnFranchises);
+  return role.permissions || [];
+};
+
 module.exports = {
   PERMISSIONS,
   PERMISSION_KEYS,
   SCOPABLE_KEYS,
   ROUTE_RULES,
   permissionForRoute,
+  allSectionsFor,
+  rolePermissions,
 };

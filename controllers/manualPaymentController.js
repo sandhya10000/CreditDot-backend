@@ -1,5 +1,4 @@
 const Joi = require("joi");
-const mongoose = require("mongoose");
 const cashfree = require("../utils/cashfree");
 const ManualPayment = require("../models/ManualPayment");
 const User = require("../models/User");
@@ -11,10 +10,11 @@ const ownScope = (req) => (isScoped(req) ? { createdBy: req.user._id } : {});
 
 const LINK_VALIDITY_SECONDS = 24 * 60 * 60;
 
-// Admin picks the gateway per link (Razorpay or Cashfree). Older links are Razorpay.
+// New links are always created on Razorpay. Cashfree is only used to refresh, cancel
+// and sync links that were created on Cashfree earlier.
 // Created lazily so the server starts even if the Razorpay keys are missing.
 let razorpayClient = null;
-const legacyRazorpay = () => {
+const razorpay = () => {
   if (!razorpayClient) {
     const Razorpay = require("razorpay");
     razorpayClient = new Razorpay({
@@ -28,22 +28,37 @@ const legacyRazorpay = () => {
 const isCashfree = (doc) => doc.gateway === "cashfree";
 const linkIdOf = (doc) => (isCashfree(doc) ? doc.cashfreeLinkId : doc.razorpayLinkId);
 
+// Mobile and gateway are no longer collected: links are Razorpay-only and the
+// customer enters their phone on the Razorpay page
 const createSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100).required(),
-  mobile: Joi.string()
-    .trim()
-    .pattern(/^[6-9]\d{9}$/)
-    .required()
-    .messages({ "string.pattern.base": "Mobile must be a valid 10-digit number" }),
-  // Optional: the customer is identified by mobile
   email: Joi.string().trim().email().allow("", null),
-  gateway: Joi.string().valid("razorpay", "cashfree").default("razorpay"),
-  city:Joi.string().trim().max(100).allow("", null),
+  city: Joi.string().trim().max(100).allow("", null),
   amount: Joi.number().min(1).max(1000000).required(),
   remarks: Joi.string().trim().max(500).allow("", null),
 });
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// "Admin" for full administrators; staff show their role name
+const roleLabelOf = (user) => {
+  if (!user) return "";
+  if (user.staffRole?.name) return user.staffRole.name;
+  if (user.role === "admin") return "Admin";
+  return "";
+};
+
+// List rows carry the creator as { name, roleLabel } instead of a bare id
+const withCreator = (payment) => ({
+  ...payment,
+  createdBy: payment.createdBy
+    ? {
+        _id: payment.createdBy._id,
+        name: payment.createdBy.name || "",
+        roleLabel: roleLabelOf(payment.createdBy),
+      }
+    : null,
+});
 
 // POST /api/admin/manual-payments
 const createManualPayment = async (req, res) => {
@@ -55,52 +70,29 @@ const createManualPayment = async (req, res) => {
 
     const expireBy = new Date(Date.now() + LINK_VALIDITY_SECONDS * 1000);
     const email = value.email || "";
-    const purpose = value.remarks || "Credit Dost payment";
 
-    let linkFields;
-    if (value.gateway === "cashfree") {
-      const linkId = `MP_${new mongoose.Types.ObjectId()}`;
-      const link = await cashfree.createLink({
-        linkId,
-        amount: value.amount,
-        purpose,
-        customer: { name: value.name, phone: value.mobile, email: email || undefined },
-        expiresAt: expireBy,
-      });
-      linkFields = {
-        gateway: "cashfree",
-        cashfreeLinkId: link.link_id || linkId,
-        shortUrl: link.link_url,
-      };
-    } else {
-      const link = await legacyRazorpay().paymentLink.create({
-        amount: Math.round(value.amount * 100),
-        currency: "INR",
-        description: purpose,
-        customer: {
-          name: value.name,
-          contact: value.mobile,
-          ...(email && { email }),
-        },
-        notify: { sms: false, email: false },
-        reminder_enable: false,
-        expire_by: Math.floor(expireBy.getTime() / 1000),
-      });
-      linkFields = {
-        gateway: "razorpay",
-        razorpayLinkId: link.id,
-        shortUrl: link.short_url,
-      };
-    }
+    const link = await razorpay().paymentLink.create({
+      amount: Math.round(value.amount * 100),
+      currency: "INR",
+      description: value.remarks || "Credit Dost payment",
+      customer: {
+        name: value.name,
+        ...(email && { email }),
+      },
+      notify: { sms: false, email: false },
+      reminder_enable: false,
+      expire_by: Math.floor(expireBy.getTime() / 1000),
+    });
 
     const doc = await ManualPayment.create({
       name: value.name,
-      mobile: value.mobile,
       email,
       city: value.city || "",
       amount: value.amount,
       remarks: value.remarks || "",
-      ...linkFields,
+      gateway: "razorpay",
+      razorpayLinkId: link.id,
+      shortUrl: link.short_url,
       expireBy,
       createdBy: req.user?.id,
     });
@@ -147,6 +139,11 @@ const listManualPayments = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
+        .populate({
+          path: "createdBy",
+          select: "name role staffRole",
+          populate: { path: "staffRole", select: "name" },
+        })
         .lean(),
     ]);
 
@@ -155,7 +152,7 @@ const listManualPayments = async (req, res) => {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      payments,
+      payments: payments.map(withCreator),
     });
   } catch (error) {
     console.error("List manual payments error:", error);
@@ -258,7 +255,7 @@ const fetchLinkState = async (doc) => {
     return { status, paymentId };
   }
 
-  const link = await legacyRazorpay().paymentLink.fetch(doc.razorpayLinkId);
+  const link = await razorpay().paymentLink.fetch(doc.razorpayLinkId);
   return { status: link.status, paymentId: link.payments?.[0]?.payment_id };
 };
 
@@ -291,7 +288,7 @@ const cancelManualPayment = async (req, res) => {
     if (isCashfree(doc)) {
       await cashfree.cancelLink(doc.cashfreeLinkId);
     } else {
-      await legacyRazorpay().paymentLink.cancel(doc.razorpayLinkId);
+      await razorpay().paymentLink.cancel(doc.razorpayLinkId);
     }
     doc.status = "cancelled";
     await doc.save();

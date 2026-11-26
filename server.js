@@ -57,6 +57,16 @@ const runGoogleSheetsMigration = async () => {
   }
 };
 
+// DISABLE_BACKGROUND_JOBS=true (staging/dev) turns off the jobs that act on their own against
+// outside services: Cashfree payment reconciliation, manual payment sync and Google Sheets sync.
+// Requests made through the app still work normally.
+const BACKGROUND_JOBS_DISABLED = process.env.DISABLE_BACKGROUND_JOBS === "true";
+if (BACKGROUND_JOBS_DISABLED) {
+  console.warn(
+    "DISABLE_BACKGROUND_JOBS=true: payment reconciliation and Google Sheets sync are OFF",
+  );
+}
+
 // Connect to database
 mongoose
   .connect(
@@ -64,6 +74,9 @@ mongoose
   )
   .then(async () => {
     console.log("MongoDB connected");
+
+    // Staging runs on a copy of production data: don't write to the real Google Sheets
+    if (BACKGROUND_JOBS_DISABLED) return;
 
     // Run migration to ensure all required tabs are present
     await runGoogleSheetsMigration();
@@ -328,8 +341,10 @@ const startAutoSync = async () => {
   }
 };
 
-// Start the payment reconciliation job
-startPaymentReconciliation();
+// Start the payment reconciliation job (off on staging, see DISABLE_BACKGROUND_JOBS)
+if (!BACKGROUND_JOBS_DISABLED) {
+  startPaymentReconciliation();
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

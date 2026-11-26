@@ -4,7 +4,9 @@ const { assignNextManager } = require("../utils/assignBusinessManager");
 const Referral = require("../models/Referral");
 const Transaction = require("../models/Transaction");
 const Role = require("../models/Role");
+const { rolePermissions } = require("../config/permissions");
 const { generateToken } = require("../config/jwt");
+const { ACCOUNT_SUSPENDED } = require("../utils/accountSuspended");
 
 // permissions is null for full admins (no staffRole); staff get their role's list.
 // disabled means the staff member or their role is inactive.
@@ -12,12 +14,12 @@ const getStaffAccess = async (user) => {
   if (!user.staffRole) {
     return { permissions: null, staffRoleName: null, staffCode: null, scopedToOwnFranchises: false, disabled: false };
   }
-  const staffRole = await Role.findById(user.staffRole).select("name permissions isActive limitToOwnFranchises");
+  const staffRole = await Role.findById(user.staffRole).select("name permissions fullAccess isActive limitToOwnFranchises");
   if (!user.isActive || !staffRole || !staffRole.isActive) {
     return { disabled: true };
   }
   return {
-    permissions: staffRole.permissions,
+    permissions: rolePermissions(staffRole),
     staffRoleName: staffRole.name,
     staffCode: user.staffCode || null,
     scopedToOwnFranchises: Boolean(staffRole.limitToOwnFranchises),
@@ -274,6 +276,14 @@ const login = async (req, res) => {
     if (!isMatch) {
       console.log("Invalid password for user:", email); // Debug log
       return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    // Blacklisted partners can't log in (checked after the password so status isn't revealed to guesses)
+    if (
+      user.role === "franchise_user" &&
+      (await Franchise.exists({ userId: user._id, isBlacklisted: true }))
+    ) {
+      return res.status(403).json(ACCOUNT_SUSPENDED);
     }
 
     // Check if user is active

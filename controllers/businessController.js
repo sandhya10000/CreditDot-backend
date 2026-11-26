@@ -724,12 +724,14 @@ const getAllBusinessForms = async (req, res) => {
     const sortDir = req.query.sortOrder === "asc" ? 1 : -1;
     const sort = { [sortField]: sortDir, _id: sortDir };
 
+    // gstPercentage (for the totalPrice virtual) and franchise phone feed the Business MIS CSV export,
+    // matching the customer details page
     let query = BusinessForm.find(filter)
       .populate(
         "selectedPackage",
-        "name price businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
+        "name price gstPercentage businessPayoutPercentage businessPayoutType businessPayoutFixedAmount",
       )
-      .populate("franchiseId", "businessName franchiseCode")
+      .populate("franchiseId", "businessName franchiseCode phone")
       .populate("assignedRm", "name staffCode")
       .sort(sort)
       .skip(skip)
@@ -761,15 +763,31 @@ const updateBusinessWorkStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { workStatus } = req.body;
+    const isFullAdmin = !req.user.staffRole;
+
+    if (workStatus === "refunded" && !isFullAdmin) {
+      return res.status(403).json({ message: "Only Admin can mark a case as Refunded" });
+    }
+
+    const scope = { _id: id, ...(await scopeFilter(req)) };
+    const existing = await BusinessForm.findOne(scope).select("workStatus");
+    if (!existing) {
+      return res.status(404).json({ message: "Business form not found" });
+    }
+    // A refunded case stays refunded unless a full admin changes it
+    if (existing.workStatus === "refunded" && !isFullAdmin) {
+      return res.status(403).json({ message: "Only Admin can change the status of a Refunded case" });
+    }
 
     const form = await BusinessForm.findOneAndUpdate(
-      { _id: id, ...(await scopeFilter(req)) },
+      // Status condition closes the gap if another admin changes it in between
+      { ...scope, workStatus: existing.workStatus },
       { workStatus },
       { new: true, runValidators: true },
     );
 
     if (!form) {
-      return res.status(404).json({ message: "Business form not found" });
+      return res.status(409).json({ message: "The status was just changed by someone else. Please refresh." });
     }
 
     res.json({
