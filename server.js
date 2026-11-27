@@ -255,6 +255,7 @@ app.use("/api/digital-agreements", require("./routes/digitalAgreements"));
 app.use("/api/careers", require("./routes/careers"));
 app.use("/api/ai-analysis", require("./routes/aiAnalysis"));
 app.use("/api/sms", require("./routes/sms"));
+app.use("/api/work-tracking", require("./routes/workTracking"));
 console.log("Registering analytics route...");
 app.use("/api/analytics", require("./routes/analytics"));
 console.log("Analytics route registered");

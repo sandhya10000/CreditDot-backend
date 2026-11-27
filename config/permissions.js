@@ -22,6 +22,7 @@ const PERMISSIONS = [
   { key: "google_sheets", label: "Google Sheets" },
   { key: "users", label: "Users" },
   { key: "marketing", label: "Marketing Materials, Case Studies & Rewards" },
+  { key: "work_tracking", label: "Incentives Tracking" },
   { key: "settings", label: "Settings & API Keys" },
 ];
 
@@ -42,6 +43,7 @@ const SCOPABLE_KEYS = [
   "manual_payments",
   "ai_analysis",
   "support_tickets",
+  "work_tracking",
 ];
 
 // First matching rule wins. Matched against req.baseUrl + req.path,
@@ -83,6 +85,7 @@ const ROUTE_RULES = [
   [/^\/api\/blogs/, "blogs"],
   [/^\/api\/relationship-managers/, "relationship_managers"],
   [/^\/api\/google-sheets/, "google_sheets"],
+  [/^\/api\/work-tracking/, "work_tracking"],
 ];
 
 const permissionForRoute = (fullPath) => {

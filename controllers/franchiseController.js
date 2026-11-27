@@ -16,7 +16,7 @@ const {
   resolveBusinessManagerId,
 } = require("../utils/franchiseScope");
 const { assignUnassignedFranchises } = require("../utils/assignBusinessManager");
-const { fetchPanPremium, toPanDetails } = require("../utils/indiconnectPanClient");
+const { fetchPanComprehensive: fetchSurepassPan, toPanDetails } = require("../utils/surepassPanClient");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -789,19 +789,17 @@ const fetchPanComprehensive = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
-    // IndiConnect PAN Verification (Premium); PAN gets its own provider code, falls back to the shared one
-    const { getIndiconnectConfig } = require("./creditController");
-    const cfg = await getIndiconnectConfig("pan");
-    console.log(cfg, "IndiConnect PAN config");
-    if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+    // Surepass PAN comprehensive; the key comes from the Setting table, falling back to env
+    const { getSurepassApiKeyValue } = require("./creditController");
+    const apiKey = await getSurepassApiKeyValue();
+    if (!apiKey) {
       return res.status(500).json({
-        message:
-          "IndiConnect PAN credentials not configured (service-key / auth / provider code)",
+        message: "Surepass API key is not configured",
       });
     }
 
-    const verify = await fetchPanPremium(panNumber.toUpperCase(), cfg);
-    const panDetails = toPanDetails(verify);
+    const body = await fetchSurepassPan(panNumber.toUpperCase(), apiKey);
+    const panDetails = toPanDetails(body);
 
     // Same success/invalid semantics as before: only a verified PAN is saved and can approve KYC
     if (!panDetails.success) {
@@ -821,7 +819,7 @@ const fetchPanComprehensive = async (req, res) => {
       panDetails,
     });
   } catch (error) {
-    console.error("IndiConnect PAN verification error:", error.message);
+    console.error("PAN verification error:", error.message);
     if (error.response) {
       return res.status(error.response.status === 400 ? 400 : 502).json({
         message: "Failed to fetch PAN details",
