@@ -18,20 +18,29 @@ const {
 
 // Validation schema for credit repair form
 const creditRepairSchema = Joi.object({
+  enquiryType: Joi.string().valid("individual", "corporate").default("individual"),
   fullName: Joi.string().min(2).max(100).required(),
   email: Joi.string().email().required(),
   mobileNumber: Joi.string()
     .pattern(/^[0-9]{10}$/)
     .required(),
-  city: Joi.string().optional(),
+  city: Joi.string().optional().allow("", null),
   state: Joi.string().required(),
   problemType: Joi.string().required(),
-  creditScore: Joi.string().optional(),
-  message: Joi.string().optional(),
-  language: Joi.string().optional(),
-  occupation: Joi.string().optional(),
-  income: Joi.string().optional(),
-});
+  creditScore: Joi.string().optional().allow("", null),
+  message: Joi.string().optional().allow("", null),
+  language: Joi.string().optional().allow("", null),
+  occupation: Joi.string().optional().allow("", null),
+  income: Joi.string().optional().allow("", null),
+
+  // Corporate CMR Fields
+  companyName: Joi.string().optional().allow("", null),
+  entityType: Joi.string().optional().allow("", null),
+  designation: Joi.string().optional().allow("", null),
+  gstNumber: Joi.string().optional().allow("", null),
+  turnoverRange: Joi.string().optional().allow("", null),
+  cmrRank: Joi.string().optional().allow("", null),
+}).options({ stripUnknown: true });
 
 // Validation schema for contact form
 const contactFormSchema = Joi.object({
@@ -125,6 +134,7 @@ const submitCreditRepairForm = async (req, res) => {
     }
 
     const {
+      enquiryType,
       fullName,
       email,
       mobileNumber,
@@ -136,10 +146,17 @@ const submitCreditRepairForm = async (req, res) => {
       language,
       occupation,
       income,
+      companyName,
+      entityType,
+      designation,
+      gstNumber,
+      turnoverRange,
+      cmrRank,
     } = req.body;
 
     // Save to database
     const creditRepair = new CreditRepair({
+      enquiryType: enquiryType || "individual",
       fullName,
       email,
       mobileNumber,
@@ -151,6 +168,12 @@ const submitCreditRepairForm = async (req, res) => {
       language,
       occupation,
       income,
+      companyName,
+      entityType,
+      designation,
+      gstNumber,
+      turnoverRange,
+      cmrRank,
     });
     await creditRepair.save();
 
