@@ -21,6 +21,11 @@ const roleSchema = new mongoose.Schema(
         enum: PERMISSION_KEYS,
       },
     ],
+    // Grants every admin section, including sections added later (see rolePermissions)
+    fullAccess: {
+      type: Boolean,
+      default: false,
+    },
     isActive: {
       type: Boolean,
       default: true,

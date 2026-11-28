@@ -3,8 +3,8 @@ const mongoose = require("mongoose");
 const manualPaymentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    mobile: { type: String, required: true, trim: true },
-    // Optional: customers are identified by mobile
+    // No longer collected on the form; kept for older links that have it
+    mobile: { type: String, trim: true, default: "" },
     email: { type: String, trim: true, lowercase: true, default: "" },
     city: { type: String, trim: true, default: "" },
     amount: { type: Number, required: true, min: 1 },
@@ -16,7 +16,7 @@ const manualPaymentSchema = new mongoose.Schema(
       default: "created",
       index: true,
     },
-    // New links use Cashfree; Razorpay fields are kept for older links
+    // New links use Razorpay; Cashfree fields are kept for older links
     gateway: { type: String, enum: ["razorpay", "cashfree"], default: "razorpay" },
     cashfreeLinkId: { type: String, unique: true, sparse: true },
     razorpayLinkId: { type: String, unique: true, sparse: true },

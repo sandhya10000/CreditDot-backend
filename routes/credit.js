@@ -1,4 +1,5 @@
 const express = require("express");
+const { prefillCheck, prefillLockStatus } = require("../controllers/prefillMatchController");
 const {
   checkCreditScore,
   checkCreditScorePublic, // Add the new public function
@@ -26,6 +27,12 @@ const router = express.Router();
 // @desc    Check credit score
 // @access  Private/Franchise User
 router.post("/check", auth, rbac("franchise_user", "admin"), checkCreditScore);
+
+// @route   POST /api/credit/prefill-check (name, mobile and PAN vs. prefill-by-mobile)
+router.post("/prefill-check", auth, rbac("franchise_user", "admin"), prefillCheck);
+
+// @route   GET /api/credit/prefill-lock?mobile=&pan=  (database only, no provider call)
+router.get("/prefill-lock", auth, rbac("franchise_user", "admin"), prefillLockStatus);
 
 // @route   POST /api/credit/check-public
 // @desc    Check credit score (public endpoint for Experian only)

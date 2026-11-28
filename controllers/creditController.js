@@ -7,6 +7,7 @@ const Franchise = require("../models/Franchise");
 const { scopeFilter, ownsFranchise } = require("../utils/franchiseScope");
 const ReportDownload = require("../models/ReportDownload");
 const PanBlock = require("../models/PanBlock");
+const { findActivePrefillLock, lockedMessage } = require("./prefillMatchController");
 const Joi = require("joi");
 const fs = require("fs");
 const path = require("path");
@@ -571,6 +572,15 @@ const checkCreditScore = async (req, res) => {
       if (panBlock) {
         return res.status(400).json({
           message: "No Data Found",
+        });
+      }
+
+      // Mobile + PAN locked after the prefill details did not match
+      const prefillLock =
+        mobile && pan ? await findActivePrefillLock(mobile, pan) : null;
+      if (prefillLock) {
+        return res.status(400).json({
+          message: lockedMessage(prefillLock.blockedUntil),
         });
       }
 

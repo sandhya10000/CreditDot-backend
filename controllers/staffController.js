@@ -2,7 +2,13 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const Role = require("../models/Role");
 const Franchise = require("../models/Franchise");
-const { PERMISSIONS, PERMISSION_KEYS, SCOPABLE_KEYS } = require("../config/permissions");
+const {
+  PERMISSIONS,
+  PERMISSION_KEYS,
+  SCOPABLE_KEYS,
+  allSectionsFor,
+  rolePermissions,
+} = require("../config/permissions");
 const { generateTempPassword } = require("../utils/password");
 const generateBusinessManagerCode = require("../utils/generateBusinessManagerCode");
 const { sendStaffCredentialsEmail } = require("../utils/emailService");
@@ -53,8 +59,10 @@ const getStaffProfile = async (req, res) => {
       staffRole: { $ne: null },
     })
       .select("-password")
-      .populate("staffRole", "name description permissions limitToOwnFranchises isActive");
+      .populate("staffRole", "name description permissions fullAccess limitToOwnFranchises isActive");
     if (!staff) return fail(res, 404, "Staff member not found");
+    // Show what the role grants now (full-access roles include sections added later)
+    if (staff.staffRole) staff.staffRole.permissions = rolePermissions(staff.staffRole);
 
     const franchises = await Franchise.find({
       businessManager: staff._id,
@@ -92,6 +100,7 @@ const listRoles = async (req, res) => {
       success: true,
       data: roles.map((role) => ({
         ...role,
+        permissions: rolePermissions(role),
         staffCount: countByRole.get(String(role._id)) || 0,
       })),
     });
@@ -103,11 +112,15 @@ const listRoles = async (req, res) => {
 const createRole = async (req, res) => {
   try {
     const name = (req.body.name || "").trim();
-    const permissions = cleanPermissions(req.body.permissions);
+    const limitToOwnFranchises = Boolean(req.body.limitToOwnFranchises);
+    const fullAccess = Boolean(req.body.fullAccess);
+    // Full access stores today's full list too, so older readers of role.permissions stay correct
+    const permissions = fullAccess
+      ? allSectionsFor(limitToOwnFranchises)
+      : cleanPermissions(req.body.permissions);
     if (!name) return fail(res, 400, "Role name is required");
     if (!permissions) return fail(res, 400, "Invalid permissions");
 
-    const limitToOwnFranchises = Boolean(req.body.limitToOwnFranchises);
     if (limitToOwnFranchises && !permissions.every((k) => SCOPABLE_KEYS.includes(k))) {
       return fail(
         res,
@@ -120,6 +133,7 @@ const createRole = async (req, res) => {
       name,
       description: (req.body.description || "").trim(),
       permissions,
+      fullAccess,
       limitToOwnFranchises,
       createdBy: req.user._id,
     });
@@ -150,11 +164,17 @@ const updateRole = async (req, res) => {
       if (!permissions) return fail(res, 400, "Invalid permissions");
       role.permissions = permissions;
     }
+    if (req.body.fullAccess !== undefined) {
+      role.fullAccess = Boolean(req.body.fullAccess);
+    }
     // Business Manager flag: scoped roles may only hold scopable sections
     const limitTouched = req.body.limitToOwnFranchises !== undefined;
     const turningOn = limitTouched
       ? Boolean(req.body.limitToOwnFranchises)
       : role.limitToOwnFranchises;
+    if (role.fullAccess) {
+      role.permissions = allSectionsFor(turningOn);
+    }
     if (turningOn && !role.permissions.every((k) => SCOPABLE_KEYS.includes(k))) {
       return fail(
         res,

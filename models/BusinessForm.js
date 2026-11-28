@@ -180,7 +180,8 @@ const businessFormSchema = new mongoose.Schema(
     //add new field to know  business status from admin
     workStatus: {
       type: String,
-      enum: ["newly_logged", "in_progress", "closed", "pending"],
+      // "refunded" can only be set (or changed back) by a full admin; see updateBusinessWorkStatus
+      enum: ["newly_logged", "in_progress", "closed", "pending", "refunded"],
       default: "newly_logged",
     },
 

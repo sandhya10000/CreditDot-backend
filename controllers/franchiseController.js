@@ -16,7 +16,7 @@ const {
   resolveBusinessManagerId,
 } = require("../utils/franchiseScope");
 const { assignUnassignedFranchises } = require("../utils/assignBusinessManager");
-const { fetchPanPremium, toPanDetails } = require("../utils/indiconnectPanClient");
+const { fetchPanComprehensive: fetchSurepassPan, toPanDetails } = require("../utils/surepassPanClient");
 
 // Validation schema for updating franchise profile
 const franchiseProfileSchema = Joi.object({
@@ -117,7 +117,8 @@ const getSingleFranchise = async (req, res) => {
 
     const franchise = await Franchise.findOne(lookup)
       .populate("userId", "name email phone lastLoginAt")
-      .populate("assignedPackages", "name price creditsIncluded isActive");
+      .populate("assignedPackages", "name price creditsIncluded isActive")
+      .populate("blacklistedBy", "name");
 
     if (!franchise) {
       return res.status(404).json({
@@ -361,6 +362,7 @@ const getAllFranchises = async (req, res) => {
     const limit = Number(req.query.limit) || 50;
     const search = req.query.search?.trim() || "";
     const kycStatus = req.query.kycStatus?.trim() || "";
+    const excludeStatus = req.query.excludeStatus?.trim() || "";
     const skip = (page - 1) * limit;
     const filter = { ...franchiseScope(req) };
     // Deleted handling: ?showDeleted=true → only deleted, ?includeDeleted=true → all, default → exclude deleted
@@ -380,6 +382,9 @@ const getAllFranchises = async (req, res) => {
     }
     if (kycStatus) {
       filter.kycStatus = kycStatus;
+    } else if (excludeStatus) {
+      // "All" on the Active tab: every status except pending
+      filter.kycStatus = { $ne: excludeStatus };
     }
 
     const franchises = await Franchise.find(filter)
@@ -433,6 +438,41 @@ const getAllFranchises = async (req, res) => {
     });
     // res.json(enhancedFranchises);
   } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Counts for the Franchises page tabs (Active / Pending / Deleted) and the Active tab's status filter.
+// "active" matches the Active tab's "All" filter: not deleted, any status except pending.
+const getFranchiseCounts = async (req, res) => {
+  try {
+    const rows = await Franchise.aggregate([
+      { $match: franchiseScope(req) },
+      {
+        $group: {
+          _id: { deleted: { $eq: ["$isDeleted", true] }, kycStatus: "$kycStatus" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const byStatus = { approved: 0, submitted: 0, rejected: 0 };
+    let live = 0;
+    let pending = 0;
+    let deleted = 0;
+    for (const { _id, count } of rows) {
+      if (_id.deleted) {
+        deleted += count;
+        continue;
+      }
+      live += count;
+      if (_id.kycStatus === "pending") pending += count;
+      else if (_id.kycStatus in byStatus) byStatus[_id.kycStatus] += count;
+    }
+
+    res.json({ active: live - pending, pending, deleted, byStatus });
+  } catch (error) {
+    console.error("Franchise counts error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -749,19 +789,17 @@ const fetchPanComprehensive = async (req, res) => {
       return res.status(404).json({ message: "Franchise not found" });
     }
 
-    // IndiConnect PAN Verification (Premium); PAN gets its own provider code, falls back to the shared one
-    const { getIndiconnectConfig } = require("./creditController");
-    const cfg = await getIndiconnectConfig("pan");
-    console.log(cfg, "IndiConnect PAN config");
-    if (!cfg.serviceKey || !cfg.auth || !cfg.providerCode) {
+    // Surepass PAN comprehensive; the key comes from the Setting table, falling back to env
+    const { getSurepassApiKeyValue } = require("./creditController");
+    const apiKey = await getSurepassApiKeyValue();
+    if (!apiKey) {
       return res.status(500).json({
-        message:
-          "IndiConnect PAN credentials not configured (service-key / auth / provider code)",
+        message: "Surepass API key is not configured",
       });
     }
 
-    const verify = await fetchPanPremium(panNumber.toUpperCase(), cfg);
-    const panDetails = toPanDetails(verify);
+    const body = await fetchSurepassPan(panNumber.toUpperCase(), apiKey);
+    const panDetails = toPanDetails(body);
 
     // Same success/invalid semantics as before: only a verified PAN is saved and can approve KYC
     if (!panDetails.success) {
@@ -781,7 +819,7 @@ const fetchPanComprehensive = async (req, res) => {
       panDetails,
     });
   } catch (error) {
-    console.error("IndiConnect PAN verification error:", error.message);
+    console.error("PAN verification error:", error.message);
     if (error.response) {
       return res.status(error.response.status === 400 ? 400 : 502).json({
         message: "Failed to fetch PAN details",
@@ -1031,6 +1069,57 @@ const setCreditHold = async (req, res) => {
   }
 };
 
+// Admin / Business Manager: blacklist a partner (blocks login and every API call) or lift it.
+// A reason is required to blacklist. Business Managers can only act on their own partners.
+const setBlacklist = async (req, res) => {
+  try {
+    const isFullAdmin = !req.user.staffRole;
+    if (!isFullAdmin && !req.user.scopedToOwnFranchises) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Only Admin or Business Managers can blacklist partners" });
+    }
+    if (!(await ownsFranchise(req, req.params.id))) {
+      return res.status(404).json({ success: false, message: "Franchise not found" });
+    }
+
+    const blacklisted = Boolean(req.body.blacklisted);
+    const reason = String(req.body.reason || "").trim();
+    if (blacklisted && !reason) {
+      return res.status(400).json({ success: false, message: "Please enter a reason for blacklisting" });
+    }
+    if (reason.length > 500) {
+      return res.status(400).json({ success: false, message: "Reason must be 500 characters or fewer" });
+    }
+
+    const franchise = await Franchise.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: { $ne: true } },
+      {
+        $set: blacklisted
+          ? {
+              isBlacklisted: true,
+              blacklistReason: reason,
+              blacklistedAt: new Date(),
+              blacklistedBy: req.user._id,
+            }
+          : { isBlacklisted: false, blacklistReason: "", blacklistedAt: null, blacklistedBy: null },
+      },
+      { new: true },
+    ).select("businessName franchiseCode isBlacklisted blacklistReason blacklistedAt blacklistedBy");
+    if (!franchise) {
+      return res.status(404).json({ success: false, message: "Franchise not found" });
+    }
+
+    res.json({
+      success: true,
+      message: blacklisted ? "Partner blacklisted" : "Partner removed from blacklist",
+      data: franchise,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getAllFranchisesList = async (req, res) => {
   try {
     // Used by the Business MIS franchise picker: needs code/contact for search and the
@@ -1061,6 +1150,7 @@ const exportFranchisesCSV = async (req, res) => {
   try {
     const search = req.query.search?.trim() || "";
     const kycStatus = req.query.kycStatus?.trim() || "";
+    const excludeStatus = req.query.excludeStatus?.trim() || "";
 
     // Build the same filter used by getAllFranchises
     const filter = { ...franchiseScope(req) };
@@ -1080,6 +1170,8 @@ const exportFranchisesCSV = async (req, res) => {
     }
     if (kycStatus) {
       filter.kycStatus = kycStatus;
+    } else if (excludeStatus) {
+      filter.kycStatus = { $ne: excludeStatus };
     }
 
     // Set streaming CSV response headers
@@ -1197,6 +1289,7 @@ module.exports = {
   getFranchiseProfile,
   updateFranchiseProfile,
   getAllFranchises,
+  getFranchiseCounts,
   getFranchiseList,
   getFranchiseById,
   updateFranchise,
@@ -1217,4 +1310,5 @@ module.exports = {
   reassignFranchiseManager,
   assignUnassignedBusinessManagers,
   setCreditHold,
+  setBlacklist,
 };

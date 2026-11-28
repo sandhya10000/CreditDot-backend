@@ -279,6 +279,7 @@ const getDashboardStats = async (req, res) => {
         $match: {
           ...periodMatch,
           ...bizFormFilter,
+          workStatus: { $ne: "refunded" }, // refunded money is not revenue
           $or: [
             { paymentStatus: "paid" },
             { manualAmount: { $gt: 0 } }, //admin manual entries
@@ -353,10 +354,38 @@ const getDashboardStats = async (req, res) => {
       countBetween(AIAnalysis, aiScope, { claudeAnalysisStatus: { $ne: "failed" } }, startOfThisMonth),
     ]);
 
+    // Partners per package tier, over the same franchises as totalFranchises.
+    // A partner with several active packages counts once, under its highest tier
+    // (same rule as resolveFranchisePackageInfo in utils/aiLimitService.js).
+    const TIER_RANK = { silver: 1, gold: 2, platinum: 3, diamond: 4 };
+    const partnerPackageCounts = { silver: 0, gold: 0, platinum: 0, diamond: 0, other: 0, none: 0 };
+    const franchisesWithPackages = await Franchise.find(franchiseFilter)
+      .select("assignedPackages")
+      .populate("assignedPackages", "name isActive")
+      .lean();
+    for (const franchise of franchisesWithPackages) {
+      const active = (franchise.assignedPackages || []).filter(
+        (pkg) => pkg && pkg.isActive !== false,
+      );
+      if (!active.length) {
+        partnerPackageCounts.none += 1;
+        continue;
+      }
+      let bestTier = null;
+      for (const pkg of active) {
+        const tier = String(pkg.name || "").trim().toLowerCase();
+        if (TIER_RANK[tier] && (!bestTier || TIER_RANK[tier] > TIER_RANK[bestTier])) {
+          bestTier = tier;
+        }
+      }
+      partnerPackageCounts[bestTier || "other"] += 1;
+    }
+
     res.json({
       totalFranchises,
       activeFranchises,
       pendingKycFranchises,
+      partnerPackageCounts,
       reportCounts: {
         bureau: { today: bureauToday, monthly: bureauMonth },
         ai: { today: aiToday, monthly: aiMonth },

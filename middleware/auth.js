@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Role = require('../models/Role');
+const { rolePermissions } = require('../config/permissions');
 const Franchise = require('../models/Franchise');
+const { ACCOUNT_SUSPENDED } = require('../utils/accountSuspended');
 
 const auth = async (req, res, next) => {
   console.log('Auth middleware hit for analytics route');
@@ -38,11 +40,11 @@ const auth = async (req, res, next) => {
     // Staff accounts take their permissions from their role, checked on every request
     // so role edits and deactivation apply without waiting for the token to expire
     if (user.staffRole) {
-      const staffRole = await Role.findById(user.staffRole).select('name permissions isActive limitToOwnFranchises');
+      const staffRole = await Role.findById(user.staffRole).select('name permissions fullAccess isActive limitToOwnFranchises');
       if (!user.isActive || !staffRole || !staffRole.isActive) {
         return res.status(403).json({ message: 'Staff access has been disabled. Please contact admin.' });
       }
-      user.permissions = staffRole.permissions;
+      user.permissions = rolePermissions(staffRole);
       user.staffRoleName = staffRole.name;
       // Business Managers only see franchises they own (see utils/franchiseScope.js)
       user.scopedToOwnFranchises = Boolean(staffRole.limitToOwnFranchises);
@@ -53,6 +55,10 @@ const auth = async (req, res, next) => {
     // If user is a franchise user, get their franchiseId
     if (user.role === 'franchise_user') {
       const franchise = await Franchise.findOne({ userId: user._id });
+      // Blacklisted partners are signed out on their next request
+      if (franchise?.isBlacklisted) {
+        return res.status(403).json(ACCOUNT_SUSPENDED);
+      }
       if (franchise) {
         user.franchiseId = franchise._id;
         console.log('Franchise ID set for user:', user._id, 'Franchise ID:', franchise._id);
