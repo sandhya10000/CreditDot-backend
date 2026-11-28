@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 
 const creditRepairSchema = new mongoose.Schema({
+  enquiryType: {
+    type: String,
+    enum: ["individual", "corporate"],
+    default: "individual",
+    index: true,
+  },
+  // Individual & Shared Contact Fields
   fullName: {
     type: String,
     required: true,
@@ -39,6 +46,27 @@ const creditRepairSchema = new mongoose.Schema({
   income: {
     type: String,
   },
+
+  // Corporate CMR Specific Fields
+  companyName: {
+    type: String,
+  },
+  entityType: {
+    type: String, // Pvt Ltd, Public Ltd, LLP, Partnership, MSME / Proprietorship
+  },
+  designation: {
+    type: String, // Director, CFO, Partner, Owner
+  },
+  gstNumber: {
+    type: String,
+  },
+  turnoverRange: {
+    type: String,
+  },
+  cmrRank: {
+    type: String, // CMR-1 to CMR-10
+  },
+
   status: {
     type: String,
     enum: ["New", "Contacted", "In Progress", "Resolved"],
